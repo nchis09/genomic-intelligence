@@ -1,0 +1,233 @@
+-- ============================================================================
+-- LAYER 1: CORE HUB (Tracking the Origin of the DNA)
+-- ============================================================================
+CREATE TABLE biological_samples (
+    sample_id SERIAL PRIMARY KEY,                   -- Unique ID generated automatically
+    internal_sample_name VARCHAR(100) NOT NULL UNIQUE, -- E.g., "LAB-2026-TUMOR01"
+    organism VARCHAR(100) NOT NULL DEFAULT 'Homo sapiens',
+    tissue_source VARCHAR(100) NOT NULL,            -- E.g., "Blood", "Liver Biopsy", "Saliva"
+    extraction_method VARCHAR(100),                 -- E.g., "Qiagen DNeasy Kit"
+    collection_date DATE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ============================================================================
+-- LAYER 2: EXTERNAL FILE TRACKER (Points to your hard drive folders)
+-- ============================================================================
+CREATE TABLE genomic_files (
+    file_id SERIAL PRIMARY KEY,
+    sample_id INT NOT NULL REFERENCES biological_samples(sample_id) ON DELETE CASCADE,
+    file_type VARCHAR(20) NOT NULL,                 -- E.g., "FASTQ", "FASTA", "BAM", "VCF"
+    absolute_file_path TEXT NOT NULL UNIQUE,        -- E.g., "/mnt/data/seq_raw/sample01_R1.fastq.gz"
+    file_size_gb NUMERIC(6,2),                      -- Tracks file footprint
+    md5_checksum VARCHAR(32),                       -- Verifies the file isn't corrupted
+    is_archived BOOLEAN DEFAULT FALSE
+);
+
+-- ============================================================================
+-- LAYER 3: VARIANT CALL DATA (For actual mutation discovery)
+-- ============================================================================
+CREATE TABLE variant_calls (
+    variant_id BIGSERIAL PRIMARY KEY,               -- BIGSERIAL allows billions of mutations
+    sample_id INT NOT NULL REFERENCES biological_samples(sample_id) ON DELETE CASCADE,
+    chromosome VARCHAR(5) NOT NULL,                 -- E.g., "chr1", "chrX"
+    genomic_position INT NOT NULL,                  -- Physical coordinate on the chromosome
+    reference_allele TEXT NOT NULL,                  -- Original base (e.g., "A")
+    alternate_allele TEXT NOT NULL,                  -- Mutated base (e.g., "G")
+    mutation_type VARCHAR(50),                      -- E.g., "SNV", "Insertion", "Deletion"
+    quality_score NUMERIC(6,2),                     -- Sequencing confidence score
+    filter_status VARCHAR(20) DEFAULT 'PASS'        -- E.g., "PASS", "LowQual"
+);
+
+-- ============================================================================
+-- LAYER 4: FLEXIBLE PHENOTYPES (The future-proof "catch-all" container)
+-- ============================================================================
+CREATE TABLE clinical_phenotypes (
+    phenotype_id SERIAL PRIMARY KEY,
+    sample_id INT NOT NULL REFERENCES biological_samples(sample_id) ON DELETE CASCADE,
+    -- JSONB acts like a spreadsheet with infinite invisible columns. 
+    -- You can dump different patient data here without changing the database code.
+    attributes_json jsonb NOT NULL                  
+);
+
+-- ============================================================================
+-- PERFORMANCE LAYER: SPEED INDEXES (Critical for massive scaling)
+-- ============================================================================
+CREATE INDEX idx_samples_name ON biological_samples(internal_sample_name);
+CREATE INDEX idx_variants_coords ON variant_calls(chromosome, genomic_position);
+CREATE INDEX idx_files_sample ON genomic_files(sample_id);
+
+
+
+
+FASTA + metadata
+      │
+      ▼
+┌─────────────────────────────┐
+│   UPSTREAM BIOINFORMATICS   │  ← Stages 0-9 (your checklist)
+│  (Kraken2, BLAST, MAFFT,   │    tools: fastp, IQ-TREE, Nextclade etc.
+│   IQ-TREE, Nextclade, etc) │
+└────────────┬────────────────┘
+             │  outputs normalised JSON (Stage 9)
+             ▼
+┌─────────────────────────────┐
+│   INTELLIGENCE ENGINE       │  ← The translation layer
+│  "What does this MEAN?"     │    queries the reference DB
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│   POSTGRESQL REFERENCE DB   │  ← What we're building now
+│  (pathogens, outbreaks,     │    ebola-arm first, extensible
+│   lineages, mutations,      │    to dengue/flu/rvf/mpox
+│   genotype-phenotype, etc)  │
+└─────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│  INTELLIGENCE BRIEF/REPORT  │
+└─────────────────────────────┘
+
+-----------
+tools to install 
+-----------
+Nextclade 
+conda 
+kraken2 
+
+
+
+
+------------------------------------
+Discussion with Tim and Mosha
+------------------------------------
+
+
+is it Agnostics, or not 
+crossborder
+focus on region
+Utilizaton of the data it seld 
+Geographical definition
+
+Influenza needs support for the public health need
+
+
+
+Where is the gaps.... 
+think of the question to query and the dataflow .....
+ where are the challenges to bring this enterigence layer to life 
+ integration with the local database.... 
+ used cases.... 
+
+
+ make a query format 
+ how does the language model understand the query the database 
+ quality assessment, 
+ WHO disesase outbreak data 
+
+ gisard, Influenza... 
+ darkar hub... 
+
+ Work plan ..... 
+  what do you need and when
+  what information do you need 
+  what tools do you need 
+  what data do you need 
+  what infrastructure do you need 
+
+------------------------------------
+
+
+
+
+
+
+gpt models entropic model 
+
+
+1. Does WHO provide a structured API where case counts, deaths, CFR, 
+   and confirmed outbreak start/end dates are available as discrete 
+   fields (not embedded in HTML narrative text)?
+ 
+2. Is there a separate outbreak events API that returns structured 
+   epidemiological data (cases, deaths, country, pathogen) per event?
+ 
+3. Does WHO provide access to EIOS data for GOARN-affiliated researchers?
+ 
+4. For the GHO OData API — are there indicator codes specifically for 
+   Ebola/VHF outbreak events (not just annual country statistics)?
+ 
+5. Is there an ICD code lookup endpoint that returns the ICD-11 code 
+   for a given pathogen name?
+
+6. 
+
+
+
+call_variants.py does this, step by step:
+
+Query NCBI for all Ebola genomes per species (using species scientific name to avoid contamination)
+Fetch genomes in batches from NCBI
+Extract metadata: accession, strain/isolate, host, collection date, country, genome length, completeness
+Extract proteins:
+First tries NCBI CDS annotations
+If no CDS and genome is full (≥15kb), extracts ORFs using reference coordinates
+Align each protein to the matching reference protein
+Call variants: substitutions, insertions, deletions, stop gains/losses, frameshifts
+Store only metadata and variant calls in PostgreSQL — no sequences are saved
+Create per-species/per-gene views for fast querying
+
+
+   Recommended source tiers (per category)
+Category	Tier-1 official sources
+Outbreak / epidemiology	WHO DON, WHO GHO, ECDC, CDC, Africa CDC, GOARN, ProMED
+Known mutations	NCBI, GISAID, Nextstrain, Nextclade datasets, Pango
+Genotype–phenotype	ViPR/BV-BRC, literature (PubMed), Ensembl, UniProt
+Reference genomes	NCBI RefSeq, GISAID EpiFlu/EpiPox
+Clinical classification	WHO ICD-11 API
+
+
+ebola. we have 7 protein to look at now
+
+Mayinga Strain: The original prototype strain isolated in 1976 
+during the very first recorded Ebola outbreak in Yambuku,
+ Democratic Republic of the Congo (formerly Zaire)
+
+Makona Strain: The genetic variant responsible for the massive 
+2013–2016 West African epidemic. It was found to be slightly 
+less virulent in animal models than the 1976 Mayinga strain 
+but spread much more efficiently among humans.
+
+Kikwit Strain: Isolated during a major, highly lethal outbreak 
+in Kikwit, Democratic Republic of the Congo, in 1995.
+
+
+                 FASTA
+                    │
+                    ▼
+      Routine Bioinformatics Analysis
+                    │
+                    ▼
+      Standardized Genomic Observations
+                    │
+      ┌─────────────┴─────────────┐
+      │                           │
+      ▼                           ▼
+ Local Curated Database      Online Knowledge Sources
+ (trusted facts)             (WHO, PubMed, NCBI, etc.)
+      │                           │
+      └─────────────┬─────────────┘
+                    ▼
+        Genomic Intelligence Engine
+                    │
+          Evidence integration
+                    │
+                    ▼
+      Structured Intelligence Object
+                    │
+                    ▼
+                 LLM
+      (ONLY summarizes evidence)
+                    │
+                    ▼
+      Genomic Intelligence Report

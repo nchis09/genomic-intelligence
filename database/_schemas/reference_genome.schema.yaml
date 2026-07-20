@@ -1,0 +1,30 @@
+# SCHEMA: Reference Genome Library
+# Tier 1 - Curated Facts
+# Location: reference_library/<pathogen>/reference_genomes/
+#   - <accession>.yaml             (metadata, this schema)
+# Sequences are NOT stored locally. The engine fetches them from the source_database
+# (e.g. NCBI Entrez) at runtime using the accession number.
+# Purpose: Canonical reference + representative + historical outbreak genomes.
+
+accession:              # e.g. NC_006432.1
+genome_role:            # one of: canonical_reference | representative | historical_outbreak
+species:                # cross-ref taxonomy
+lineage:                # cross-ref molecular_epidemiology (if known)
+genome_length:          # bp
+segmented:              # true/false (RVF, influenza = true)
+segments: []            # e.g. [L, M, S] or [PB2, PB1, PA, HA, NP, NA, M, NS]
+annotation:
+  source:               # e.g. RefSeq / manual
+  orfs:                 # list of ORFs / genes
+    - gene:             # e.g. GP
+      start:            # nucleotide coordinate
+      end:
+      protein_product:  # cross-ref gene_function
+collection:
+  year:                 # for historical_outbreak genomes
+  country:
+  outbreak_id:          # cross-ref outbreaks
+source_database:        # NCBI / GISAID / Pathoplexus
+notes:
+last_curated:
+curator:

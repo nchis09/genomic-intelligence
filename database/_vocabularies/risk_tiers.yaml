@@ -1,0 +1,19 @@
+# CONTROLLED VOCABULARY: Risk Classification Tiers
+# Tier 2 - shared. Interpretation rules and the final brief map to exactly one tier.
+
+risk_tiers:
+  - tier: routine
+    rank: 1
+    definition: Known patterns, no concerning features. Standard surveillance.
+  - tier: monitor
+    rank: 2
+    definition: Some unusual features. Enhanced surveillance warranted.
+  - tier: investigate
+    rank: 3
+    definition: Novel or concerning features. Field investigation required.
+  - tier: high_priority
+    rank: 4
+    definition: Significant public health concern. Urgent response.
+  - tier: emergency
+    rank: 5
+    definition: Immediate public health action required.

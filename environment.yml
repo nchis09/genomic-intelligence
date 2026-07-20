@@ -1,0 +1,38 @@
+name: pgirl
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python>=3.10,<3.13
+  - pip
+  # Core DB / data
+  - psycopg2-binary
+  - pandas
+  - pyarrow
+  - pydantic>=2
+  # Bioinformatics
+  - biopython
+  - nextclade>=3
+  - kraken2
+  # Analysis / graphing
+  - scipy
+  - networkx
+  - dendropy
+  - matplotlib
+  # Config / web
+  - pyyaml
+  - requests
+  # Common helpers pulled in via pip if needed
+  - typing_extensions
+
+  # Optional / planned phylogenetics tools. The current pipeline only uses
+  # Nextclade + Kraken2; MAFFT, IQ-TREE2, FastTree, TreeTime, LSD2 and FigTree
+  # are included here so they are available when the full ML-tree stages are
+  # implemented. Uncomment any you do not need if conda solving is slow.
+  - mafft
+  - iqtree
+  - fasttree
+  - treetime
+  - lsd2
+  - figtree

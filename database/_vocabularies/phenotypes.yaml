@@ -1,0 +1,39 @@
+# CONTROLLED VOCABULARY: Phenotypes
+# Tier 2 - shared across all pathogens.
+# Mutations and interpretation rules MUST reference these exact terms (no free text).
+# This replaces a separate "Phenotype Library" - phenotype is a vocabulary, associations
+# live inside the mutation records that point here.
+
+phenotypes:
+  - term: increased_transmission
+    definition: Evidence of enhanced person-to-person or vector transmissibility.
+  - term: decreased_transmission
+    definition: Evidence of reduced transmissibility.
+  - term: increased_virulence
+    definition: Evidence of more severe disease / higher pathogenicity.
+  - term: disease_severity
+    definition: Association with severe clinical outcomes (e.g. DHF/DSS for dengue).
+  - term: host_adaptation
+    definition: Markers associated with adaptation to a new/human host.
+  - term: host_range
+    definition: Change in the range of susceptible hosts.
+  - term: reservoir_association
+    definition: Association with a specific reservoir species.
+  - term: vector_competence
+    definition: Association with efficiency of vector transmission.
+  - term: immune_escape
+    definition: Reduced recognition by natural or vaccine-induced immunity.
+  - term: vaccine_escape
+    definition: Reduced vaccine effectiveness against the variant.
+  - term: vaccine_effectiveness
+    definition: Documented change in vaccine effectiveness.
+  - term: drug_resistance
+    definition: Reduced susceptibility to antiviral drugs.
+  - term: drug_susceptibility
+    definition: Documented change in drug susceptibility.
+  - term: diagnostic_escape
+    definition: Assay failure / reduced diagnostic sensitivity.
+  - term: diagnostic_performance
+    definition: Documented impact on diagnostic assay performance.
+  - term: unknown_significance
+    definition: Mutation observed but no established phenotypic association.

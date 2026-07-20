@@ -1,0 +1,163 @@
+
+-----------------------------------
+updating the database
+-----------------------------------
+
+===================================
+Manual Database Updates
+===================================
+
+# To update the entire update  
+/Users/christianndekezi/anaconda3/bin/python3 scripts/db_sync.py
+
+===================================
+data base navigation 
+===================================
+-----------------------------------
+to check the database. structure 
+-----------------------------------
+# List all tables
+/opt/homebrew/opt/postgresql@16/bin/psql pgirl -c "\dt"
+
+# See columns of a specific table
+/opt/homebrew/opt/postgresql@16/bin/psql pgirl -c "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'outbreaks' ORDER BY ordinal_position;"
+/opt/homebrew/opt/postgresql@16/bin/psql pgirl -c "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'mutations' ORDER BY ordinal_position;"
+/opt/homebrew/opt/postgresql@16/bin/psql pgirl -c "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'lineages' ORDER BY ordinal_position;"
+
+/opt/homebrew/opt/postgresql@16/bin/psql pgirl -c "
+SELECT table_name, (xpath('/row/cnt/text()',
+  query_to_xml(format('SELECT COUNT(*) AS cnt FROM %I', table_name), false, true, ''))
+)[1]::text::int AS row_count
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+ORDER BY table_name;"
+
+
+--------------------------------------
+see raw count for all tables at once 
+--------------------------------------
+/opt/homebrew/opt/postgresql@16/bin/psql pgirl -c "
+SELECT table_name, (xpath('/row/cnt/text()',
+  query_to_xml(format('SELECT COUNT(*) AS cnt FROM %I', table_name), false, true, ''))
+)[1]::text::int AS row_count
+FROM information_schema.tables
+WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+ORDER BY table_name;"
+
+
+===================================
+what to do once moved to a new location 
+===================================
+run the config.py file to update the database connection string
+be mindful of the database connection string. it might change
+
+
+# --- Manual pipeline run (DB query -> epi info -> genomic engine) ---
+
+# 1. DB query
+/Users/christianndekezi/anaconda3/bin/python3 -m intelligence_engine.data_engine.sql_querying.bioinformatics_query \
+  --bioinformatics-dir output/bioinformatics \
+  --output-dir output/data_query
+
+# 2. Epi info (fetches online data then calls LLM to structure)
+/Users/christianndekezi/anaconda3/bin/python3 -m intelligence_engine.data_engine.online_querying.epi_query_engine \
+  --bio-output output/bioinformatics/EBOV-UGA-2027-001/bio_output.json \
+  --db-query-results output/data_query/EBOV-UGA-2027-001/db_query_results.json \
+  --output output/data_query/EBOV-UGA-2027-001/epi_output.json
+
+
+# 3. evidance integration 
+/Users/christianndekezi/anaconda3/bin/python3 -m intelligence_engine.evidence_integration.pipeline.intelligence_pipeline \
+  --bio-output output/bioinformatics/EBOV-UGA-2027-001/bio_output.json \
+  --epi-output output/data_query/EBOV-UGA-2027-001/epi_output.json \
+  --tree-file output/bioinformatics/EBOV-UGA-2027-001/tree.nwk \
+  --output-dir output/evidence_integration/EBOV-UGA-2027-001
+
+
+# 4. genomic intelligence (LLM synthesis of the evidence -- no new stats, no recommendations)
+/Users/christianndekezi/anaconda3/bin/python3 -m intelligence_engine.genomic_intelligence.synthesize \
+  --evidence-integration-dir output/evidence_integration/EBOV-UGA-2027-001 \
+  --output-dir output/genomic_intelligence/EBOV-UGA-2027-001
+
+
+
+
+
+
+ore / Data:
+
+pandas — data loading, analysis, CSV/DB manipulation
+psycopg2 (+ psycopg2.extras) — PostgreSQL database driver
+jinja2 — HTML report/brief generation
+Bioinformatics:
+
+biopython (Bio) — NCBI Entrez queries, SeqIO, sequence alignment (PairwiseAligner)
+Phylogenetics:
+
+dendropy — synthetic phylogenetic tree generation
+Geography:
+
+pycountry — country name normalisation/matching
+Web Search / API:
+
+ddgs — DuckDuckGo search client (fallback for epidemiological data discovery)
+requests — HTTP requests (UniProt, PubMed, PubTator API calls)
+LLM (optional — not needed with --no-llm):
+
+ollama (local, via HTTP — no pip package needed, just the Ollama app + model qwen2.5:14b)
+Groq API (via urllib.request, needs GROQ_API_KEY env var — no pip package)
+External tools (not pip packages):
+
+PostgreSQL 16 — database (postgresql@16)
+Nextclade CLI — genomic analysis (called via subprocess)
+BLAST+ — taxonomic classification (called via subprocess)
+Quick install command:++
+
+
+
+
+--------------------------
+runing the entire pipeline 
+--------------------------
+cd /path/to/genomic_intelligence_workflow
+
+# 1. Build the pgirl conda environment and verify packages
+./nextflow run setup.nf
+
+# 2. Update the PostgreSQL reference database (live run, not dry-run)
+./nextflow run db_update.nf \
+  --db_url postgresql://localhost:5432/pgirl \
+  --sources all
+
+# 3. Run the full end-to-end sample analysis pipeline
+./nextflow run main.nf \
+  --input_fasta /path/to/my_samples.fasta \
+  --input_metadata /path/to/my_metadata.csv \
+  --outdir /path/to/results \
+  --db_url postgresql://localhost:5432/pgirl \
+  --use_llm true
+
+----------------------------------------
+#set up LLM. 
+----------------------------------------
+
+# Create a personal bin directory
+mkdir -p ~/.local/bin
+export PATH="$HOME/.local/bin:$PATH"
+
+# Download Ollama for Linux (AMD64). For ARM64, replace amd64 with arm64.
+curl -L https://ollama.com/download/ollama-linux-amd64 -o ~/.local/bin/ollama
+chmod +x ~/.local/bin/ollama
+
+# Verify
+ollama --version
+
+# 2. Start Ollama in background
+ollama serve &
+
+#Pull the model
+ollama pull qwen2.5:14b
+
+# 5. Stop Ollama
+kill %1
+

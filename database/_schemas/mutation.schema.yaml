@@ -1,0 +1,34 @@
+# SCHEMA: Mutation Library  (the largest, most important component)
+# Tier 1 - Curated Facts
+# Location: reference_library/<pathogen>/mutations/<gene>_<mutation>.yaml
+#   e.g. reference_library/ebola/mutations/GP_A82V.yaml
+# Purpose: For every mutation of interest, store its identity + curated evidence.
+# NOTE: phenotype values MUST come from _vocabularies/phenotypes.yaml
+#       evidence_strength MUST come from _vocabularies/evidence_strength.yaml
+
+mutation_key:           # e.g. GP:A82V   (unique within pathogen)
+species:                # cross-ref taxonomy
+gene:                   # e.g. GP
+protein:                # cross-ref gene_function
+nucleotide_position:    # relative to a named reference genome
+amino_acid_position:    # e.g. 82
+reference_aa:           # e.g. A
+alternate_aa:           # e.g. V
+reference_genome:       # accession this numbering is based on (cross-ref reference_genomes)
+
+# One block per curated association. If none, leave list empty (= "reported, no known PH association").
+associations:
+  - phenotype:          # controlled term, e.g. increased_transmission
+    direction:          # increase | decrease | altered | unknown
+    evidence_strength:  # strong | moderate | limited  (see vocabulary)
+    summary:            # one-line plain-language finding
+    first_reported_in:  # outbreak_id or geographic context
+    literature_refs: [] # cross-ref literature (PMID/DOI keys) - REQUIRED if association claimed
+
+public_health_relevance: # yes | no | unknown
+first_observed:
+  outbreak_id:          # cross-ref outbreaks
+  country:
+  date:
+last_curated:
+curator:

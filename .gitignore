@@ -1,0 +1,32 @@
+# PostgreSQL data directory — never commit database files to git
+database/pgdata/
+
+# Nextflow runtime files (cache, logs, scratch work directories)
+.nextflow/
+.nextflow.log*
+work/
+
+# Nextflow binary (downloaded on first run; do not commit)
+/nextflow
+
+# Pipeline outputs — generated per run; keep only inputs and code in git
+output/
+
+# Conda / virtualenv
+env/
+venv/
+.conda/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

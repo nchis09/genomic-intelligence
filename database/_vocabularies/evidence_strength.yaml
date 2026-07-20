@@ -1,0 +1,13 @@
+# CONTROLLED VOCABULARY: Evidence Strength
+# Tier 2 - shared. Every curated association must declare one of these.
+
+evidence_strength:
+  - term: strong
+    definition: Multiple independent studies / experimental confirmation / authoritative body consensus (WHO, CDC).
+  - term: moderate
+    definition: One solid peer-reviewed study or consistent observational evidence.
+  - term: limited
+    definition: Single report, preprint, indirect or anecdotal evidence.
+
+# Confidence reported in the brief is derived from the strongest supporting evidence,
+# and is downgraded when data are sparse (e.g. single genome, no epi context).

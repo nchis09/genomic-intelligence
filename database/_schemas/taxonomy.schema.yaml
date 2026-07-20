@@ -1,0 +1,20 @@
+# SCHEMA: Taxonomy Reference
+# Tier 1 - Curated Facts
+# One file per pathogen: reference_library/<pathogen>/taxonomy/taxonomy.yaml
+# Purpose: Anchor every downstream record to a controlled taxonomic identity.
+
+pathogen_id:            # short internal key, e.g. "ebola"
+family:                 # e.g. Filoviridae
+genus:                  # e.g. Orthoebolavirus
+species:                # list of species under this pathogen
+  - name:               # e.g. "Sudan ebolavirus"
+    common_name:        # e.g. "Sudan virus (SUDV)"
+    abbreviation:       # e.g. SUDV
+    subtypes: []        # serotype / subtype if applicable (influenza HxNy, dengue DENV1-4)
+    genotypes: []       # genotype labels if applicable
+    clades: []          # clade labels if applicable
+    lineages: []        # lineage labels (cross-ref molecular_epidemiology)
+ncbi_taxonomy_id:       # NCBI Taxonomy ID for external linking
+notes:
+last_curated:           # YYYY-MM-DD
+curator:

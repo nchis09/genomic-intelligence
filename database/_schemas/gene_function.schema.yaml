@@ -1,0 +1,21 @@
+# SCHEMA: Gene / Protein Functional Library
+# Tier 1 - Curated Facts
+# Location: reference_library/<pathogen>/gene_function/<gene>.yaml
+# Purpose: Explain what each gene/protein does so mutations can be contextualized.
+
+gene:                   # e.g. GP
+protein_name:           # e.g. Glycoprotein
+protein_function:       # concise functional summary
+key_domains:
+  - name:               # e.g. Receptor Binding Domain
+    start_aa:
+    end_aa:
+functional_sites: []    # catalytic sites, cleavage sites, glycosylation sites
+known_hotspots: []      # positions with recurrent variation
+conserved_regions: []   # ranges that are typically conserved
+structure:
+  pdb_ids: []           # linked structural data
+  notes:
+literature_refs: []     # cross-ref literature (PMID/DOI keys)
+last_curated:
+curator:

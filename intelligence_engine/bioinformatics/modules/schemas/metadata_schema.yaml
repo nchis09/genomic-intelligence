@@ -1,0 +1,151 @@
+# INPUT METADATA DATA DICTIONARY
+# Batch submission: one CSV/TSV sheet (many rows) + one multi-FASTA, linked by `sample_id`.
+# Tier meaning:
+#   required     -> engine will refuse the sample if missing
+#   recommended  -> engine runs, but flags reduced confidence / unanswered questions
+#   optional     -> used when present, ignored when absent
+# Missing values: leave the cell EMPTY (treated as "not provided / unknown").
+# Controlled fields must use the exact allowed values (case-insensitive).
+
+fields:
+
+  # ---------------- REQUIRED ----------------
+  - name: sample_id
+    tier: required
+    type: string
+    description: Unique identifier. MUST match the FASTA record header exactly.
+    example: EBOV-UGA-2027-001
+    powers: [linkage]
+
+  - name: collection_date
+    tier: required
+    type: date
+    format: YYYY-MM-DD  # YYYY-MM or YYYY allowed if day/month unknown
+    description: Date the sample was collected.
+    example: 2027-07-15
+    powers: [seen_here_before, closest_outbreak, sustained_transmission]
+
+  - name: country
+    tier: required
+    type: string
+    description: Country of isolation (use standard country name).
+    example: Uganda
+    powers: [seen_here_before, closest_outbreak]
+
+  - name: admin1
+    tier: required
+    type: string
+    description: First-level subdivision (province/region). Minimum geographic granularity.
+    example: Western Region
+    powers: [seen_here_before]
+
+  - name: host
+    tier: required
+    type: enum
+    allowed_values: [human, animal]
+    description: Host category. Drives spillover vs human-to-human logic.
+    example: human
+    powers: [spillover_assessment]
+
+  # ---------------- RECOMMENDED ----------------
+  - name: admin2
+    tier: recommended
+    type: string
+    description: Second-level subdivision (district). Strongly encouraged - enables district-level "seen here before".
+    example: Kasese
+    powers: [seen_here_before]
+
+  - name: host_species
+    tier: recommended  # REQUIRED when host = animal
+    type: string
+    description: Species of host. Mandatory if host=animal (e.g. reservoir/vector attribution).
+    example: Homo sapiens
+    powers: [spillover_assessment, reservoir_association]
+
+  - name: travel_history
+    tier: recommended
+    type: enum
+    allowed_values: [yes, no, unknown]
+    description: Any recent travel before onset. Best single field for importation vs local transmission.
+    example: "yes"
+    powers: [novel_introduction, importation_vs_local]
+
+  - name: travel_locations
+    tier: recommended
+    type: string
+    description: Where the case travelled (semicolon-separated). Required if travel_history=yes.
+    example: DRC; Kenya
+    powers: [importation_vs_local]
+
+  - name: sample_type
+    tier: recommended
+    type: string
+    description: Specimen type.
+    example: blood
+    powers: []
+
+  - name: symptom_onset_date
+    tier: recommended
+    type: date
+    format: YYYY-MM-DD
+    description: Date of symptom onset. Sharpens temporal placement.
+    example: 2027-07-10
+    powers: [sustained_transmission]
+
+  - name: vaccination_status
+    tier: recommended
+    type: enum
+    allowed_values: [vaccinated, unvaccinated, unknown]
+    description: Needed to meaningfully interpret vaccine-escape mutations.
+    example: unvaccinated
+    powers: [vaccine_escape_assessment]
+
+  - name: vaccine_details
+    tier: optional
+    type: string
+    description: Vaccine name, dose, dates.
+    example: Ervebo, dose 1 on 2024-03-15
+    powers: [vaccine_escape_assessment]
+
+  - name: latitude
+    tier: optional
+    type: float
+    description: Latitude in decimal degrees. Improves geospatial precision.
+    example: 0.1833
+    powers: [geospatial_clustering]
+
+  - name: longitude
+    tier: optional
+    type: float
+    description: Longitude in decimal degrees. Improves geospatial precision.
+    example: 30.0833
+    powers: [geospatial_clustering]
+
+  - name: outcome
+    tier: optional
+    type: enum
+    allowed_values: [survived, died, unknown]
+    description: Clinical outcome.
+    example: unknown
+    powers: [severity_assessment]
+
+  - name: suspected_exposure
+    tier: optional
+    type: string
+    description: Free-text exposure context (e.g. funeral attendance, healthcare worker).
+    example: funeral attendance
+    powers: [exposure_assessment]
+
+  - name: epi_link_id
+    tier: optional
+    type: string
+    description: Epidemiological cluster/chain identifier.
+    example: CLUSTER-001
+    powers: [transmission_chain_analysis]
+
+  - name: existing_accession
+    tier: optional
+    type: string
+    description: Known public accession for this genome, if any.
+    example: MN908947
+    powers: [reference_linkage]

@@ -1,0 +1,26 @@
+# SCHEMA: Outbreak Library
+# Tier 1 - Curated Facts
+# Location: reference_library/<pathogen>/outbreaks/<outbreak_id>.yaml
+# Purpose: Historical outbreak record that powers "has this been seen here before?" queries.
+
+outbreak_id:            # e.g. EBOV-UGA-2022
+species:                # cross-ref taxonomy
+lineage:                # cross-ref molecular_epidemiology
+location:
+  country:
+  district:             # or admin-2 region
+  region:
+start_date:             # YYYY-MM-DD
+end_date:               # YYYY-MM-DD or "ongoing"
+total_cases:
+deaths:
+case_fatality_rate:     # percent
+source_of_introduction: # spillover | importation | sustained_transmission | unknown
+reservoir_suspected:
+key_mutations: []       # cross-ref mutations
+reference_genomes: []   # cross-ref reference_genomes (accessions)
+who_reports: []         # URLs / report IDs
+publications: []        # cross-ref literature
+notes:
+last_curated:
+curator:

@@ -1,0 +1,91 @@
+[
+  {
+    "id": "Q1_species_outbreaks",
+    "condition": "always",
+    "template": "List historical outbreaks of {species_name}. For each, include date, country, total cases, total deaths, calculated CFR, and duration if available.",
+    "fields": ["date", "country", "cases", "deaths", "cfr", "duration"]
+  },
+  {
+    "id": "Q2_lineage_epidemiology",
+    "condition": "lineage is not None and lineage != 'unknown'",
+    "template": "For lineage {lineage} of {species_name}, what was the epidemiological profile (country, year, cases, deaths, CFR, key transmission features) of its primary outbreak?",
+    "fallback": "What is the known epidemiological profile of {species_name}?",
+    "fields": ["lineage", "country", "year", "cases", "deaths", "cfr"]
+  },
+  {
+    "id": "Q3_demographics",
+    "condition": "always",
+    "template": "Which demographic groups were most affected by {species_name} (age groups, gender, occupation/risk groups such as healthcare workers or children, and any stated risk factors)?",
+    "fields": ["group", "age_range", "gender", "risk_factor", "notes"]
+  },
+  {
+    "id": "Q4_cfr_breakdown",
+    "condition": "always",
+    "template": "What is the case fatality rate (CFR) for {species_name}, and how does it vary by outbreak, country, age group, or treatment access?",
+    "fields": ["context", "cfr", "country", "age_group", "treatment_access"]
+  },
+  {
+    "id": "Q5_transmission_params",
+    "condition": "always",
+    "template": "What transmission parameters are documented for {species_name}: incubation period, serial interval, R0/reproductive number, and main transmission routes?",
+    "fields": ["parameter", "value", "unit", "notes"]
+  },
+  {
+    "id": "Q6_interventions",
+    "condition": "always",
+    "template": "What interventions were used against {species_name} (vaccines, contact tracing, isolation, PPE, safe burial, therapeutics, public health measures)?",
+    "fields": ["intervention", "type", "effectiveness", "status"]
+  },
+  {
+    "id": "Q7_clinical_severity",
+    "condition": "lineage is not None",
+    "template": "Has lineage {lineage} been associated with specific clinical severity or atypical presentations?",
+    "fallback": "What clinical features (severity, common symptoms, atypical presentations, hospitalization) are typical for {species_name} infection?",
+    "fields": ["feature", "lineage", "severity", "frequency", "notes"]
+  },
+  {
+    "id": "Q8_geographic_range",
+    "condition": "always",
+    "template": "What is the geographic range of {species_name}? Include countries, regions, first documented occurrence, and the known reservoir if stated.",
+    "fields": ["country", "region", "first_documented", "reservoir"]
+  },
+  {
+    "id": "Q9_country_history",
+    "condition": "country is not None",
+    "template": "For the country where this sample was collected ({country}), what is the history of {species_name} outbreaks?",
+    "fallback": null,
+    "fields": ["date", "country", "outbreak", "lineage", "cases", "deaths"]
+  },
+  {
+    "id": "Q10_temporal_assessment",
+    "condition": "lineage is not None and collection_date is not None and lineage_last_seen is not None",
+    "template": "Given this sample was collected on {collection_date} and lineage {lineage} was last documented in {lineage_last_seen}, what are the epidemiological implications?",
+    "fallback": "Given this sample was collected on {collection_date}, what temporal patterns in {species_name} emergence are relevant?",
+    "fields": ["scenario", "evidence", "confidence"]
+  },
+  {
+    "id": "Q11_novel_pathogen",
+    "condition": "species_id in ('UNKNOWN', 'NOVEL', 'unknown', 'novel')",
+    "template": "This appears to be a novel or unclassified pathogen in the {pathogen_family} family. What is known about related species?",
+    "fallback": null,
+    "fields": ["related_species", "disease", "geographic_range", "reservoir"]
+  },
+  {
+    "id": "Q12_risk_factors",
+    "condition": "always",
+    "template": "What documented risk factors and exposure settings are reported for {species_name} (e.g., bushmeat, animal contact, funeral attendance, household contact, healthcare exposure, unsafe burial, sexual transmission, traditional healer)?",
+    "fields": ["risk_factor", "setting", "context", "notes"]
+  },
+  {
+    "id": "Q13_diagnostics",
+    "condition": "always",
+    "template": "What diagnostic and laboratory confirmation methods were reported for {species_name} (e.g., RT-PCR, PCR, antigen detection, serology, ELISA, sequencing, viral culture, BSL-4/biosafety)?",
+    "fields": ["method", "type", "target", "notes"]
+  },
+  {
+    "id": "Q14_vaccine_therapeutics",
+    "condition": "always",
+    "template": "What vaccine and therapeutic products were reported for {species_name}, and what is known about their status or effectiveness?",
+    "fields": ["product", "type", "status", "effectiveness", "notes"]
+  }
+]

@@ -1,0 +1,286 @@
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 0: INPUT & QUALITY CONTROL                                 ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  Input: raw reads (FASTQ) OR consensus FASTA + metadata CSV       ║
+║                                                                   ║
+║  0a. If raw reads:   # this is obtional if given well good        ║
+║      ├── Quality filter  → fastp / Nanofilt (remove low-Q reads)  ║
+║      ├── Assembly        → IRMA (CDC, Ebola-optimised)            ║
+║      │                     or SPAdes (general)                    ║
+║      └── Consensus       → Generate consensus FASTA from assembly ║
+║                                                                   ║
+║  0b. consensus FASTA: # this is the main input format             ║
+║      └── Validate format, check for N's, length                   ║
+║                                                                   ║
+║  0c. Quality metrics (both paths):                                ║
+║      ├── Genome completeness (% vs expected length ~18,900 bp)    ║
+║      ├── N-content (% ambiguous bases)                            ║
+║      ├── Mean depth (if reads available)                          ║
+║      ├── Genome quality flag: HIGH / MODERATE / LOW               ║
+║      └── Missing regions (e.g., "3' terminal 285 bp")             ║
+║                                                                   ║
+║  Output: consensus FASTA + quality_metrics.json                   ║
+║  Intelligence use: Report S1 (sample context), quality flag       ║
+└═══════════════════════════════════════════════════════════════════┘
+                              │
+                              ▼
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 1: PATHOGEN CLASSIFICATION                                 ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  1a. k-mer classification                                         ║
+║      ├── Kraken2 or Centrifuge against viral database             ║
+║      └── Fast, handles partial genomes, gives species-level ID    ║
+║                                                                   ║
+║  1b. Confirm with BLAST                                           ║
+║      ├── BLASTn against NCBI nt (top hits)                        ║
+║      └── Cross-check Kraken2 result                               ║
+║                                                                   ║
+║  1c. Species determination                                        ║
+║      ├── Match to reference_library/taxonomy/taxonomy.yaml        ║
+║      ├── Determine: EBOV? SUDV? BDBV? TAFV? RESTV? BOMV?         ║
+║      └── If ambiguous → flag for expert review                    ║
+║                                                                   ║
+║  Output: species_id.json {species, confidence, method}            ║
+║  Intelligence use: Route to pathogen-specific pipeline;           ║
+║                    Report S2 (genomic characterisation)           ║
+└═══════════════════════════════════════════════════════════════════┘
+                              │
+                    ┌─────────┴──────────┐
+                    │ EBOLA PIPELINE     │
+                    ▼                    │
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 2: REFERENCE SELECTION & CONTEXT GATHERING                 ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  2a. Select reference genome                                      ║
+║      ├── From reference_library/ebola/reference_genomes/          ║
+║      │   (curated RefSeq accessions per species)                  ║
+║      │   e.g., SUDV → NC_006432.1 (Boniface 1976)                ║
+║      │        EBOV → NC_002549.1 (Mayinga 1976)                  ║
+║      └── This is the coordinate system for all variant calling    ║
+║                                                                   ║
+║  2b. BLAST for context genomes                                    ║
+║      ├── BLASTn against NCBI nt → top 50 hits                     ║
+║      ├── Filter: same species, complete genomes, with dates       ║
+║      └── These provide epidemiological context (closest outbreak) ║
+║                                                                   ║
+║  2c. Pull curated outbreak genomes                                ║
+║      ├── From reference_library/ebola/outbreaks/outbreaks.csv     ║
+║      │   (reference_genomes column has accessions)                ║
+║      └── These are our trusted context set                        ║
+║                                                                   ║
+║  Output: reference_set = {ref_genome, blast_hits[], outbreak_refs[]}║
+║  Intelligence use: Report S2 (closest reference, closest outbreak)║
+└═══════════════════════════════════════════════════════════════════┘
+                              │
+                              ▼
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 3: GENOME ALIGNMENT & ANNOTATION                           ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  3a. Reference alignment (nucleotide)                             ║
+║      ├── MAFFT (consensus FASTA vs reference genome)              ║
+║      │   or minimap2 if long-read assembly with gaps              ║
+║      └── Produces pairwise alignment → identifies all SNPs/indels ║
+║                                                                   ║
+║  3b. Genome annotation                                            ║
+║      ├── Map gene boundaries from reference genome annotation     ║
+║      │   (NP | VP35 | VP40 | GP | VP30 | VP24 | L)               ║
+║      ├── For Ebola: gene order and boundaries are well-known      ║
+║      │   NP:     1-3027     (470 aa after leader)                 ║
+║      │   VP35:   3030-4407  (340 aa)                              ║
+║      │   VP40:   4390-5384  (326 aa)                              ║
+║      │   GP:     5459-7457  (676 aa precursor)                    ║
+║      │   VP30:   7460-8309  (288 aa)                              ║
+║      │   VP24:   8312-9070  (253 aa)                              ║
+║      │   L:      9073-15711  (2212 aa)                            ║
+║      │   (exact coordinates vary slightly by species/reference)   ║
+║      └── Identify UTRs, intergenic regions, overlaps              ║
+║                                                                   ║
+║  3c. ORF prediction (validation)                                  ║
+║      ├── Prodigal or MetaGeneAnnotator                            ║
+║      └── Compare predicted ORFs to expected gene map —            ║
+║          flag any missing/truncated genes                         ║
+║                                                                   ║
+║  Output: annotated_genome.gff3 + alignment_to_reference.bam       ║
+║  Intelligence use: Report S2 (genes covered, missing regions)     ║
+└═══════════════════════════════════════════════════════════════════┘
+                              │
+                              ▼
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 4: VARIANT CALLING (NUCLEOTIDE + AMINO ACID)               ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  4a. Nucleotide variant calling                                   ║
+║      ├── From pairwise alignment (Stage 3a):                      ║
+║      │   extract all SNPs, indels relative to reference           ║
+║      ├── Tool: SNP-sites (from MSA) or BCFtools (from BAM)        ║
+║      └── Output: VCF file with all nucleotide variants            ║
+║                                                                   ║
+║  4b. Protein extraction & translation                             ║
+║      ├── Extract each ORF from annotated genome (Stage 3b)        ║
+║      ├── Translate to amino acid sequence                         ║
+║      └── 7 protein FASTAs: NP, VP35, VP40, GP, VP30, VP24, L     ║
+║                                                                   ║
+║  4c. Protein alignment                                            ║
+║      ├── MAFFT: each protein vs reference amino acid sequence     ║
+║      └── 7 pairwise protein alignments                            ║
+║                                                                   ║
+║  4d. Amino acid variant calling                                   ║
+║      ├── From each protein alignment: extract AA substitutions    ║
+║      ├── Generate HGVS notation: e.g., GP:A82V, VP35:T230A       ║
+║      ├── Classify: synonymous / non-synonymous / nonsense         ║
+║      └── Map each variant to gene_function domain (e.g.,          ║
+║          "GP:A82V is in RBD aa 54-201")                           ║
+║                                                                   ║
+║  4e. Negative findings check                                      ║
+║      ├── Cross-reference against genotype_phenotype_associations  ║
+║      │   for known concerning mutations                           ║
+║      ├── Check: are known concerning variants ABSENT?             ║
+║      │   e.g., GP:N439K — NOT detected ✓                        ║
+║      │        VP35:R312A — NOT detected ✓                       ║
+║      └── Report negative findings explicitly                      ║
+║                                                                   ║
+║  Output: variants.json {nt_variants[], aa_variants[],             ║
+║          negative_findings[], domain_context[]}                   ║
+║  Intelligence use: Report S3 (all mutations + domain context +    ║
+║                    negative findings) — THE CORE OUTPUT           ║
+└═══════════════════════════════════════════════════════════════════┘
+                              │
+                              ▼
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 5: LINEAGE & CLADE ASSIGNMENT                              ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  5a. Nextclade assignment (if clade scheme available)             ║
+║      ├── Nextclade CLI with Ebola dataset                         ║
+║      ├── Assigns clade (e.g., SUDV-A1, Makona)                    ║
+║      └── Also performs QC and mutation annotation                 ║
+║                                                                   ║
+║  5b. Phylogenetic placement                                       ║
+║      ├── Build MSA: sample + BLAST hits + outbreak references     ║
+║      │   (from Stage 2b + 2c)                                     ║
+║      ├── Tool: MAFFT (add --addfragments for placing new seq)     ║
+║      ├── Build tree: IQ-TREE (with UFboot support)                ║
+║      └── Place sample in tree — identify closest cluster          ║
+║                                                                   ║
+║  5c. Lineage determination                                        ║
+║      ├── Cross-reference clade with molecular_epidemiology.csv    ║
+║      │   (e.g., clade "Makona" → lineage_id "EBOV-MAKONA")       ║
+║      └── Pull lineage metadata (distribution, hosts, etc.)        ║
+║                                                                   ║
+║  Output: lineage.json {clade, lineage_id, closest_outbreak_genome,║
+║          snps_from_closest, tree_file}                            ║
+║  Intelligence use: Report S2 (lineage, clade, closest match),     ║
+║                    Report S4 (molecular epidemiology)             ║
+└═══════════════════════════════════════════════════════════════════┘
+                              │
+                              ▼
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 6: PHYLOGENETIC TREE (FULL CONTEXT)                        ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  6a. Build full MSA                                               ║
+║      ├── Sample + top 50 BLAST hits + all curated outbreak refs   ║
+║      ├── MAFFT (auto strategy or L-INS-i for accuracy)            ║
+║      └── Trim alignment (trimAl or Gblocks)                       ║
+║                                                                   ║
+║  6b. Build phylogenetic tree                                      ║
+║      ├── IQ-TREE2                                                 ║
+║      │   - Model selection (ModelFinder)                          ║
+║      │   - UFboot (1000 replicates)                               ║
+║      │   - SH-aLRT branch support                                 ║
+║      └── Output: Newick tree with support values                  ║
+║                                                                   ║
+║  6c. Time-scaled tree (optional, if enough temporal signal)       ║
+║      ├── TreeTime or LSD2                                         ║
+║      ├── Requires collection dates for all sequences              ║
+║      └── Estimates molecular clock rate                           ║
+║                                                                   ║
+║  Output: tree.nwk + tree_visualisation.png                        ║
+║  Intelligence use: Report S8 (Fig 1 — phylogenetic tree),         ║
+║                    Report S4f (introduction/spread assessment)    ║
+└═══════════════════════════════════════════════════════════════════┘
+                              │
+                              ▼
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 7: RECOMBINATION & REASSORTMENT ANALYSIS                   ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  7a. Recombination detection (for MSA with ≥10 sequences)         ║
+║      ├── RDP5 (RDP, GENECONV, Bootscan, MaxChi, Chimaera,         ║
+║      │   SiScan, 3Seq methods)                                    ║
+║      ├── GARD (HyPhy) — genetic algorithm for recombination       ║
+║      └── Only meaningful with enough diversity in the alignment   ║
+║                                                                   ║
+║  7b. Reassortment — N/A for Ebola                                 ║
+║      ├── Ebola is non-segmented (single RNA molecule)             ║
+║      ├── Reassortment analysis is relevant for:                   ║
+║      │   Influenza (8 segments), RVF (3 segments)                 ║
+║      └── Pipeline branch for segmented viruses only               ║
+║                                                                   ║
+║  Output: recombination_report.json                                ║
+║  Intelligence use: Report S2 (recombination assessment),          ║
+║                    Report S6b (what has changed)                  ║
+└═══════════════════════════════════════════════════════════════════┘
+                              │
+                              ▼
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 8: COMPARATIVE GENOMICS                                    ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  8a. Gene content comparison                                      ║
+║      ├── All 7 genes present? Any truncations?                    ║
+║      ├── Gene overlaps preserved (e.g., VP35-VP40 overlap)?       ║
+║      └── Compare gene lengths to reference                        ║
+║                                                                   ║
+║  8b. Genome organisation                                          ║
+║      ├── Leader/trailer regions intact?                           ║
+║      ├── Intergenic regions: any large insertions/deletions?      ║
+║      ├── Gene order preserved? (NP-VP35-VP40-GP-VP30-VP24-L)      ║
+║      └── UTR lengths within expected range?                       ║
+║                                                                   ║
+║  8c. Sequence metrics                                             ║
+║      ├── GC content vs reference (Ebola ~41%)                     ║
+║      ├── Codon usage comparison                                   ║
+║      └── Synonymous/non-synonymous ratio (dN/dS)                  ║
+║                                                                   ║
+║  8d. Distance matrix                                              ║
+║      ├── Pairwise SNP distances: sample vs all context genomes    ║
+║      ├── Identify closest outbreak genome (fewest SNPs)           ║
+║      └── Flag if unusually divergent (>expected evolutionary rate)║
+║                                                                   ║
+║  Output: comparative_genomics.json                                ║
+║  Intelligence use: Report S2 (genome organisation),               ║
+║                    Report S4f (introduction/spread — SNP distance)║
+└═══════════════════════════════════════════════════════════════════┘
+                              │
+                              ▼
+┌═══════════════════════════════════════════════════════════════════┐
+║  STAGE 9: NORMALISED OUTPUT (HANDOFF TO INTELLIGENCE LAYER)       ║
+├═══════════════════════════════════════════════════════════════════┤
+║                                                                   ║
+║  All previous stages → single normalised JSON:                    ║
+║                                                                   ║
+║  {                                                                ║
+║    "sample_id": "...",                                            ║
+║    "pathogen": "ebola",                                           ║
+║    "species": "Sudan ebolavirus",                                 ║
+║    "lineage": "A",                                                ║
+║    "clade": "SUDV-A1",                                            ║
+║    "closest_reference": {accession, identity, snps},              ║
+║    "closest_outbreak_genome": {name, snps, outbreak_id},          ║
+║    "mutations": [{gene, position, ref_aa, alt_aa, hgvs,           ║
+║                   nucleotide_change, domain_context}],            ║
+║    "negative_findings": [{mutation, status}],                     ║
+║    "genome_quality": {completeness, depth, flag, missing},        ║
+║    "metadata": {country, admin1, collection_date, host},          ║
+║    "tree_file": "path/to/tree.nwk",                               ║
+║    "recombination": {detected, events[]},                         ║
+║    "comparative": {gene_content, gc_content, dn_ds}               ║
+║  }                                                                ║
+║                                                                   ║
+║  → This JSON is what the intelligence engine consumes             ║
+└═══════════════════════════════════════════════════════════════════┘

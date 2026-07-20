@@ -1,0 +1,20 @@
+# Core Python dependencies for the PGIRL pipeline.
+# Install with:
+#   pip install -r requirements.txt
+#
+# Bioinformatics command-line tools (nextclade, kraken2, seqkit, mafft, iqtree,
+# fasttree, treetime, lsd2, figtree) must be installed separately via conda/bioconda
+# or your system package manager.
+
+psycopg2-binary
+biopython
+pandas
+pyarrow
+pydantic>=2
+scipy
+networkx
+dendropy
+matplotlib
+pyyaml
+requests
+typing_extensions

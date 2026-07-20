@@ -1,0 +1,26 @@
+# SCHEMA: Molecular Epidemiology Library
+# Tier 1 - Curated Facts
+# Location: reference_library/<pathogen>/molecular_epidemiology/<lineage_or_clade>.yaml
+# Purpose: For every lineage / genotype / serotype / clade, store its epidemiological identity.
+
+label:                  # e.g. SUDV-2022
+type:                   # lineage | genotype | serotype | clade
+species:                # cross-ref taxonomy
+first_detection:
+  country:
+  date:                 # YYYY or YYYY-MM
+date_of_emergence:      # estimated, if known
+geographic_distribution:
+  countries: []
+  regions: []
+current_circulation:    # active | historical | extinct | unknown
+associated_outbreaks: [] # cross-ref outbreaks (outbreak_id list)
+who_classification:     # cross-ref _vocabularies/who_classifications.yaml (or "none")
+known_reservoirs: []
+known_vectors: []
+known_hosts: []
+defining_mutations: []  # cross-ref mutations (mutation keys that define this lineage)
+literature_refs: []
+notes:
+last_curated:
+curator:
