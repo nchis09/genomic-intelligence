@@ -8,6 +8,7 @@
 #
 # Usage:
 #   ./run_nextclade.sh <input.fasta> <metadata.tsv> <output_dir> [--datasets d1,d2,...] [--skip-phylo]
+#   ./run_nextclade.sh <input.fasta> <metadata.tsv> <output_dir> --step screen|assign|analyze|phylo
 #
 # If --datasets is omitted, screens against all representative datasets.
 # =============================================================================
@@ -52,6 +53,9 @@ shift 3
 
 DATASETS=("${DEFAULT_DATASETS[@]}")
 SKIP_PHYLO=false
+RUN_STEP="all"
+RUN_SAMPLE=""
+RUN_SPECIES=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -62,6 +66,18 @@ while [[ $# -gt 0 ]]; do
         --skip-phylo)
             SKIP_PHYLO=true
             shift
+            ;;
+        --step)
+            RUN_STEP="$2"
+            shift 2
+            ;;
+        --sample)
+            RUN_SAMPLE="$2"
+            shift 2
+            ;;
+        --species)
+            RUN_SPECIES="$2"
+            shift 2
             ;;
         *)
             echo "Unknown option: $1"
@@ -88,6 +104,7 @@ echo ""
 # =============================================================================
 # STEP 1: Screen against all datasets
 # =============================================================================
+if [[ "${RUN_STEP}" == "all" || "${RUN_STEP}" == "screen" ]]; then
 echo "--- Step 1: Screening against ${#DATASETS[@]} datasets ---"
 echo ""
 
@@ -102,10 +119,12 @@ for dataset in "${DATASETS[@]}"; do
 done
 
 echo ""
+fi  # end step screen
 
 # =============================================================================
 # STEP 2: Assign pathogen/species per sequence (sample-centric output)
 # =============================================================================
+if [[ "${RUN_STEP}" == "all" || "${RUN_STEP}" == "assign" ]]; then
 echo "--- Step 2: Assigning pathogen/species per sample ---"
 echo ""
 
@@ -206,16 +225,23 @@ print(f"\n  Assignments written to: {output_file}")
 PYTHON
 
 echo ""
+fi  # end step assign
 
 # =============================================================================
 # STEP 3: Full Nextclade analysis per sample (sample-centric folders)
 # =============================================================================
+if [[ "${RUN_STEP}" == "all" || "${RUN_STEP}" == "analyze" ]]; then
 echo "--- Step 3: Full Nextclade analysis per sample ---"
 echo ""
 
 while IFS=$'\t' read -r seqName assigned_dataset species_label pathogen_family folder_name qc_score qc_status coverage clade outbreak; do
     # Skip header
     [[ "$seqName" == "seqName" ]] && continue
+
+    # If --sample is set, only process that sample
+    if [[ -n "${RUN_SAMPLE}" && "${seqName}" != "${RUN_SAMPLE}" ]]; then
+        continue
+    fi
 
     sample_dir="${NCLADE_DIR}/${folder_name}"
     mkdir -p "${sample_dir}"
@@ -249,15 +275,17 @@ with open('${INPUT_FASTA}') as f, open('${temp_fasta}', 'w') as out:
     echo ""
 
 done < "${NCLADE_DIR}/assignments.tsv"
+fi  # end step analyze
 
 # =============================================================================
-# STEP 4: Route to pathogen-specific phylogenetic pipelines
+# STEP 4a: Generate nextstrain/ebola config + input files
 # =============================================================================
+if [[ "${RUN_STEP}" == "all" || "${RUN_STEP}" == "phylo" || "${RUN_STEP}" == "phylo_config" ]]; then
 if [[ "${SKIP_PHYLO}" == "true" ]]; then
-    echo "--- Step 4: Phylogenetic analysis SKIPPED (--skip-phylo) ---"
+    echo "--- Step 4a: Phylogenetic config SKIPPED (--skip-phylo) ---"
     echo ""
 else
-    echo "--- Step 4: Routing to phylogenetic pipelines ---"
+    echo "--- Step 4a: Generating nextstrain/ebola config ---"
     echo ""
 
     # Collect ebolavirus samples and group by species
@@ -385,47 +413,115 @@ for species in sorted(species_samples):
     print(f"    {species}: {', '.join(s['seqName'] for s in samples)}")
 PYCONFIG
 
-        # Run nextstrain/ebola from its source directory, then move results
-        EBOLA_PHYLO_DIR="${HOME}/.nextstrain/pathogens/ebola/main=NVQWS3Q=/phylogenetic"
-
-        if [[ -d "${EBOLA_PHYLO_DIR}" ]]; then
-            # Copy input files into Snakemake's working directory
-            cp -r "${PHYLO_DIR}/input" "${EBOLA_PHYLO_DIR}/"
-            cp "${PHYLO_DIR}/config.yaml" "${EBOLA_PHYLO_DIR}/pgirl_config.yaml"
-
-            echo "  Running nextstrain/ebola phylogenetic pipeline..."
-            echo ""
-
-            eval "$("${HOME}/.nextstrain/cli-standalone/nextstrain" init-shell zsh 2>/dev/null || true)"
-            nextstrain build --cpus 4 "${EBOLA_PHYLO_DIR}" --configfile pgirl_config.yaml --forceall 2>&1 | tail -10
-
-            echo ""
-
-            # Move results to our output directory
-            mkdir -p "${PHYLO_DIR}/auspice" "${PHYLO_DIR}/results"
-            for species_dir in ${EBOLA_PHYLO_DIR}/results/*/; do
-                species=$(basename "${species_dir}")
-                # Only move species from our config
-                if grep -q "${species}" "${PHYLO_DIR}/config.yaml" 2>/dev/null; then
-                    mv "${species_dir}" "${PHYLO_DIR}/results/" 2>/dev/null || true
-                fi
-            done
-            mv "${EBOLA_PHYLO_DIR}"/auspice/ebola_*_all-outbreaks.json "${PHYLO_DIR}/auspice/" 2>/dev/null || true
-
-            # Clean up copied files from pipeline directory
-            rm -rf "${EBOLA_PHYLO_DIR}/input" "${EBOLA_PHYLO_DIR}/pgirl_config.yaml"
-
-            echo "  Phylogenetic results saved to: ${PHYLO_DIR}/"
-        else
-            echo "  WARNING: nextstrain/ebola not found at ${EBOLA_PHYLO_DIR}"
-        fi
-        echo ""
     else
         echo "  No ebolavirus samples found — skipping nextstrain/ebola."
         echo "  (Other pathogen phylogenetic pipelines not yet configured)"
         echo ""
     fi
 fi
+fi  # end step phylo_config
+
+# =============================================================================
+# STEP 4b: Run nextstrain/ebola phylogenetic build (per species if --species)
+# =============================================================================
+if [[ "${RUN_STEP}" == "all" || "${RUN_STEP}" == "phylo" || "${RUN_STEP}" == "phylo_build" ]]; then
+if [[ "${SKIP_PHYLO}" == "true" ]]; then
+    echo "--- Step 4b: Phylogenetic build SKIPPED (--skip-phylo) ---"
+    echo ""
+elif [[ ! -f "${PHYLO_DIR}/config.yaml" ]]; then
+    echo "--- Step 4b: No config.yaml found — no ebolavirus samples to build ---"
+    echo ""
+else
+    # Determine which builds to run
+    if [[ -n "${RUN_SPECIES}" ]]; then
+        BUILD_TARGET="${RUN_SPECIES}/all-outbreaks"
+        echo "--- Step 4b: Building nextstrain/ebola — ${RUN_SPECIES} ---"
+    else
+        BUILD_TARGET=""
+        echo "--- Step 4b: Building nextstrain/ebola — all species ---"
+    fi
+    echo ""
+
+    # Auto-discover the nextstrain ebola pathogen directory (hash changes on updates)
+    EBOLA_PATHOGEN_BASE=$(find "${HOME}/.nextstrain/pathogens/ebola" -maxdepth 1 -type d -name "main=*" 2>/dev/null | head -1)
+    EBOLA_PHYLO_DIR="${EBOLA_PATHOGEN_BASE}/phylogenetic"
+
+    if [[ -d "${EBOLA_PHYLO_DIR}" ]]; then
+        # Copy input files into Snakemake's working directory
+        cp -r "${PHYLO_DIR}/input" "${EBOLA_PHYLO_DIR}/"
+
+        # Build a per-species or full config
+        if [[ -n "${RUN_SPECIES}" ]]; then
+            # Create a species-specific config from the full config
+            python3 - "${PHYLO_DIR}/config.yaml" "${EBOLA_PHYLO_DIR}/pgirl_config.yaml" "${RUN_SPECIES}" <<'PYFILTER'
+import sys, yaml
+
+full_config = sys.argv[1]
+out_config = sys.argv[2]
+species = sys.argv[3]
+
+with open(full_config) as f:
+    lines = f.readlines()
+
+# Simple filter: keep only inputs and builds for this species
+with open(out_config, 'w') as f:
+    f.write(f'# Auto-generated for species: {species}\n\n')
+    f.write('inputs:\n')
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.strip().startswith('- name:'):
+            # Read the next 3 lines (name, species, metadata, sequences)
+            block = [lines[i+j] for j in range(4) if i+j < len(lines)]
+            if any(f'species: {species}' in b for b in block):
+                for b in block:
+                    f.write(b)
+            i += 4
+        else:
+            i += 1
+    f.write(f'\nbuilds:\n')
+    f.write(f'  - {species}/all-outbreaks\n')
+PYFILTER
+        else
+            cp "${PHYLO_DIR}/config.yaml" "${EBOLA_PHYLO_DIR}/pgirl_config.yaml"
+        fi
+
+        echo "  Running nextstrain/ebola phylogenetic pipeline..."
+        echo ""
+
+        eval "$("${HOME}/.nextstrain/cli-standalone/nextstrain" init-shell zsh 2>/dev/null || true)"
+        nextstrain build --cpus 4 "${EBOLA_PHYLO_DIR}" --configfile pgirl_config.yaml --forceall 2>&1 | tail -10
+
+        echo ""
+
+        # Move results to our output directory
+        mkdir -p "${PHYLO_DIR}/auspice" "${PHYLO_DIR}/results"
+        if [[ -n "${RUN_SPECIES}" ]]; then
+            # Move only this species' results
+            if [[ -d "${EBOLA_PHYLO_DIR}/results/${RUN_SPECIES}" ]]; then
+                mv "${EBOLA_PHYLO_DIR}/results/${RUN_SPECIES}" "${PHYLO_DIR}/results/" 2>/dev/null || true
+            fi
+            mv "${EBOLA_PHYLO_DIR}/auspice/ebola_${RUN_SPECIES}_all-outbreaks.json" "${PHYLO_DIR}/auspice/" 2>/dev/null || true
+        else
+            for species_dir in ${EBOLA_PHYLO_DIR}/results/*/; do
+                species=$(basename "${species_dir}")
+                if grep -q "${species}" "${PHYLO_DIR}/config.yaml" 2>/dev/null; then
+                    mv "${species_dir}" "${PHYLO_DIR}/results/" 2>/dev/null || true
+                fi
+            done
+            mv "${EBOLA_PHYLO_DIR}"/auspice/ebola_*_all-outbreaks.json "${PHYLO_DIR}/auspice/" 2>/dev/null || true
+        fi
+
+        # Clean up copied files from pipeline directory
+        rm -rf "${EBOLA_PHYLO_DIR}/input" "${EBOLA_PHYLO_DIR}/pgirl_config.yaml"
+
+        echo "  Phylogenetic results saved to: ${PHYLO_DIR}/"
+    else
+        echo "  WARNING: nextstrain/ebola not found at ${EBOLA_PHYLO_DIR}"
+    fi
+    echo ""
+fi
+fi  # end step phylo_build
 
 # =============================================================================
 # Summary

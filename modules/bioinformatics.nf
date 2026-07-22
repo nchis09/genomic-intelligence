@@ -1,19 +1,21 @@
 /*
  * Bioinformatics module: Nextclade classification + nextstrain/ebola phylogenetics.
  *
- * Takes the full multi-sample FASTA (no per-sample splitting needed).
- * run_nextclade.sh handles:
- *   1. Screening against all Nextclade datasets
- *   2. Species/pathogen assignment per sample
- *   3. Full Nextclade analysis per sample (sample-centric folders)
- *   4. Auto-routing to nextstrain/ebola for ebolavirus samples
+ * Split into 4 stages so Nextflow shows per-step progress:
+ *   1. NEXTCLADE_SCREEN   — screen all sequences against 15 datasets (1 task)
+ *   2. NEXTCLADE_ASSIGN   — assign species per sample (1 task)
+ *   3. NEXTCLADE_ANALYZE  — full Nextclade analysis (1 task per sample)
+ *   4. NEXTSTRAIN_PHYLO   — nextstrain/ebola phylogenetics (1 task)
  *
  * Outputs land in:
  *   <outdir>/nextclade_classification/   (Nextclade results)
  *   <outdir>/nextstrain_ebola/           (phylogenetic results)
  */
-process BIOINFORMATICS {
-    tag "nextclade_classification"
+
+def runner = "${projectDir}/intelligence_engine/bioinformatics/run_nextclade.sh"
+
+process NEXTCLADE_SCREEN {
+    tag "screen_datasets"
 
     input:
     path input_fasta
@@ -21,13 +23,83 @@ process BIOINFORMATICS {
     val outdir
 
     output:
-    val "${projectDir}/${outdir}/nextclade_classification", emit: nextclade_dir
-    val "${projectDir}/${outdir}/nextstrain_ebola",         emit: nextstrain_dir
+    val "${projectDir}/${outdir}", emit: out_dir
 
     script:
-    def runner = "${projectDir}/intelligence_engine/bioinformatics/run_nextclade.sh"
-    def out   = "${projectDir}/${outdir}"
+    def out = "${projectDir}/${outdir}"
     """
-    bash "${runner}" "${input_fasta}" "${input_metadata}" "${out}"
+    bash "${runner}" "${input_fasta}" "${input_metadata}" "${out}" --step screen
+    """
+}
+
+process NEXTCLADE_ASSIGN {
+    tag "assign_species"
+
+    input:
+    path input_fasta
+    path input_metadata
+    val out_dir
+
+    output:
+    val out_dir, emit: out_dir
+
+    script:
+    """
+    bash "${runner}" "${input_fasta}" "${input_metadata}" "${out_dir}" --step assign
+    """
+}
+
+process NEXTCLADE_ANALYZE {
+    tag "${sample_id}"
+
+    input:
+    path input_fasta
+    path input_metadata
+    val out_dir
+    val sample_id
+
+    output:
+    val out_dir, emit: out_dir
+
+    script:
+    """
+    bash "${runner}" "${input_fasta}" "${input_metadata}" "${out_dir}" --step analyze --sample "${sample_id}"
+    """
+}
+
+process NEXTSTRAIN_CONFIG {
+    tag "phylo_config"
+
+    input:
+    path input_fasta
+    path input_metadata
+    val out_dir
+
+    output:
+    val out_dir, emit: out_dir
+
+    script:
+    """
+    bash "${runner}" "${input_fasta}" "${input_metadata}" "${out_dir}" --step phylo_config
+    """
+}
+
+process NEXTSTRAIN_BUILD {
+    tag "${species}"
+    maxForks 1
+    errorStrategy 'ignore'
+
+    input:
+    path input_fasta
+    path input_metadata
+    val out_dir
+    val species
+
+    output:
+    val out_dir, emit: out_dir
+
+    script:
+    """
+    bash "${runner}" "${input_fasta}" "${input_metadata}" "${out_dir}" --step phylo_build --species "${species}"
     """
 }

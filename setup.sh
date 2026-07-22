@@ -72,30 +72,40 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# --- Environment files ---
-declare -A ENV_FILES
-ENV_FILES[nextstrain]="${ENVS_DIR}/pgirl_nextstrain.yml"
-ENV_FILES[db]="${ENVS_DIR}/pgirl_db.yml"
-ENV_FILES[analysis]="${ENVS_DIR}/pgirl_analysis.yml"
+# --- Environment definitions (compatible with bash 3.x / macOS) ---
+ALL_ENVS="nextstrain db analysis"
 
-declare -A ENV_NAMES
-ENV_NAMES[nextstrain]="pgirl_nextstrain"
-ENV_NAMES[db]="pgirl_db"
-ENV_NAMES[analysis]="pgirl_analysis"
+env_file() {
+    case "$1" in
+        nextstrain) echo "${ENVS_DIR}/pgirl_nextstrain.yml" ;;
+        db)         echo "${ENVS_DIR}/pgirl_db.yml" ;;
+        analysis)   echo "${ENVS_DIR}/pgirl_analysis.yml" ;;
+        *)          echo "" ;;
+    esac
+}
+
+env_name() {
+    case "$1" in
+        nextstrain) echo "pgirl_nextstrain" ;;
+        db)         echo "pgirl_db" ;;
+        analysis)   echo "pgirl_analysis" ;;
+        *)          echo "" ;;
+    esac
+}
 
 # --- Create or update environments ---
 create_env() {
     local key="$1"
-    local yml="${ENV_FILES[$key]}"
-    local name="${ENV_NAMES[$key]}"
+    local yml; yml=$(env_file "$key")
+    local name; name=$(env_name "$key")
 
-    if ! [ -f "$yml" ]; then
+    if [ -z "$yml" ] || ! [ -f "$yml" ]; then
         echo "  ERROR: ${yml} not found"
         return 1
     fi
 
     # Check if env already exists
-    if ${CONDA_CMD} env list 2>/dev/null | grep -q "/${name}\$\|/${name} "; then
+    if ${CONDA_CMD} env list 2>/dev/null | grep -q "/${name}$\|/${name} "; then
         echo "  [${name}] Already exists — updating..."
         ${CONDA_CMD} env update -f "$yml" --prune -q
     else
@@ -110,12 +120,12 @@ if [ "$CHECK_ONLY" = false ]; then
     echo ""
 
     if [ "$TARGET_ENV" = "all" ]; then
-        for key in nextstrain db analysis; do
+        for key in $ALL_ENVS; do
             create_env "$key"
             echo ""
         done
     else
-        if [ -z "${ENV_FILES[$TARGET_ENV]+x}" ]; then
+        if [ -z "$(env_file "$TARGET_ENV")" ]; then
             echo "ERROR: Unknown env '${TARGET_ENV}'. Options: nextstrain, db, analysis"
             exit 1
         fi
@@ -180,9 +190,9 @@ echo "--- Verifying installation ---"
 echo ""
 
 # Check each env exists
-for key in nextstrain db analysis; do
-    name="${ENV_NAMES[$key]}"
-    if ${CONDA_CMD} env list 2>/dev/null | grep -q "/${name}\$\|/${name} "; then
+for key in $ALL_ENVS; do
+    name=$(env_name "$key")
+    if ${CONDA_CMD} env list 2>/dev/null | grep -q "/${name}$\|/${name} "; then
         echo "  [${name}] ✓ installed"
     else
         echo "  [${name}] ✗ NOT installed"
