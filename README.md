@@ -1,5 +1,9 @@
 # Genomic Epidemic Intelligence System
 
+> **⚠️ WORK IN PROGRESS — NOT YET READY FOR PRODUCTION USE ⚠️**
+>
+> This system is under active development. The bioinformatics pipeline (Nextclade classification + nextstrain/ebola phylogenetics) is functional. Downstream stages (database queries, epidemiological analysis, evidence integration, intelligence report generation) are not yet connected.
+
 A knowledge-based system that translates pathogen genomic data into epidemic intelligence and early warning alerts by answering epidemiological questions through curated evidence databases.
 
 ## Overview
@@ -136,111 +140,132 @@ tiers, and a template are in [`input/README.md`](./input/README.md) and
 FASTA (completeness, lineage, mutations, closest reference) is **computed by the engine**,
 not submitted.
 
-## Quick start
+## Quick Start
 
-### Requirements
+### Prerequisites
 
-- [Nextflow](https://www.nextflow.io/) (`>=23.04`)
-- Python 3.10+ with the packages listed in `environment.yml`
-  - The wrapper scripts auto-detect and prefer Anaconda/Miniconda if installed.
-  - Alternatively, use `-profile conda` to let Nextflow build the `pgirl` Conda environment.
-- PostgreSQL 16
-- [Ollama](https://ollama.com/) (optional; only needed for `--use_llm true`)
+- **Conda** or **Mamba** (for environment management)
+- **Java 11+** (required by Nextflow)
+- **Git** (to clone nextstrain/ebola during setup)
 
-### 1. Set up the environment and the reference database
+### 1. Clone the repository
 
-This installs required Python packages, checks external tools, creates the `pgirl` PostgreSQL database, loads the schema, and fetches the canonical reference proteomes.
+```bash
+git clone https://github.com/nchis09/genomic-intelligence.git
+cd genomic-intelligence
+```
 
-> **Recommended first run / CI setup:** the curated-data sync downloads data from NCBI, UniProt and PubTator and can take **10-30 minutes**. To load only the schema and canonical reference proteomes (enough to run the deterministic pipeline), use:
->
-> ```bash
-> PGIRL_SYNC_SOURCES=none ./setup.sh
-> ```
+### 2. Run setup
 
-Full setup with curated data:
+This creates 3 conda environments, clones nextstrain/ebola, applies compatibility patches, and verifies all tools:
 
 ```bash
 ./setup.sh
 ```
 
-If you prefer a managed Conda environment, use:
+Setup options:
 
 ```bash
-./setup.sh -profile conda
-./run_pipeline.sh -profile conda ...
+./setup.sh                    # Create all 3 environments + clone nextstrain/ebola
+./setup.sh --env nextstrain   # Create only the nextstrain environment
+./setup.sh --check            # Verify existing installation without creating envs
 ```
 
-### 2. Run the end-to-end analysis pipeline
+#### Conda Environments
 
-#### Fully deterministic (recommended first run; no LLM required)
+| Environment | Purpose | Key Tools |
+|---|---|---|
+| `pgirl_nextstrain` | Bioinformatics (current) | nextflow, nextclade, augur, snakemake, mafft, iqtree |
+| `pgirl_db` | Database queries (future) | nextflow, psycopg2, sqlalchemy, pandas |
+| `pgirl_analysis` | Evidence integration (future) | nextflow, biopython, scipy, networkx, matplotlib |
+
+Each environment includes **Nextflow** so any pipeline stage can be orchestrated independently.
+
+Environment definition files are in `envs/`:
+- `envs/pgirl_nextstrain.yml`
+- `envs/pgirl_db.yml`
+- `envs/pgirl_analysis.yml`
+
+### 3. Run the bioinformatics pipeline
 
 ```bash
-./run_pipeline.sh \
+conda activate pgirl_nextstrain
+nextflow run main.nf
+```
+
+With custom inputs:
+
+```bash
+nextflow run main.nf \
   --input_fasta input/input_FASTA.fasta \
-  --input_metadata input/input_metadata.csv \
-  --outdir output \
-  --use_llm false
+  --input_metadata input/metadata.tsv \
+  --outdir output
 ```
 
-#### With local LLM narrative synthesis
+### What the pipeline does
 
-Pull the default local model first (7B — fast on most laptops):
+The bioinformatics pipeline (`run_nextclade.sh`) performs:
 
-```bash
-ollama pull qwen2.5:7b
+1. **Screening** — screens all input sequences against 15 Nextclade datasets (Ebola, SARS-CoV-2, Influenza, Mpox, Dengue, Measles, RSV, Yellow Fever, HMPV, WNV)
+2. **Species assignment** — assigns pathogen/species per sample based on best QC score
+3. **Full Nextclade analysis** — runs per-sample analysis with the correct reference (mutations, clade, QC, translations, phylogenetic placement)
+4. **Phylogenetics** — auto-routes ebolavirus samples to nextstrain/ebola for phylogenetic tree building (MAFFT alignment, IQ-TREE, timetree, Auspice export)
+
+Nextclade datasets are **auto-downloaded** on first run — no manual database setup needed.
+
+### Output structure
+
+```
+output/
+├── nextclade_classification/
+│   ├── assignments.tsv                    # Species assignment for all samples
+│   ├── SAMPLE-0001_bdbv/                  # Per-sample Nextclade results
+│   │   ├── nextclade.tsv                  # Mutations, clade, QC
+│   │   ├── nextclade.aligned.fasta        # Aligned sequence
+│   │   ├── nextclade.cds_translation.*.fasta  # Protein translations
+│   │   ├── nextclade.auspice.json         # Phylogenetic placement
+│   │   └── nextclade.nwk                  # Newick tree
+│   └── SAMPLE-0002_sudv/                  # Another sample
+├── nextstrain_ebola/
+│   ├── config.yaml                        # Auto-generated build config
+│   ├── input/                             # Per-species FASTA + metadata
+│   ├── results/                           # Per-species phylogenetic results
+│   │   ├── bdbv/                          # All BDBV samples grouped
+│   │   └── sudv/                          # All SUDV samples grouped
+│   └── auspice/                           # Auspice JSON trees for visualisation
+│       ├── ebola_bdbv_all-outbreaks.json
+│       └── ebola_sudv_all-outbreaks.json
+└── work/                                  # Nextflow work directory
 ```
 
-For higher quality narrative at the cost of speed, use the 14B model:
-
-```bash
-OLLAMA_MODEL=qwen2.5:14b ./run_pipeline.sh ... --use_llm true
-```
-
-Then run with the LLM enabled:
-
-```bash
-./run_pipeline.sh \
-  --input_fasta input/input_FASTA.fasta \
-  --input_metadata input/input_metadata.csv \
-  --outdir output \
-  --use_llm true
-```
-
-`run_pipeline.sh` starts Ollama if it is not already running and stops the server it started once the pipeline finishes. If Ollama is unavailable or an LLM call times out, the pipeline automatically falls back to deterministic output.
-
-All defaults use `db_url=postgresql://localhost:5432/pgirl`, so `--db_url` can be omitted if your database is at that URL.
-
-### Output organisation
-
-After a successful run, the key results are consolidated under `${outdir}/reports/<sample_id>/`:
-
-- `final_report.txt` — combined genomic intelligence brief + report
-- `figures/` — copied figures referenced by the report
-- `context_used.json` — grounding context passed to the LLM (for traceability)
-
-A machine-readable summary of the whole run is written to:
-
-- `${outdir}/run_summary.json`
-
-Intermediate stage outputs remain under `${outdir}/bioinformatics/`, `${outdir}/data_query/`, `${outdir}/evidence_integration/`, and `${outdir}/genomic_intelligence/`.
-
-### Logs and work directories
-
-`run_pipeline.sh` keeps the project root clean:
-
-- Nextflow log: `${outdir}/.nextflow.log`
-- Execution work directory: `${outdir}/work/`
+- **Nextclade results** are **per sample** (each sample gets its own folder)
+- **Nextstrain/ebola results** are **grouped by species** (one phylogenetic tree per species, with all samples of that species placed among public reference data)
 
 ### Common parameters
 
 | Parameter | Default | Description |
 |---|---|---|
 | `--input_fasta` | `input/input_FASTA.fasta` | Multi-sample input FASTA |
-| `--input_metadata` | `input/input_metadata.csv` | Sample metadata CSV |
+| `--input_metadata` | `input/metadata.tsv` | Sample metadata TSV (accession, strain, date, region, country, division, location, host) |
 | `--outdir` | `output` | Root output directory |
-| `--db_url` | `postgresql://localhost:5432/pgirl` | PostgreSQL connection URL |
-| `--pathogen` | `ebola` | Target pathogen for setup and analysis |
-| `--use_llm` | `false` | Enable local Ollama LLM narrative synthesis |
+
+### Future pipeline stages (not yet connected)
+
+When downstream stages are re-enabled, the full pipeline will be:
+
+```bash
+# 1. Bioinformatics (current)
+conda activate pgirl_nextstrain
+nextflow run main.nf
+
+# 2. Database update (future)
+conda activate pgirl_db
+nextflow run db_update.nf
+
+# 3. Full pipeline with DB queries + evidence integration (future)
+conda activate pgirl_nextstrain
+nextflow run main.nf   # will auto-switch conda envs per process
+```
 
 ## Ebola Variant Data Pipeline
 
