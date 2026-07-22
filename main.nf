@@ -2,12 +2,16 @@
 nextflow.enable.dsl=2
 
 /*
- * PGIRL end-to-end sample analysis workflow.
+ * PGIRL Genomic Epidemic Intelligence System — Bioinformatics Pipeline
+ *
+ * Current scope: Nextclade classification + nextstrain/ebola phylogenetics.
+ * Downstream stages (DB query, epi query, evidence integration) will be
+ * re-enabled when ready.
  *
  * Usage:
  *   nextflow run main.nf
- *   nextflow run main.nf --input_fasta input/input_FASTA.fasta --input_metadata input/input_metadata.csv
- *   nextflow run main.nf --db_url postgresql://localhost:5432/pgirl --use_llm false
+ *   nextflow run main.nf --input_fasta input/input_FASTA.fasta --input_metadata input/metadata.tsv
+ *   nextflow run main.nf --outdir output
  */
 
 include { SAMPLE_ANALYSIS } from './workflows/sample_analysis'
@@ -17,7 +21,5 @@ workflow {
         file(params.input_fasta),
         file(params.input_metadata),
         params.outdir,
-        params.db_url,
-        params.use_llm,
     )
 }

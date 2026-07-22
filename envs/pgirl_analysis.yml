@@ -1,0 +1,26 @@
+name: pgirl_analysis
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python>=3.10
+  - pip
+  # Nextflow (shared pipeline orchestrator)
+  - nextflow>=24.0
+  # Bioinformatics
+  - biopython>=1.83
+  # Analysis / graphing
+  - scipy
+  - networkx
+  - dendropy
+  - matplotlib
+  # Data handling
+  - pandas
+  - pyyaml
+  - requests
+  - pydantic>=2
+  - typing_extensions
+  # Comparative genomics (PyPI only)
+  - pip:
+      - lovis4u

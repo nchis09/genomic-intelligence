@@ -14,7 +14,7 @@ process DB_SYNC {
     def dry_flag = dry_run ? "--dry-run" : ""
     """
     export PYTHONPATH="${projectDir}"
-    python3 "${projectDir}/scripts/db_sync.py" \
+    ${params.python} "${projectDir}/scripts/db_sync.py" \
         --db-url "${db_url}" \
         --pathogens "${pathogens}" \
         --sources "${sources}" \

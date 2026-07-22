@@ -12,6 +12,7 @@ To move to a new computer:
   4. Done — everything else works automatically
 """
 
+import os
 from pathlib import Path
 
 # ─── Base directory ───────────────────────────────────────────────────────────
@@ -26,10 +27,14 @@ EBOLA_DATA_DIR  = DATABASE_DIR / "ebola"
 SCRIPTS_DIR     = BASE_DIR / "scripts"
 INTELLIGENCE_DIR = BASE_DIR / "intelligence_engine"
 
+# ─── Bioinformatics tool databases ────────────────────────────────────────────
+# Kraken2 viral database for taxonomic classification.
+# Override by setting environment variable PGIRL_KRAKEN_DB before running any script.
+KRAKEN_DB = os.environ.get("PGIRL_KRAKEN_DB", str(Path.home() / "dabase" / "kraken_database"))
+
 # ─── Database connection ──────────────────────────────────────────────────────
 # Override by setting environment variable PGIRL_DB_URL before running any script.
 # Example: export PGIRL_DB_URL=postgresql://user:password@remotehost:5432/pgirl
-import os
 DB_URL = os.environ.get("PGIRL_DB_URL", "postgresql://localhost:5432/pgirl")
 
 # ─── Ebola curated data files ─────────────────────────────────────────────────

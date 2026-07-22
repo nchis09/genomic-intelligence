@@ -7,7 +7,7 @@ process SETUP_ENV {
     script:
     """
     echo "=== PGIRL environment setup ==="
-    python3 - <<'PY'
+    ${params.python} - <<'PY'
     import importlib
     import subprocess
     import sys

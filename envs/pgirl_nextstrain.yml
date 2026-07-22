@@ -1,0 +1,29 @@
+name: pgirl_nextstrain
+channels:
+  - nextstrain
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python>=3.10
+  - pip
+  - git
+  # Nextflow (shared pipeline orchestrator)
+  - nextflow>=24.0
+  # Nextstrain toolkit
+  - nextstrain-cli>=8.0
+  - augur>=25.0
+  - auspice>=2.53
+  - nextclade>=3.0
+  # Workflow manager (nextstrain/ebola uses Snakemake)
+  - snakemake>=8.0
+  # Alignment
+  - mafft>=7.520
+  # Tree building
+  - iqtree>=2.2
+  - raxml-ng>=1.2
+  # Molecular clock / timetree
+  - treetime>=0.11
+  # Sequence utilities
+  - seqkit>=2.6
+  - biopython>=1.83

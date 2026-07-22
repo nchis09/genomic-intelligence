@@ -1,0 +1,12 @@
+# Cloned external pipelines — tracked in their own repos
+viralrecon/
+nextstrain_ebola/
+nextclade/
+
+# Nextflow work directories
+work/
+.nextflow/
+.nextflow.log*
+
+# Snakemake temp
+.snakemake/

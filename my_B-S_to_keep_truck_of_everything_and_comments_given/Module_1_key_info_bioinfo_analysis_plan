@@ -284,3 +284,28 @@
 ║                                                                   ║
 ║  → This JSON is what the intelligence engine consumes             ║
 └═══════════════════════════════════════════════════════════════════┘
+comparative_genomics
+diagnostic_primer_compatibility
+evolutionary_rate_assessment
+functional_mutation_annotation
+gp_editing_site_analysis
+gp_mutation_analysis
+lineage_assignment
+normalisation
+novelty_detection
+outbreak_comparison
+phylodynamics
+phylogenetics
+phylogeography
+protein_mutation_analysis
+quality_control
+recombination
+reference_selection
+schemas
+selection_pressure
+surveillance_trend
+taxonomic_classification
+transmission_clusters
+transmission_network
+variant_calling
+vp24_vp35_mutation_analysis

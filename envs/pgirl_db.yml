@@ -1,0 +1,20 @@
+name: pgirl_db
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - pip
+  # Nextflow (shared pipeline orchestrator)
+  - nextflow>=24.0
+  # Database connectivity
+  - psycopg2
+  - sqlalchemy>=2.0
+  # Data handling
+  - pandas
+  - pyarrow
+  # Config / web / API
+  - pyyaml
+  - requests
+  - pydantic>=2
+  - typing_extensions

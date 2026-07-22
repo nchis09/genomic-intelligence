@@ -1,21 +1,33 @@
+/*
+ * Bioinformatics module: Nextclade classification + nextstrain/ebola phylogenetics.
+ *
+ * Takes the full multi-sample FASTA (no per-sample splitting needed).
+ * run_nextclade.sh handles:
+ *   1. Screening against all Nextclade datasets
+ *   2. Species/pathogen assignment per sample
+ *   3. Full Nextclade analysis per sample (sample-centric folders)
+ *   4. Auto-routing to nextstrain/ebola for ebolavirus samples
+ *
+ * Outputs land in:
+ *   <outdir>/nextclade_classification/   (Nextclade results)
+ *   <outdir>/nextstrain_ebola/           (phylogenetic results)
+ */
 process BIOINFORMATICS {
-    tag "${sample_id}"
+    tag "nextclade_classification"
 
     input:
-    tuple val(sample_id), path(sample_fasta), path(sample_metadata)
+    path input_fasta
+    path input_metadata
     val outdir
-    val db_url
 
     output:
-    tuple val(sample_id), val("${projectDir}/${outdir}/bioinformatics/${sample_id}"), emit: bio_tuple
+    val "${projectDir}/${outdir}/nextclade_classification", emit: nextclade_dir
+    val "${projectDir}/${outdir}/nextstrain_ebola",         emit: nextstrain_dir
 
     script:
+    def runner = "${projectDir}/intelligence_engine/bioinformatics/run_nextclade.sh"
+    def out   = "${projectDir}/${outdir}"
     """
-    export PYTHONPATH="${projectDir}"
-    python3 -m intelligence_engine.bioinformatics.pipeline \
-        --fasta "${sample_fasta}" \
-        --metadata "${sample_metadata}" \
-        --output-dir "${projectDir}/${outdir}/bioinformatics" \
-        --db-url "${db_url}"
+    bash "${runner}" "${input_fasta}" "${input_metadata}" "${out}"
     """
 }

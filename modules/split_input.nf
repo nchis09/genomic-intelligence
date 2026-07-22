@@ -12,7 +12,7 @@ process SPLIT_INPUT {
     script:
     """
     export PYTHONPATH="${projectDir}"
-    python3 "${projectDir}/scripts/split_samples.py" \
+    ${params.python} "${projectDir}/scripts/split_samples.py" \
         --fasta "${fasta}" \
         --metadata "${metadata}" \
         --output-dir "${outdir}/split_input"

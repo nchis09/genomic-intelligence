@@ -13,7 +13,7 @@ process EPI_QUERY {
     def llm_flag = use_llm ? "" : "--no-llm"
     """
     export PYTHONPATH="${projectDir}"
-    python3 -m intelligence_engine.data_engine.online_querying.epi_query_engine \
+    ${params.python} -m intelligence_engine.data_engine.online_querying.epi_query_engine \
         --bio-output "${bio_dir}/bio_output.json" \
         --db-query-results "${db_query_dir}/db_query_results.json" \
         --output "${projectDir}/${outdir}/data_query/${sample_id}/epi_output.json" \

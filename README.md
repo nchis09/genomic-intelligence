@@ -149,16 +149,18 @@ not submitted.
 
 ### 1. Set up the environment and the reference database
 
-This installs required Python packages, checks external tools, creates the `pgirl` PostgreSQL database, loads the schema, and fetches the canonical Ebola reference proteomes.
+This installs required Python packages, checks external tools, creates the `pgirl` PostgreSQL database, loads the schema, and fetches the canonical reference proteomes.
+
+> **Recommended first run / CI setup:** the curated-data sync downloads data from NCBI, UniProt and PubTator and can take **10-30 minutes**. To load only the schema and canonical reference proteomes (enough to run the deterministic pipeline), use:
+>
+> ```bash
+> PGIRL_SYNC_SOURCES=none ./setup.sh
+> ```
+
+Full setup with curated data:
 
 ```bash
 ./setup.sh
-```
-
-The optional curated-data sync (NCBI, UniProt, PubTator) can take 10-30 minutes. To skip it and still be able to run the deterministic pipeline, use:
-
-```bash
-PGIRL_SYNC_SOURCES=none ./setup.sh
 ```
 
 If you prefer a managed Conda environment, use:
@@ -208,6 +210,20 @@ Then run with the LLM enabled:
 
 All defaults use `db_url=postgresql://localhost:5432/pgirl`, so `--db_url` can be omitted if your database is at that URL.
 
+### Output organisation
+
+After a successful run, the key results are consolidated under `${outdir}/reports/<sample_id>/`:
+
+- `final_report.txt` — combined genomic intelligence brief + report
+- `figures/` — copied figures referenced by the report
+- `context_used.json` — grounding context passed to the LLM (for traceability)
+
+A machine-readable summary of the whole run is written to:
+
+- `${outdir}/run_summary.json`
+
+Intermediate stage outputs remain under `${outdir}/bioinformatics/`, `${outdir}/data_query/`, `${outdir}/evidence_integration/`, and `${outdir}/genomic_intelligence/`.
+
 ### Logs and work directories
 
 `run_pipeline.sh` keeps the project root clean:
@@ -223,6 +239,7 @@ All defaults use `db_url=postgresql://localhost:5432/pgirl`, so `--db_url` can b
 | `--input_metadata` | `input/input_metadata.csv` | Sample metadata CSV |
 | `--outdir` | `output` | Root output directory |
 | `--db_url` | `postgresql://localhost:5432/pgirl` | PostgreSQL connection URL |
+| `--pathogen` | `ebola` | Target pathogen for setup and analysis |
 | `--use_llm` | `false` | Enable local Ollama LLM narrative synthesis |
 
 ## Ebola Variant Data Pipeline

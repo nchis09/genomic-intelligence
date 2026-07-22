@@ -7,9 +7,13 @@ process CHECK_ENV {
     script:
     """
     echo "=== PGIRL environment check ==="
-    echo "Python: \$(python3 --version)"
+    echo "Python: \$(${params.python} --version)"
     echo "Nextclade: \$(nextclade --version 2>/dev/null || echo 'nextclade not found')"
-    python3 - <<'PY'
+    echo "Kraken2: \$(kraken2 --version 2>/dev/null || echo 'kraken2 not found')"
+    echo "Kraken2 DB: \$(test -d '${params.kraken_db}' && echo '${params.kraken_db} (found)' || echo '${params.kraken_db} (NOT found)')"
+    echo "seqkit: \$(seqkit --version 2>/dev/null || echo 'seqkit not found')"
+    echo "minimap2: \$(minimap2 --version 2>/dev/null || echo 'minimap2 not found')"
+    ${params.python} - <<'PY'
     import importlib
     pkgs = [
         "psycopg2",

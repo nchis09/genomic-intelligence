@@ -10,7 +10,7 @@ process GENOMIC_INTELLIGENCE {
     script:
     """
     export PYTHONPATH="${projectDir}"
-    python3 -m intelligence_engine.genomic_intelligence.synthesize \
+    ${params.python} -m intelligence_engine.genomic_intelligence.synthesize \
         --evidence-integration-dir "${evidence_dir}" \
         --output-dir "${projectDir}/${outdir}/genomic_intelligence/${sample_id}" \
         --bioinformatics-dir "${bio_dir}" \

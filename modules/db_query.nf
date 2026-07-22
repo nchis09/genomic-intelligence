@@ -12,7 +12,7 @@ process DB_QUERY {
     script:
     """
     export PYTHONPATH="${projectDir}"
-    python3 -m intelligence_engine.data_engine.sql_querying.bioinformatics_query \
+    ${params.python} -m intelligence_engine.data_engine.sql_querying.bioinformatics_query \
         --bioinformatics-dir "${bio_parent_dir}" \
         --output-dir "${projectDir}/${outdir}/data_query" \
         --sample "${sample_id}" \

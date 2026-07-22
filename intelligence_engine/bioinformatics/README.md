@@ -1,92 +1,142 @@
-# PGIRL Bioinformatics Pipeline
+# PGIRL Bioinformatics — Established Workflow Integration
 
-This directory contains the modular, pathogen-aware bioinformatics workflow for
-the Genomic Epidemic Intelligence System. The pipeline accepts assembled
-consensus genomes (FASTA) and produces a normalised `bio_output.json` for each
-sample, which is consumed by the downstream data engine, evidence integration
-and genomic intelligence stages.
+This directory integrates two established, community-maintained tools for
+viral genomic analysis, replacing the custom module-by-module approach.
 
 ## Architecture
 
 ```
-intelligence_engine/bioinformatics/
-├── pipeline.py                     # Top-level orchestrator
-├── nextclade_runner.py             # Nextclade CLI wrapper
-└── modules/
-    ├── quality_control.py          # Stage 0: input validation & QC
-    ├── taxonomic_classification.py # Stage 1: pathogen identification
-    ├── schemas/                    # Metadata & taxonomy schemas
-    │   ├── metadata_schema.yaml
-    │   └── ebola_taxonomy.yaml
-    ├── reference_selection.py      # Stage 2: curated reference + context
-    ├── alignment.py                # Stage 3: alignment (planned enhancement)
-    ├── variant_calling.py          # Stage 4: variant calling (Nextclade reuse)
-    ├── lineage_assignment.py       # Stage 5: clade, lineage, QC & mutations
-    ├── phylogenetics.py            # Stage 6: ML tree (Nextclade stub)
-    ├── recombination.py            # Stage 7: recombination / reassortment
-    ├── comparative_genomics.py     # Stage 8: gene content / dN/dS
-    └── normalisation.py            # Stage 9: bio_output.json assembler
-└── pathogen_workflows/
-    └── ebola.py                    # Ebola-specific stage wiring
+INPUT: Unknown consensus FASTA sequences
+                    │
+    ┌───────────────▼───────────────┐
+    │   Nextclade (Classification)  │
+    │                               │
+    │ Step 1: Screen all datasets   │
+    │ Step 2: Assign pathogen/species│
+    │ Step 3: Full analysis:        │
+    │   • Alignment                 │
+    │   • Translation               │
+    │   • Mutation calling           │
+    │   • Clade/outbreak assignment │
+    │   • QC                        │
+    │   • Phylogenetic placement    │
+    └───────────────┬───────────────┘
+                    │
+    ┌───────────────▼───────────────┐
+    │   nextstrain/ebola            │
+    │   (Snakemake)                 │
+    │                               │
+    │   • Subsampling               │
+    │   • Tree (IQ-TREE)            │
+    │   • Timetree                  │
+    │   • Phylogeography            │
+    │   • Ancestral reconstruction  │
+    │   • Auspice export            │
+    └───────────────┬───────────────┘
+                    │
+    ┌───────────────▼───────────────┐
+    │  PGIRL Intelligence Layer     │
+    │  (downstream)                 │
+    └───────────────────────────────┘
 ```
 
-## Quick start
+## Pipeline Logic
 
-Run the full Ebola pipeline on the bundled example data:
+1. **Nextclade** — Pathogen identification, classification, QC, and mutation calling
+   - Screens input sequences against all supported pathogen datasets
+   - Assigns species/pathogen based on best QC score + coverage
+   - Runs full analysis (alignment, translation, mutations, clade) using the correct reference
+   - Supported pathogens: Ebola (EBOV, BDBV, SUDV), SARS-CoV-2, Influenza (H1N1, H3N2, Vic),
+     Mpox, Dengue, Measles, RSV, Yellow Fever, Marburg, West Nile, HMPV, and more
+
+2. **nextstrain/ebola** — Phylogenetics and transmission dynamics
+   - Builds de novo phylogenetic tree (IQ-TREE)
+   - Infers timetree with molecular clock (TreeTime)
+   - Reconstructs ancestral sequences and mutations per gene
+   - Infers phylogeography (transmission routes)
+   - Exports interactive Auspice visualization
+
+## Directory Layout
+
+```
+bioinformatics/
+├── nextclade/               # Cloned: nextstrain/nextclade (reference)
+├── nextstrain_ebola/        # Cloned: nextstrain/ebola
+├── viralrecon/              # Cloned: nf-core/viralrecon (reserved for FASTQ workflows)
+├── envs/
+│   ├── viralrecon.yml       # Conda env for Nextflow + nf-core (future use)
+│   └── nextstrain.yml       # Conda env for Augur + Snakemake + tools
+├── run_nextclade.sh         # Wrapper: classification + full analysis
+└── README.md                # This file
+```
+
+## Setup
+
+### Prerequisites
+
+Nextstrain CLI must be installed (provides nextclade + augur + snakemake):
 
 ```bash
-/Users/christianndekezi/anaconda3/bin/python3 -m \
-  intelligence_engine.bioinformatics.pipeline \
-  --fasta input/input_FASTA.fasta \
-  --metadata input/input_metadata.csv \
-  --pathogen ebola \
-  --species-id EBOV \
-  --output-dir output/bioinformatics
+# Install Nextstrain CLI (already done)
+nextstrain --version
+
+# Nextclade binary location:
+# /Users/christianndekezi/.nextstrain/runtimes/conda/env/bin/nextclade
 ```
 
-Supported Ebola species identifiers: `EBOV`, `SUDV`, `BDBV`, `RESTV`, `TAFV`, `BOMV`.
-
-## Pipeline stages
-
-| Stage | Module | Status | Notes |
-|-------|--------|--------|-------|
-| 0 | `modules/quality_control.py` | Implemented | metadata validation, seqkit stats, genome QC flags |
-| 1 | `modules/taxonomic_classification.py` | Implemented | Kraken2 + NCBI BLAST; Ebola taxonomy bundled; optional in Ebola workflow |
-| 2 | `modules/reference_selection.py` | Implemented | queries PGIRL DB, fetches NCBI reference, gathers context |
-| 3 | `modules/alignment.py` | Stub | will add MAFFT standalone alignment |
-| 4 | `modules/variant_calling.py` | Implemented (Nextclade-backed) | amino-acid variants primary; nucleotide changes as supporting evidence |
-| 5 | `modules/lineage_assignment.py` | Implemented | Nextclade clade/QC/mutation parser |
-| 6 | `modules/phylogenetics.py` | Stub | currently copies Nextclade placement tree |
-| 7 | `modules/recombination.py` | Stub | RDP5 / reassortment planned |
-| 8 | `modules/comparative_genomics.py` | Partial | GC content; dN/dS planned |
-| 9 | `modules/normalisation.py` | Implemented | assembles `bio_output.json` |
-
-## Downstream integration
-
-The `bio_output.json` files feed directly into:
+### Verify installation
 
 ```bash
-# Data engine / DB queries
-python3 -m intelligence_engine.data_engine.sql_querying.bioinformatics_query \
-  --bioinformatics-dir output/bioinformatics \
-  --output-dir output/data_query
-
-# Epidemiological queries (requires a running Ollama/LLM backend)
-python3 -m intelligence_engine.data_engine.online_querying.epi_query_engine \
-  --bio-output output/bioinformatics/EBOV-UGA-2027-001/bio_output.json \
-  --db-query-results output/data_query/EBOV-UGA-2027-001/db_query_results.json \
-  --output output/data_query/EBOV-UGA-2027-001/epi_output.json
+nextclade --version
+nextstrain --version
 ```
 
-## Implementation notes
+## Running the Pipeline
 
-- Nextclade is used as the validated tool for Ebola lineage assignment,
-  mutation calling and QC. Module stubs are in place so each stage can later
-  be swapped with a standalone implementation (MAFFT + IQ-TREE2 + custom
-  variant caller) for unsupported pathogens.
-- The reference selection module queries the PGIRL PostgreSQL database
-  (`pgirl`) for curated reference genomes and proteomes; make sure the DB
-  is running on `postgresql://localhost:5432/pgirl` or set `--db-url`.
-- Pathogen-aware dispatch happens at `pipeline.py`; additional pathogens can
-  be added by implementing a module under `pathogen_workflows/` and wiring it
-  in the orchestrator.
+### Nextclade — Classification + Full Analysis
+
+Accepts **any viral consensus FASTA** (unknown pathogen):
+
+```bash
+./run_nextclade.sh input/sequences.fasta output/nextclade
+```
+
+This will:
+1. Screen against all Nextclade datasets
+2. Identify pathogen and species per sequence
+3. Run full analysis with correct reference
+4. Output: TSV (mutations, clade, QC), aligned FASTA, translations, tree placement
+
+### Nextstrain — Phylogenetics & Genomic Epidemiology
+
+After classification, run phylogenetics for the identified pathogen:
+
+```bash
+nextstrain build phylogenetic --cores 4
+```
+
+View results interactively:
+```bash
+nextstrain view phylogenetic/auspice/
+```
+
+## Key Differences from Old Pipeline
+
+| Aspect | Old (bioinformatics_old/) | New |
+|--------|--------------------------|-----|
+| Classification | Manual species assignment | Auto-screening all Nextclade datasets |
+| Scope | Ebola only | All Nextclade-supported pathogens (100+) |
+| Mutation calling | Custom scripts | Nextclade (validated, published) |
+| Phylogenetics | Nextclade placement tree | Full IQ-TREE + timetree + phylogeography |
+| Visualization | Static PNGs | Interactive Auspice |
+| Maintenance | Us | Community-maintained (nextstrain) |
+
+## Notes
+
+- The **PGIRL intelligence layer** (functional annotation, novelty detection,
+  outbreak comparison, diagnostic primer checks, surveillance trends) remains
+  downstream and consumes outputs from these pipelines.
+- **viralrecon** is kept for future use with FASTQ input (raw reads → consensus).
+- For new pathogens, Nextstrain has separate pathogen repos that can be cloned
+  similarly (e.g., `nextstrain/dengue`, `nextstrain/avian-flu`).
+- The old pipeline is preserved at `bioinformatics_old/` for reference.

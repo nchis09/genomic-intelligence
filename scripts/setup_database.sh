@@ -75,9 +75,17 @@ fi
 echo "Loading schema from ${schema_file} ..."
 "${PSQL}" -d "${DB_NAME}" -f "${schema_file}"
 
-# Fetch reference genomes / proteomes from NCBI
-echo "Fetching Ebola reference proteomes ..."
-"${PYTHON}" "${PROJECT_ROOT}/database/ebola/protein_variants/fetch_reference_proteomes.py"
+# Target pathogen (default: ebola). Used to decide which reference proteome
+# fetcher and curated-data sync to run.
+PATHOGEN="${PGIRL_PATHOGEN:-ebola}"
+
+# Fetch reference genomes / proteomes from NCBI for the configured pathogen.
+if [ "${PATHOGEN}" = "ebola" ]; then
+    echo "Fetching Ebola reference proteomes ..."
+    "${PYTHON}" "${PROJECT_ROOT}/database/ebola/protein_variants/fetch_reference_proteomes.py"
+else
+    echo "Reference proteome fetcher not yet implemented for pathogen '${PATHOGEN}'; skipping."
+fi
 
 # Optionally sync curated reference data from external sources.
 # This step can take 10-30 minutes because it fetches data from NCBI, UniProt,
@@ -87,10 +95,10 @@ SYNC_SOURCES="${PGIRL_SYNC_SOURCES:-all}"
 if [ "${SYNC_SOURCES}" = "none" ]; then
     echo "Skipping curated data sync (PGIRL_SYNC_SOURCES=none)."
 else
-    echo "Syncing curated reference data (sources: ${SYNC_SOURCES}) ..."
+    echo "Syncing curated reference data for '${PATHOGEN}' (sources: ${SYNC_SOURCES}) ..."
     "${PYTHON}" "${PROJECT_ROOT}/scripts/db_sync.py" \
         --db-url "${DB_URL}" \
-        --pathogens ebola \
+        --pathogens ${PATHOGEN} \
         --sources ${SYNC_SOURCES}
 fi
 

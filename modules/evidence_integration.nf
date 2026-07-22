@@ -10,7 +10,7 @@ process EVIDENCE_INTEGRATION {
     script:
     """
     export PYTHONPATH="${projectDir}"
-    python3 -m intelligence_engine.evidence_integration.pipeline.intelligence_pipeline \
+    ${params.python} -m intelligence_engine.evidence_integration.pipeline.intelligence_pipeline \
         --bio-output "${bio_dir}/bio_output.json" \
         --epi-output "${data_query_dir}/epi_output.json" \
         --tree-file "${bio_dir}/tree.nwk" \
