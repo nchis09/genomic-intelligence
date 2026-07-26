@@ -29,25 +29,18 @@
 > [!NOTE]
 > If you are new to Nextflow and nf-core, please refer to [this page](https://nf-co.re/docs/get_started/environment_setup/overview) on how to set-up Nextflow. Make sure to [test your setup](https://nf-co.re/docs/get_started/run-your-first-pipeline) with `-profile test` before running the workflow on actual data.
 
-First, prepare a samplesheet with your input data:
+Provide a consensus FASTA file and a metadata TSV file:
 
-`samplesheet.csv`:
-
-```csv
-sample,fasta,metadata
-ebola_bdbv,input/sequences.fasta,input/metadata.tsv
-```
-
-Each row represents a set of consensus sequences and their associated metadata for one pathogen species.
+- `sequences.fasta` — one or more consensus sequences (multiple pathogen species can be mixed; the pipeline assigns species using Nextclade).
+- `metadata.tsv` — sample metadata with at least `strain`, `date`, and `country` columns.
 
 Now, you can run the pipeline using:
 
-<!-- TODO nf-core: update the following command to include all required parameters for a minimal example -->
-
 ```bash
-nextflow run pgirl/genomic-intelligence \
+nextflow run nchis09/genomic-intelligence \
    -profile <docker/singularity/.../institute> \
-   --input samplesheet.csv \
+   --fasta sequences.fasta \
+   --metadata metadata.tsv \
    --outdir <OUTDIR>
 ```
 
