@@ -1,0 +1,35 @@
+Collecting package metadata (current_repodata.json): ...working... done
+Solving environment: ...working... done
+
+## Package Plan ##
+
+  environment location: /Users/christianndekezi/Desktop/GOARN_fellowship/peoject_work/nf-genomic-intelligence/input/work/conda/env-e2cab46a815b6967b91a05fe593e38cc
+
+  added / updated specs:
+    - conda-forge::python
+
+
+The following NEW packages will be INSTALLED:
+
+  bzip2              conda-forge/osx-arm64::bzip2-1.0.8-hd037594_9 
+  ca-certificates    conda-forge/noarch::ca-certificates-2026.7.22-hbd8a1cb_0 
+  libexpat           conda-forge/osx-arm64::libexpat-2.8.1-hf6b4638_1 
+  libffi             conda-forge/osx-arm64::libffi-3.5.2-hcf2aa1b_0 
+  liblzma            conda-forge/osx-arm64::liblzma-5.8.3-h8088a28_0 
+  libmpdec           conda-forge/osx-arm64::libmpdec-4.0.0-h84a0fba_1 
+  libsqlite          conda-forge/osx-arm64::libsqlite-3.53.4-h1b79a29_0 
+  libzlib            conda-forge/osx-arm64::libzlib-1.3.2-h8088a28_2 
+  ncurses            conda-forge/osx-arm64::ncurses-6.6-h1d4f5a5_0 
+  openssl            conda-forge/osx-arm64::openssl-3.6.3-hd24854e_0 
+  pip                conda-forge/noarch::pip-26.1.2-pyh145f28c_0 
+  python             conda-forge/osx-arm64::python-3.14.6-h156bc91_101_cp314 
+  python_abi         conda-forge/noarch::python_abi-3.14-8_cp314 
+  readline           conda-forge/osx-arm64::readline-8.3-h46df422_0 
+  tk                 conda-forge/osx-arm64::tk-8.6.13-hd3d0363_3 
+  tzdata             conda-forge/noarch::tzdata-2026c-h151e31d_0 
+  zstd               conda-forge/osx-arm64::zstd-1.5.7-hbf9d68e_6 
+
+
+Preparing transaction: ...working... done
+Verifying transaction: ...working... done
+Executing transaction: ...working... done

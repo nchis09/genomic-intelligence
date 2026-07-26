@@ -1,0 +1,19 @@
+name: pgirl_ggtree
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-base>=4.5
+  # Bioconductor tree packages
+  - bioconductor-ggtree
+  - bioconductor-ggtreeextra
+  - bioconductor-treeio
+  # CRAN ggplot2 ecosystem
+  - r-ggplot2
+  - r-ggnewscale
+  - r-ggstar
+  - r-dplyr
+  - r-tidyr
+  - r-ape
+  - r-rcolorbrewer
