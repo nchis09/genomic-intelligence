@@ -4,7 +4,7 @@
  * Build a phylogenetic tree and produce annotated visualisation:
  *   1. NEXTSTRAIN_EBOLA — run the Nextstrain Ebola Snakemake workflow per species
  *   2. PHYLO_ANNOTATE   — extract tip metadata & mutation matrix
- *   3. PHYLO_PLOT       — ggtree annotated tree figure
+ *   3. PHYLO_VISUALIZE  — static annotated tree + per-genome heatmap + map
  *
  * Input:  ch_species_data - channel of [ meta, fasta, metadata ]
  *         where meta includes: id, pathogen, species
@@ -13,7 +13,7 @@
 
 include { NEXTSTRAIN_EBOLA } from '../../../modules/local/nextstrain_ebola/main'
 include { PHYLO_ANNOTATE   } from '../../../modules/local/phylo_annotate/main'
-include { PHYLO_PLOT       } from '../../../modules/local/phylo_plot/main'
+include { PHYLO_VISUALIZE  } from '../../../modules/local/phylo_visualize/main'
 
 workflow PHYLOGENETICS {
     take:
@@ -41,7 +41,7 @@ workflow PHYLOGENETICS {
     PHYLO_ANNOTATE(ch_annotate_input)
 
     //
-    // MODULE: Plot annotated tree
+    // MODULE: Static annotated tree + per-genome heatmap + geographic map
     //
     // Combine tip_metadata with results_dir and optional mutation_matrix
     ch_plot_base = PHYLO_ANNOTATE.out.tip_metadata
@@ -59,10 +59,11 @@ workflow PHYLOGENETICS {
             [ meta, results, tip_meta, mut_matrix ?: file('NO_FILE') ]
         }
 
-    PHYLO_PLOT(ch_plot_input)
+    PHYLO_VISUALIZE(ch_plot_input)
 
     emit:
-    figures      = PHYLO_PLOT.out.figure               // channel: [ meta, png ]
+    figures      = PHYLO_VISUALIZE.out.tree_heatmap
+                       .mix(PHYLO_VISUALIZE.out.geo_map) // channel: [ meta, png ]
     tip_metadata = PHYLO_ANNOTATE.out.tip_metadata     // channel: [ meta, tsv ]
     auspice      = NEXTSTRAIN_EBOLA.out.auspice        // channel: [ meta, json ]
     results      = NEXTSTRAIN_EBOLA.out.results_dir    // channel: [ meta, dir ]

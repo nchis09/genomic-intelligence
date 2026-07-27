@@ -1,5 +1,8 @@
 # pgirl/genomic-intelligence
 
+> [!WARNING]
+> This pipeline is under active development. Its workflow, parameters, and outputs may change before a stable release.
+
 [![Open in GitHub Codespaces](https://img.shields.io/badge/Open_In_GitHub_Codespaces-black?labelColor=grey&logo=github)](https://github.com/codespaces/new/pgirl/genomic-intelligence)
 [![GitHub Actions CI Status](https://github.com/pgirl/genomic-intelligence/actions/workflows/nf-test.yml/badge.svg)](https://github.com/pgirl/genomic-intelligence/actions/workflows/nf-test.yml)
 [![GitHub Actions Linting Status](https://github.com/pgirl/genomic-intelligence/actions/workflows/linting.yml/badge.svg)](https://github.com/pgirl/genomic-intelligence/actions/workflows/linting.yml)[![Cite with Zenodo](http://img.shields.io/badge/DOI-10.5281/zenodo.XXXXXXX-1073c8?labelColor=000000)](https://doi.org/10.5281/zenodo.XXXXXXX)
@@ -24,10 +27,41 @@
 4. **Visualisation** — Annotated rectangular phylogeny with branches colored by country and mutation heatmap ([`ggtree`](https://bioconductor.org/packages/ggtree/))
 5. **QC report** — Aggregate quality metrics ([`MultiQC`](http://multiqc.info/))
 
+## Prerequisites
+
+- **Conda** or **Mamba** (for environment management)
+- **Java 11–24** (required by Nextflow; Java 25 is not yet supported)
+- **Git** (to clone nextstrain/ebola during setup)
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/nchis09/genomic-intelligence.git
+cd genomic-intelligence
+```
+
+### 2. Set up the Nextstrain Ebola data
+
+The phylogenetics stage relies on background sequences from the [nextstrain/ebola](https://github.com/nextstrain/ebola) repository. These files are **not** included in the repository and must be cloned locally:
+
+```bash
+git clone https://github.com/nextstrain/ebola.git data/nextstrain_ebola
+```
+
+Then apply the augur compatibility patch (renames `_resolve_filepath` → `resolve_filepath`):
+
+```bash
+PATCH_FILE="data/nextstrain_ebola/shared/vendored/snakemake/config.smk"
+if grep -q "_resolve_filepath" "$PATCH_FILE" 2>/dev/null; then
+  sed -i'' -e 's/_resolve_filepath/resolve_filepath/g' "$PATCH_FILE"
+  echo "Patch applied ✓"
+fi
+```
+
 ## Usage
 
 > [!NOTE]
-> If you are new to Nextflow and nf-core, please refer to [this page](https://nf-co.re/docs/get_started/environment_setup/overview) on how to set-up Nextflow. Make sure to [test your setup](https://nf-co.re/docs/get_started/run-your-first-pipeline) with `-profile test` before running the workflow on actual data.
+> If you are new to Nextflow, refer to the [Nextflow installation guide](https://www.nextflow.io/docs/latest/install.html) to set up the runtime.
 
 Provide a consensus FASTA file and a metadata TSV file:
 
@@ -37,23 +71,33 @@ Provide a consensus FASTA file and a metadata TSV file:
 Now, you can run the pipeline using:
 
 ```bash
-nextflow run nchis09/genomic-intelligence \
-   -profile <docker/singularity/.../institute> \
-   --fasta sequences.fasta \
-   --metadata metadata.tsv \
-   --outdir <OUTDIR>
+nextflow run main.nf \
+  --fasta input/input_FASTA.fasta \
+  --metadata input/metadata.tsv \
+  --outdir results \
+  -profile conda \
+  -resume
 ```
+
+Run this command from the root directory of a local clone of the repository. The `conda` profile provides the required software environment, and `-resume` reuses successfully completed tasks from a previous run when possible.
 
 > [!WARNING]
 > Please provide pipeline parameters via the CLI or Nextflow `-params-file` option. Custom config files including those provided by the `-c` Nextflow option can be used to provide any configuration _**except for parameters**_; see [docs](https://nf-co.re/docs/running/run-pipelines#using-parameter-files).
 
+## Outputs
+
+For each detected species the pipeline produces:
+
+- `results/nextstrain_ebola/{species}/auspice/*.json` — interactive Nextstrain/Auspice dataset.
+- `results/nextstrain_ebola/{species}/results/` — Nextstrain Augur results including `tree.nwk`.
+- `results/nextstrain_ebola/annotations/{species}*_tip_metadata.tsv` and `*_mutation_matrix.tsv` — extracted tip metadata and mutation matrix.
+- `results/figures/{species}_tree_heatmap.png` — static annotated phylogeny with per-genome mutation heatmap.
+- `results/figures/{species}_geo_map.png` — static world map showing the geographic distribution of samples.
+
 ## Credits
 
-pgirl/genomic-intelligence was originally written by GOARN fellowship.
+pgirl/genomic-intelligence was originally written in collaboration with the Uganda Virus Research Institute (UVRI), Robert Koch Institute (RKI), Global Outbreak Alert and Response Network (GOARN), and the WHO Hub for Pandemic and Epidemic Intelligence.
 
-We thank the following people for their extensive assistance in the development of this pipeline:
-
-<!-- TODO nf-core: If applicable, make list of people who have also contributed -->
 
 ## Contributions and Support
 
@@ -61,17 +105,10 @@ If you would like to contribute to this pipeline, please see the [contributing g
 
 ## Citations
 
-<!-- TODO nf-core: Add citation for pipeline after first release. Uncomment lines below and update Zenodo doi and badge at the top of this file. -->
 <!-- If you use pgirl/genomic-intelligence for your analysis, please cite it using the following doi: [10.5281/zenodo.XXXXXX](https://doi.org/10.5281/zenodo.XXXXXX) -->
 
-<!-- TODO nf-core: Add bibliography of tools and data used in your pipeline -->
 
 An extensive list of references for the tools used by the pipeline can be found in the [`CITATIONS.md`](CITATIONS.md) file.
 
 This pipeline uses code and infrastructure developed and maintained by the [nf-core](https://nf-co.re) community, reused here under the [MIT license](https://github.com/nf-core/tools/blob/main/LICENSE).
 
-> **The nf-core framework for community-curated bioinformatics pipelines.**
->
-> Philip Ewels, Alexander Peltzer, Sven Fillinger, Harshil Patel, Johannes Alneberg, Andreas Wilm, Maxime Ulysse Garcia, Paolo Di Tommaso & Sven Nahnsen.
->
-> _Nat Biotechnol._ 2020 Feb 13. doi: [10.1038/s41587-020-0439-x](https://dx.doi.org/10.1038/s41587-020-0439-x).

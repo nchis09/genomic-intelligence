@@ -17,3 +17,6 @@ dependencies:
   - r-tidyr
   - r-ape
   - r-rcolorbrewer
+  - r-optparse
+  - r-maps
+  - r-patchwork
