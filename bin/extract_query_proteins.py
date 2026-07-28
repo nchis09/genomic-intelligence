@@ -7,7 +7,13 @@ Dynamically discover UniProt accessions from pipeline outputs by:
   2. Finding reference tips sharing the same outbreak/strain
   3. Finding reference tips sharing identical AA mutations (per gene)
   4. Mapping GenBank (INSDC) accessions → UniProt via cross-reference search
-  5. Downloading UniProtKB TSV for discovered accessions
+  5. Falling back to an organism+gene UniProt search for uncovered genes
+  6. Searching for reviewed (Swiss-Prot) canonical accessions per gene, with
+     a genus-level cross-species fallback — required because curated
+     mutagenesis/variation feature data (queried downstream by
+     annotate_rbioapi.R) only exists on reviewed entries, never on the
+     unreviewed isolate-specific accessions found by strategies 1-5
+  7. Downloading UniProtKB TSV for discovered accessions
 
 AA mutations (query + reference tips) are sourced from the Nextstrain
 build's own nextclade.tsv (codon-aware, reference-relative substitution
@@ -266,18 +272,30 @@ def genbank_to_uniprot(genbank_ids):
     return results
 
 
+GENE_SEARCH_MAP = {
+    "GP": "GP", "GP_003": "GP", "NP": "NP",
+    "VP35": "VP35", "VP40": "VP40", "VP30": "VP30",
+    "VP24": "VP24", "L": "L",
+}
+
+ORGANISM_MAP = {
+    "bdbv": "Bundibugyo virus", "ebov": "Ebola virus",
+    "sudv": "Sudan virus", "tafv": "Tai Forest ebolavirus",
+    "restv": "Reston virus",
+}
+
+# Genus/family-level term used to fall back to a related species' reviewed
+# UniProt entry when the exact species has no reviewed Swiss-Prot coverage.
+GENUS_FALLBACK_NAME = "ebolavirus"
+
+
 def search_uniprot_by_organism(organism_name, genome_genes):
     """
     Fallback: search UniProt by organism name to find protein accessions
     for each gene. Used when xref mapping returns poor coverage.
     Returns: dict { gene: [ { accession, gene, protein_name, organism } ] }
     """
-    # Map common Ebola gene names to UniProt-compatible search terms
-    gene_search_map = {
-        "GP": "GP", "GP_003": "GP", "NP": "NP",
-        "VP35": "VP35", "VP40": "VP40", "VP30": "VP30",
-        "VP24": "VP24", "L": "L",
-    }
+    gene_search_map = GENE_SEARCH_MAP
     results = {}
     # Clean organism name for search
     org_query = organism_name.strip()
@@ -319,6 +337,90 @@ def search_uniprot_by_organism(organism_name, genome_genes):
             print(f"    organism+gene:{gene} → ERROR: {e}", file=sys.stderr)
             results[gene] = []
         time.sleep(0.3)
+    return results
+
+
+def search_uniprot_reviewed_canonical(organism_name, genus_name, genome_genes):
+    """
+    Find reviewed (Swiss-Prot) canonical UniProt accessions per gene.
+
+    Curated feature annotations used by rbioapi's mutagenesis/variation
+    endpoints (EBI Proteins API) only exist on reviewed Swiss-Prot entries,
+    never on the unreviewed (TrEMBL) isolate-specific accessions produced
+    by the xref/organism discovery strategies above. This strategy runs
+    unconditionally for every gene to surface those curated accessions.
+
+    First tries the exact species organism name; if no reviewed entry
+    exists for that species (common for e.g. Bundibugyo/Tai Forest/Reston
+    ebolavirus, which have sparse Swiss-Prot coverage), falls back to a
+    broader genus-level search and picks up a reviewed entry from a
+    related species instead (tagged as cross-species).
+
+    NOTE: cross-species entries may use different residue numbering than
+    the reference sequence used for phylogenetic mutation calling, so
+    query_mutation_match position overlaps for those rows are best-effort
+    and not guaranteed to be biologically equivalent positions.
+
+    Returns: dict { gene: [ { accession, gene, protein_name, organism,
+                               cross_species } ] }
+    """
+    def _search(org_query, gene_query):
+        query = f'reviewed:true AND (organism_name:"{org_query}") AND (gene:{gene_query})'
+        fields = "accession,gene_names,protein_name,organism_name"
+        url = (
+            f"https://rest.uniprot.org/uniprotkb/search?"
+            f"query={urllib.parse.quote(query)}"
+            f"&format=tsv&fields={fields}&size=10"
+        )
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "PGIRL-pipeline/1.0"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                content = resp.read().decode("utf-8")
+            lines = content.strip().split("\n")
+            entries = []
+            if len(lines) > 1:
+                header = lines[0].split("\t")
+                for line in lines[1:]:
+                    cols = line.split("\t")
+                    row = dict(zip(header, cols))
+                    entries.append({
+                        "accession": row.get("Entry", ""),
+                        "gene": row.get("Gene Names", ""),
+                        "protein_name": row.get("Protein names", ""),
+                        "organism": row.get("Organism", ""),
+                    })
+            return entries
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+            print(f"    reviewed_canonical ERROR: {e}", file=sys.stderr)
+            return []
+
+    results = {}
+    org_query = (organism_name or "").strip()
+    genus_query = (genus_name or "").strip()
+
+    for gene in genome_genes:
+        search_gene = GENE_SEARCH_MAP.get(gene, gene)
+        entries = []
+        cross_species = False
+
+        if org_query:
+            entries = _search(org_query, search_gene)
+
+        if not entries and genus_query:
+            entries = _search(genus_query, search_gene)
+            cross_species = True
+
+        for e in entries:
+            e["cross_species"] = cross_species
+
+        results[gene] = entries
+        if entries:
+            label = "cross-species fallback" if cross_species else "species-specific"
+            print(f"    reviewed_canonical:{gene} → {len(entries)} entries ({label})", file=sys.stderr)
+        else:
+            print(f"    reviewed_canonical:{gene} → no reviewed entries found (species or genus)", file=sys.stderr)
+        time.sleep(0.3)
+
     return results
 
 
@@ -533,39 +635,50 @@ def main():
                         genes_covered.update(genome_genes)
 
         uncovered_genes = [g for g in genome_genes if g not in genes_covered]
-        if uncovered_genes:
-            # Detect organism from the closest reference neighbor
-            organism_name = ""
-            for t in phylo_neighbors:
-                org = get_value(t.get("node_attrs", {}), "strain")
-                if org:
-                    # Infer organism from the Auspice title or species
-                    break
-            # Use the Auspice metadata title to extract organism
-            title = meta.get("title", "")
-            # Common patterns: "Bundibugyo virus", "Ebola virus", etc.
-            organism_map = {
-                "bdbv": "Bundibugyo virus", "ebov": "Ebola virus",
-                "sudv": "Sudan virus", "tafv": "Tai Forest ebolavirus",
-                "restv": "Reston virus",
-            }
-            organism_name = organism_map.get(args.species, "")
 
-            if organism_name:
-                print(f"\n  [Strategy 5] Fallback: search UniProt by organism '{organism_name}' for {len(uncovered_genes)} uncovered genes:", file=sys.stderr)
-                org_results = search_uniprot_by_organism(organism_name, uncovered_genes)
-                for gene, entries in org_results.items():
-                    for e in entries:
-                        all_uniprot_accessions.add(e["accession"])
-                        all_discoveries.append({
-                            "sample": sample_name, "gene": gene,
-                            "ref_tip": "organism_search",
-                            "insdc": "",
-                            "reason": f"organism_fallback:{organism_name}:{gene}",
-                            "uniprot_accessions": e["accession"],
-                        })
+        # Common patterns: "Bundibugyo virus", "Ebola virus", etc.
+        organism_name = ORGANISM_MAP.get(args.species, "")
 
-        print(f"\n  Total UniProt accessions after all strategies: {len(all_uniprot_accessions)}", file=sys.stderr)
+        if uncovered_genes and organism_name:
+            print(f"\n  [Strategy 5] Fallback: search UniProt by organism '{organism_name}' for {len(uncovered_genes)} uncovered genes:", file=sys.stderr)
+            org_results = search_uniprot_by_organism(organism_name, uncovered_genes)
+            for gene, entries in org_results.items():
+                for e in entries:
+                    all_uniprot_accessions.add(e["accession"])
+                    all_discoveries.append({
+                        "sample": sample_name, "gene": gene,
+                        "ref_tip": "organism_search",
+                        "insdc": "",
+                        "reason": f"organism_fallback:{organism_name}:{gene}",
+                        "uniprot_accessions": e["accession"],
+                    })
+
+        # --- Strategy 6: Reviewed-canonical accessions for mutagenesis/variation ---
+        # Runs unconditionally for every gene: curated mutagenesis/variant
+        # feature data (queried later by annotate_rbioapi.R) only exists on
+        # reviewed Swiss-Prot entries, never on the unreviewed isolate-
+        # specific accessions found by strategies 1-5 above.
+        print(f"\n  [Strategy 6] Reviewed-canonical UniProt accessions (species='{organism_name or 'unknown'}', genus fallback='{GENUS_FALLBACK_NAME}'):", file=sys.stderr)
+        reviewed_results = search_uniprot_reviewed_canonical(organism_name, GENUS_FALLBACK_NAME, genome_genes)
+        n_reviewed = 0
+        for gene, entries in reviewed_results.items():
+            for e in entries:
+                n_reviewed += 1
+                all_uniprot_accessions.add(e["accession"])
+                reason = (
+                    f"reviewed_canonical_crossspecies:{e.get('organism','')}:{gene}"
+                    if e.get("cross_species")
+                    else f"reviewed_canonical:{e.get('organism','')}:{gene}"
+                )
+                all_discoveries.append({
+                    "sample": sample_name, "gene": gene,
+                    "ref_tip": "reviewed_canonical_search",
+                    "insdc": "",
+                    "reason": reason,
+                    "uniprot_accessions": e["accession"],
+                })
+
+        print(f"\n  Total UniProt accessions after all strategies: {len(all_uniprot_accessions)} ({n_reviewed} reviewed-canonical)", file=sys.stderr)
 
         # --- Reconstruct protein sequences ---
         for gene in genome_genes:
@@ -593,6 +706,7 @@ def main():
             "mutation_matches": len(seen_match),
             "unique_insdc_discovered": len(sample_insdc),
             "unique_uniprot_discovered": len(all_uniprot_accessions),
+            "reviewed_canonical_accessions": n_reviewed,
         })
 
     # -----------------------------------------------------------------------
