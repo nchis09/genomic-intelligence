@@ -1,13 +1,15 @@
 /*
- * Subworkflow: PHYLOGENETICS
+ * Subworkflow: EBOLA_WORKFLOW
  *
- * Build a phylogenetic tree and produce annotated visualisation:
+ * Pathogen-specific workflow for Ebola (orthoebolavirus) species groups:
  *   1. NEXTSTRAIN_EBOLA — run the Nextstrain Ebola Snakemake workflow per species
  *   2. PHYLO_ANNOTATE   — extract tip metadata & mutation matrix
  *   3. PHYLO_VISUALIZE  — static annotated tree + per-genome heatmap + map
  *
  * Input:  ch_species_data - channel of [ meta, fasta, metadata ]
  *         where meta includes: id, pathogen, species
+ *         (species is already "bdbv"/"ebov"/"sudv", matching the Nextstrain
+ *         Ebola ingest data directory names — no renaming needed here)
  * Output: figures, tip_metadata, auspice, results
  */
 
@@ -15,14 +17,13 @@ include { NEXTSTRAIN_EBOLA } from '../../../modules/local/nextstrain_ebola/main'
 include { PHYLO_ANNOTATE   } from '../../../modules/local/phylo_annotate/main'
 include { PHYLO_VISUALIZE  } from '../../../modules/local/phylo_visualize/main'
 
-workflow PHYLOGENETICS {
+workflow EBOLA_WORKFLOW {
     take:
     ch_species_data  // channel: [ val(meta), path(fasta), path(metadata) ]
 
     main:
     //
-    // MODULE: Build Nextstrain phylogeny per species
-    // Routes by pathogen — currently only ebola is supported
+    // MODULE: Build Nextstrain Ebola phylogeny per species (bdbv/ebov/sudv)
     //
     NEXTSTRAIN_EBOLA(ch_species_data)
 

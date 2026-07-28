@@ -73,7 +73,12 @@ workflow CLASSIFICATION {
     ch_species_groups = SPECIES_ASSIGN.out.species_groups_json
         .splitJson()
         .map { group ->
-            def meta = [ id: "${group.pathogen}_${group.species}", pathogen: group.pathogen, species: group.species ]
+            def meta = [
+                id: "${group.pathogen}_${group.species}",
+                pathogen: group.pathogen,
+                species: group.species,
+                query_samples: group.samples.join(',')
+            ]
             def fasta = file(group.fasta)
             def metadata = file(group.metadata)
             [ meta, fasta, metadata ]

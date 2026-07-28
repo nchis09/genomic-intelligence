@@ -26,7 +26,7 @@ process PHYLO_ANNOTATE {
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
-    def query  = params.query_samples ?: ''
+    def query  = params.query_samples ?: (meta.query_samples ?: '')
     """
     #!/usr/bin/env python3
     import json, sys, glob

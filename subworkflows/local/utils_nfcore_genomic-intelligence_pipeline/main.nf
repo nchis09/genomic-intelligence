@@ -154,6 +154,27 @@ workflow PIPELINE_COMPLETION {
 
         completionSummary(monochrome_logs)
 
+        //
+        // Print a consolidated summary of samples/pathogens that were skipped
+        // because no workflow exists yet for their detected pathogen family
+        // (see subworkflows/local/pathogen_router/main.nf).
+        //
+        def unsupported_file = file("${outdir}/pipeline_info/unsupported_pathogens.tsv")
+        if (unsupported_file.exists()) {
+            def lines = unsupported_file.readLines().drop(1)  // skip header
+            if (lines) {
+                log.warn ""
+                log.warn "=============================================================="
+                log.warn "  WARNING: ${lines.size()} sample(s) skipped — no workflow yet"
+                log.warn "=============================================================="
+                lines.each { line ->
+                    def (sample_id, pathogen, species) = line.split('\t')
+                    log.warn "  - ${sample_id} (pathogen: '${pathogen}', species: '${species}')"
+                }
+                log.warn "See ${unsupported_file} for full details."
+                log.warn "=============================================================="
+            }
+        }
     }
 
     workflow.onError {

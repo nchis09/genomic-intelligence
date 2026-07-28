@@ -5,7 +5,8 @@
 */
 include { MULTIQC                } from '../modules/nf-core/multiqc/main'
 include { CLASSIFICATION         } from '../subworkflows/local/classification/main'
-include { PHYLOGENETICS          } from '../subworkflows/local/phylogenetics/main'
+include { PATHOGEN_ROUTER        } from '../subworkflows/local/pathogen_router/main'
+include { PHENOTYPE_ANNOTATION   } from '../subworkflows/local/phenotype_annotation/main'
 include { paramsSummaryMap       } from 'plugin/nf-schema'
 include { paramsSummaryMultiqc   } from '../subworkflows/nf-core/utils_nfcore_pipeline'
 include { softwareVersionsToYAML } from '../subworkflows/nf-core/utils_nfcore_pipeline'
@@ -42,11 +43,31 @@ workflow GENOMIC_INTELLIGENCE {
     CLASSIFICATION(ch_samplesheet, ch_datasets)
 
     //
-    // SUBWORKFLOW: Phylogenetics (Nextstrain Ebola + annotation + plotting)
+    // SUBWORKFLOW: Pathogen router (dispatches each species group to its workflow)
     //
-    // CLASSIFICATION auto-detected species → route to correct Nextstrain workflow
-    // Currently only ebola is supported; future pathogens will branch here
-    PHYLOGENETICS(CLASSIFICATION.out.species_groups)
+    // CLASSIFICATION auto-detected pathogen/species → route to the matching
+    // pathogen-specific workflow (currently only Ebola is registered).
+    // Groups whose pathogen has no registered workflow are skipped with a
+    // warning; see PATHOGEN_ROUTER.out.unsupported for the summary file.
+    PATHOGEN_ROUTER(CLASSIFICATION.out.species_groups)
+
+    //
+    // SUBWORKFLOW: Phenotype annotation (UniprotR + UniProtExtractR + rbioapi)
+    //
+    // Uses Auspice JSON + results from PATHOGEN_ROUTER to extract query sample
+    // mutations and retrieve species-specific UniProt functional annotations,
+    // mutation-level phenotype effects, STRING interactions, and Reactome pathways.
+    //
+    if (!params.skip_phenotype_annotation) {
+        ch_phenotype_input = PATHOGEN_ROUTER.out.auspice
+            .join(PATHOGEN_ROUTER.out.results, by: [0])
+            .map { meta, auspice_files, results_dir ->
+                def auspice = auspice_files instanceof List ? auspice_files[0] : auspice_files
+                [ meta, auspice, results_dir ]
+            }
+
+        PHENOTYPE_ANNOTATION(ch_phenotype_input)
+    }
 
     //
     // Collate and save software versions
@@ -106,9 +127,13 @@ workflow GENOMIC_INTELLIGENCE {
 
     emit:
     multiqc_report = MULTIQC.out.report.map { _meta, report -> [report] }.toList()
-    figures        = PHYLOGENETICS.out.figures
-    auspice        = PHYLOGENETICS.out.auspice
+    figures        = PATHOGEN_ROUTER.out.figures
+    auspice        = PATHOGEN_ROUTER.out.auspice
+    unsupported    = PATHOGEN_ROUTER.out.unsupported
     versions       = ch_versions
+    phenotype_mutations = params.skip_phenotype_annotation ? channel.empty() : PHENOTYPE_ANNOTATION.out.mutations
+    phenotype_summary   = params.skip_phenotype_annotation ? channel.empty() : PHENOTYPE_ANNOTATION.out.query_summary
+    rbioapi_results     = params.skip_phenotype_annotation ? channel.empty() : PHENOTYPE_ANNOTATION.out.rbioapi_results
 }
 
 /*

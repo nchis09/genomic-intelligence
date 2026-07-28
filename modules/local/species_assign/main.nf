@@ -107,47 +107,56 @@ process SPECIES_ASSIGN {
                 best_tsv = tsv_name
         sample_best[sample] = (best_score, best_tsv)
 
-    # --- Map TSV filenames to dataset/species ---
-    # The Nextclade datasets are like: nextstrain/ebola/bdbv, nextstrain/ebola/sudan
-    # The TSV filename typically contains the species suffix
-    # We'll extract species from the filename by matching known patterns
+    # --- Map TSV filenames to dataset/species (generic, dataset-agnostic) ---
+    # NEXTCLADE_DATASETGET downloads each dataset into a directory named after
+    # its LAST path segment (Nextflow `path.name`), e.g.:
+    #   nextstrain/orthoebolavirus/bdbv        -> dir "bdbv"
+    #   nextstrain/sars-cov-2/wuhan-hu-1/orfs   -> dir "orfs"
+    #   nextstrain/flu/h1n1pdm/ha/MW626062      -> dir "MW626062"
+    # CLASSIFICATION then names each Nextclade run "<sample>_<dir>", so the
+    # TSV filename always contains that exact leaf directory name — this is
+    # what we must match on. Pathogen family is inferred from the path
+    # segment right after the source prefix (nextstrain/community/...);
+    # species is a human-readable label built from everything after that.
+    # Pathogen-specific renaming needed by a downstream workflow (e.g.
+    # mapping Ebola's nextclade suffix to its Nextstrain ingest dir name)
+    # is handled inside that pathogen's own workflow, not here.
     nextclade_datasets_str = "${params.nextclade_datasets}".strip("[]")
     dataset_list = [d.strip().strip("'").strip('"') for d in nextclade_datasets_str.split(",")]
 
-    # Mapping from Nextclade dataset species names to Nextstrain workflow species abbreviations
-    # Nextclade uses: bdbv, sudan, zaire
-    # Nextstrain Ebola workflow uses: bdbv, sudv, ebov
-    NEXTCLADE_TO_NEXTSTRAIN = {
-        "sudan": "sudv",
-        "zaire": "ebov",
-        "bdbv": "bdbv",
-    }
-
-    # Build a map: species_suffix -> (pathogen, nextstrain_species)
-    # e.g., "bdbv" -> ("ebola", "bdbv"), "sudan" -> ("ebola", "sudv")
-    suffix_to_info = {}
+    # Build a map: leaf_dir_name -> (pathogen, species)
+    leaf_to_info = {}
     for ds in dataset_list:
-        parts = ds.strip("/").split("/")
-        if len(parts) >= 3:
-            # e.g., nextstrain/ebola/bdbv -> pathogen=ebola, species=bdbv
+        parts = [p for p in ds.strip("/").split("/") if p]
+        if len(parts) < 2:
+            continue
+        # First path segment is the dataset source (nextstrain/community/...);
+        # the pathogen family is the next segment.
+        if parts[0] in ("nextstrain", "community") and len(parts) > 2:
             pathogen = parts[1]
-            nextclade_species = parts[2]
-            nextstrain_species = NEXTCLADE_TO_NEXTSTRAIN.get(nextclade_species, nextclade_species)
-            suffix_to_info[nextclade_species] = (pathogen, nextstrain_species)
+            remainder = parts[2:]
+        else:
+            pathogen = parts[0]
+            remainder = parts[1:]
+        leaf = remainder[-1] if remainder else pathogen
+        species = "-".join(remainder) if remainder else pathogen
+        leaf_to_info[leaf] = (pathogen, species)
 
-    # Map each TSV file to a species based on filename containing the species suffix
+    # Map each TSV file to a species based on filename containing the leaf dir name
     tsv_to_species = {}
     for tsv_name in dataset_results.keys():
         matched = False
-        for suffix, (pathogen, species) in suffix_to_info.items():
-            if suffix in tsv_name.lower():
+        # Try longest leaf names first to avoid partial/ambiguous matches
+        for leaf in sorted(leaf_to_info.keys(), key=len, reverse=True):
+            pathogen, species = leaf_to_info[leaf]
+            if leaf.lower() in tsv_name.lower():
                 tsv_to_species[tsv_name] = (pathogen, species)
                 matched = True
                 break
         if not matched:
             # Fallback: use first dataset's pathogen, species = "unknown"
-            if suffix_to_info:
-                first_pathogen = list(suffix_to_info.values())[0][0]
+            if leaf_to_info:
+                first_pathogen = list(leaf_to_info.values())[0][0]
                 tsv_to_species[tsv_name] = (first_pathogen, "unknown")
             else:
                 tsv_to_species[tsv_name] = ("unknown", "unknown")
