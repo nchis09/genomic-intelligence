@@ -54,6 +54,7 @@ process UNIPROT_ANNOTATE {
     Rscript ${projectDir}/bin/annotate_rbioapi.R \\
         --mutations ${mutations_tsv} \\
         --accessions ${accessions_txt} \\
+        --uniprot_tsv ${uniprot_tsv} \\
         --rbioapi_dir ${rbioapi_dir} \\
         --species ${species} \\
         --outdir rbioapi_results \\

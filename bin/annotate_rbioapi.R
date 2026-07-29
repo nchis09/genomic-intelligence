@@ -37,6 +37,7 @@ rbioapi_dir     <- get_arg("--rbioapi_dir", "tools/rbioapi")
 species         <- get_arg("--species", "bdbv")
 outdir          <- get_arg("--outdir", ".")
 prefix          <- get_arg("--prefix", "query")
+uniprot_tsv_file <- get_arg("--uniprot_tsv")
 
 if (is.null(mutations_file) || is.null(accessions_file)) {
   stop("Usage: Rscript annotate_rbioapi.R --mutations <tsv> --accessions <txt> --rbioapi_dir <dir> --species <id> --outdir <dir> --prefix <str>")
@@ -68,9 +69,36 @@ cat("rbioapi loaded successfully.\n\n")
 mutations <- read.table(mutations_file, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
 accessions <- readLines(accessions_file)
 accessions <- accessions[nchar(accessions) > 0 & !grepl("^#", accessions)]
+accessions <- unique(accessions)  # defensive: avoid duplicate API calls
 
 cat("Mutations:", nrow(mutations), "rows\n")
 cat("Accessions:", length(accessions), "entries\n\n")
+
+# --- Accession -> gene lookup (from UniProtKB download TSV, if provided) ---
+# Used to label mutagenesis/variation rows with the gene they belong to,
+# so they can be directly cross-referenced against query_mutations.tsv
+# (which is keyed by gene + position).
+accession_gene <- new.env()
+if (!is.null(uniprot_tsv_file) && file.exists(uniprot_tsv_file)) {
+  up_tsv <- tryCatch(
+    read.table(uniprot_tsv_file, header = TRUE, sep = "\t", quote = "",
+               fill = TRUE, comment.char = "", stringsAsFactors = FALSE,
+               na.strings = c("", "NA", "NULL")),
+    error = function(e) NULL
+  )
+  if (!is.null(up_tsv) && "Entry" %in% colnames(up_tsv)) {
+    gene_col <- if ("Gene.Names" %in% colnames(up_tsv)) "Gene.Names" else
+                if ("Gene Names" %in% colnames(up_tsv)) "Gene Names" else NA
+    for (i in seq_len(nrow(up_tsv))) {
+      acc <- up_tsv$Entry[i]
+      gene <- if (!is.na(gene_col)) up_tsv[[gene_col]][i] else ""
+      assign(acc, gene %||% "", envir = accession_gene)
+    }
+  }
+}
+lookup_gene <- function(acc) {
+  if (exists(acc, envir = accession_gene)) get(acc, envir = accession_gene) %||% "" else ""
+}
 
 # --- Species taxon ID mapping for STRING ---
 species_taxon <- list(
@@ -102,23 +130,34 @@ for (acc in accessions) {
     NULL
   })
 
-  if (!is.null(result) && length(result) > 0) {
+  if (!is.null(result) && is.list(result) && length(result) > 0) {
     # result is a list with "features" sub-list
-    features <- if (is.list(result) && "features" %in% names(result)) result$features else result
+    features <- if ("features" %in% names(result)) result$features else result
+    full_seq <- result$sequence %||% ""
+    gene     <- lookup_gene(acc)
     for (feat in features) {
       if (is.list(feat)) {
-        pos_start <- feat$location$begin$position
-        pos_end   <- feat$location$end$position
+        # EBI Proteins API returns flat "begin"/"end" string fields
+        # (NOT nested under location$begin$position) — see
+        # https://www.ebi.ac.uk/proteins/api/mutagenesis/{accession}
+        pos_start <- suppressWarnings(as.integer(feat$begin %||% NA))
+        pos_end   <- suppressWarnings(as.integer(feat$end %||% NA))
         mut_desc  <- feat$description %||% ""
-        orig_aa   <- feat$originalSequence %||% ""
+        # Mutagenesis features don't carry the original (wild-type) AA;
+        # derive it from the full protein sequence at position_start.
+        orig_aa   <- if (!is.na(pos_start) && nchar(full_seq) >= pos_start) {
+          substr(full_seq, pos_start, pos_start)
+        } else ""
         alt_aas   <- if (!is.null(feat$alternativeSequence)) paste(unlist(feat$alternativeSequence), collapse = ",") else ""
 
         # Check if any query mutation falls within this position range
         matching_muts <- NULL
-        if (!is.null(pos_start) && !is.null(pos_end)) {
+        if (!is.na(pos_start) && !is.na(pos_end)) {
           for (i in seq_len(nrow(mutations))) {
             qpos <- mutations$position[i]
-            if (!is.na(qpos) && qpos >= as.integer(pos_start) && qpos <= as.integer(pos_end)) {
+            qgene <- mutations$gene[i]
+            if (!is.na(qpos) && qpos >= pos_start && qpos <= pos_end &&
+                (gene == "" || is.na(qgene) || grepl(qgene, gene, fixed = TRUE))) {
               matching_muts <- c(matching_muts, mutations$mutation_label[i])
             }
           }
@@ -126,8 +165,9 @@ for (acc in accessions) {
 
         mutagenesis_rows[[length(mutagenesis_rows) + 1]] <- data.frame(
           uniprot_accession = acc,
-          position_start = pos_start %||% NA,
-          position_end = pos_end %||% NA,
+          gene = gene,
+          position_start = pos_start,
+          position_end = pos_end,
           original_aa = orig_aa,
           alternative_aa = alt_aas,
           description = mut_desc,
@@ -150,9 +190,9 @@ if (nrow(mutagenesis_df) > 0) {
 } else {
   cat("  No mutagenesis data found.\n\n")
   mut_out <- file.path(outdir, paste0(prefix, "_mutagenesis.tsv"))
-  write.table(data.frame(uniprot_accession=character(), position_start=integer(),
-    position_end=integer(), original_aa=character(), alternative_aa=character(),
-    description=character(), query_mutation_match=character()),
+  write.table(data.frame(uniprot_accession=character(), gene=character(),
+    position_start=integer(), position_end=integer(), original_aa=character(),
+    alternative_aa=character(), description=character(), query_mutation_match=character()),
     mut_out, sep="\t", quote=FALSE, row.names=FALSE)
 }
 
@@ -172,24 +212,33 @@ for (acc in accessions) {
     NULL
   })
 
-  if (!is.null(result) && length(result) > 0) {
-    features <- if (is.list(result) && "features" %in% names(result)) result$features else result
+  if (!is.null(result) && is.list(result) && length(result) > 0) {
+    features <- if ("features" %in% names(result)) result$features else result
+    gene <- lookup_gene(acc)
     for (feat in features) {
       if (is.list(feat)) {
-        pos_start <- feat$location$begin$position
-        pos_end   <- feat$location$end$position
-        orig_aa   <- feat$originalSequence %||% ""
-        alt_aas   <- if (!is.null(feat$alternativeSequence)) paste(unlist(feat$alternativeSequence), collapse = ",") else ""
-        consequence <- feat$consequence %||% ""
-        disease    <- if (!is.null(feat$disease)) paste(feat$disease, collapse = "; ") else ""
+        # EBI Proteins API returns flat "begin"/"end" string fields, plus
+        # "wildType"/"mutatedType" (not "originalSequence"/"consequence")
+        # and free-text "descriptions" (not a "disease" field) — see
+        # https://www.ebi.ac.uk/proteins/api/variation/{accession}
+        pos_start <- suppressWarnings(as.integer(feat$begin %||% NA))
+        pos_end   <- suppressWarnings(as.integer(feat$end %||% NA))
+        orig_aa   <- feat$wildType %||% ""
+        alt_aas   <- feat$alternativeSequence %||% feat$mutatedType %||% ""
+        consequence <- feat$consequenceType %||% ""
+        notes      <- if (!is.null(feat$descriptions)) {
+          paste(sapply(feat$descriptions, function(d) d$value %||% ""), collapse = "; ")
+        } else ""
         source     <- feat$sourceType %||% ""
         evidence   <- if (!is.null(feat$evidences)) paste(sapply(feat$evidences, function(e) e$code), collapse = ";") else ""
 
         matching_muts <- NULL
-        if (!is.null(pos_start) && !is.null(pos_end)) {
+        if (!is.na(pos_start) && !is.na(pos_end)) {
           for (i in seq_len(nrow(mutations))) {
             qpos <- mutations$position[i]
-            if (!is.na(qpos) && qpos >= as.integer(pos_start) && qpos <= as.integer(pos_end)) {
+            qgene <- mutations$gene[i]
+            if (!is.na(qpos) && qpos >= pos_start && qpos <= pos_end &&
+                (gene == "" || is.na(qgene) || grepl(qgene, gene, fixed = TRUE))) {
               matching_muts <- c(matching_muts, mutations$mutation_label[i])
             }
           }
@@ -197,12 +246,13 @@ for (acc in accessions) {
 
         variation_rows[[length(variation_rows) + 1]] <- data.frame(
           uniprot_accession = acc,
-          position_start = pos_start %||% NA,
-          position_end = pos_end %||% NA,
+          gene = gene,
+          position_start = pos_start,
+          position_end = pos_end,
           original_aa = orig_aa,
           alternative_aa = alt_aas,
           consequence = consequence,
-          disease = disease,
+          notes = notes,
           source_type = source,
           evidence = evidence,
           query_mutation_match = if (!is.null(matching_muts)) paste(matching_muts, collapse = ";") else "",
@@ -223,10 +273,10 @@ if (nrow(variation_df) > 0) {
 } else {
   cat("  No variation data found.\n\n")
   var_out <- file.path(outdir, paste0(prefix, "_variation.tsv"))
-  write.table(data.frame(uniprot_accession=character(), position_start=integer(),
-    position_end=integer(), original_aa=character(), alternative_aa=character(),
-    consequence=character(), disease=character(), source_type=character(),
-    evidence=character(), query_mutation_match=character()),
+  write.table(data.frame(uniprot_accession=character(), gene=character(),
+    position_start=integer(), position_end=integer(), original_aa=character(),
+    alternative_aa=character(), consequence=character(), notes=character(),
+    source_type=character(), evidence=character(), query_mutation_match=character()),
     var_out, sep="\t", quote=FALSE, row.names=FALSE)
 }
 

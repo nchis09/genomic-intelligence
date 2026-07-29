@@ -50,6 +50,7 @@ for (rf in r_files) {
 # ---- Read accessions ----
 accessions <- readLines(acc_file)
 accessions <- trimws(accessions[nchar(trimws(accessions)) > 0])
+accessions <- unique(accessions)  # defensive: avoid duplicate API calls
 message(paste("Querying UniProt for", length(accessions), "accessions:", paste(accessions, collapse = ", ")))
 
 dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
