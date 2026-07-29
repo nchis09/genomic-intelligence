@@ -7,6 +7,8 @@ include { MULTIQC                } from '../modules/nf-core/multiqc/main'
 include { CLASSIFICATION         } from '../subworkflows/local/classification/main'
 include { PATHOGEN_ROUTER        } from '../subworkflows/local/pathogen_router/main'
 include { PHENOTYPE_ANNOTATION   } from '../subworkflows/local/phenotype_annotation/main'
+include { PHYLO_ANNOTATE         } from '../modules/local/phylo_annotate/main'
+include { PHYLO_VISUALIZE        } from '../modules/local/phylo_visualize/main'
 include { paramsSummaryMap       } from 'plugin/nf-schema'
 include { paramsSummaryMultiqc   } from '../subworkflows/nf-core/utils_nfcore_pipeline'
 include { softwareVersionsToYAML } from '../subworkflows/nf-core/utils_nfcore_pipeline'
@@ -70,6 +72,61 @@ workflow GENOMIC_INTELLIGENCE {
     }
 
     //
+    // MODULES: Tree visualization (PHYLO_ANNOTATE + PHYLO_VISUALIZE)
+    //
+    // Deliberately run AFTER phenotype annotation (not inside the
+    // pathogen-specific workflow) — the tree figure incorporates
+    // phenotype-derived annotations (e.g. mutations with documented
+    // phenotypic evidence from rbioapi_results), so joining on
+    // PHENOTYPE_ANNOTATION.out.rbioapi_results enforces that ordering.
+    // When phenotype annotation is skipped, fall back to a NO_FILE
+    // placeholder per group so the tree still gets built without waiting
+    // on a subworkflow that was never run.
+    //
+    ch_rbioapi_for_tree = params.skip_phenotype_annotation
+        ? PATHOGEN_ROUTER.out.auspice.map { meta, _auspice -> [ meta, file('NO_FILE') ] }
+        : PHENOTYPE_ANNOTATION.out.rbioapi_results
+
+    // All Nextclade JSON outputs (one per sample x dataset run) and the
+    // species_assignments.tsv (sample -> winning dataset) are needed to
+    // resolve each tip's own Nextclade call for direct-vs-reference AA
+    // mutations (see PHYLO_ANNOTATE). Both are broadcast to every species
+    // group below (collect()/single-path outputs behave as value channels).
+    ch_nextclade_json_all = CLASSIFICATION.out.json
+        .map { _meta, json -> json }
+        .collect()
+
+    ch_annotate_input = PATHOGEN_ROUTER.out.auspice
+        .join(PATHOGEN_ROUTER.out.results, by: [0])
+        .join(ch_rbioapi_for_tree, by: [0])
+        .map { meta, auspice_files, results_dir, rbioapi_dir ->
+            def auspice = auspice_files instanceof List ? auspice_files[0] : auspice_files
+            [ meta, auspice, results_dir, rbioapi_dir ]
+        }
+
+    PHYLO_ANNOTATE(
+        ch_annotate_input,
+        ch_nextclade_json_all,
+        CLASSIFICATION.out.assignments
+    )
+
+    ch_plot_base = PHYLO_ANNOTATE.out.tip_metadata
+        .join(PATHOGEN_ROUTER.out.results, by: [0])
+        .map { meta, tip_meta, results_dir ->
+            [ meta, results_dir, tip_meta ]
+        }
+
+    ch_plot_input = ch_plot_base
+        .join(PHYLO_ANNOTATE.out.mutation_matrix, by: [0], remainder: true)
+        .join(PHYLO_ANNOTATE.out.mutation_legend, by: [0], remainder: true)
+        .join(PHYLO_ANNOTATE.out.protein_burden, by: [0], remainder: true)
+        .map { meta, results, tip_meta, mut_matrix=null, mut_legend=null, protein_burden=null ->
+            [ meta, results, tip_meta, mut_matrix ?: file('NO_FILE'), mut_legend ?: file('NO_FILE'), protein_burden ?: file('NO_FILE') ]
+        }
+
+    PHYLO_VISUALIZE(ch_plot_input)
+
+    //
     // Collate and save software versions
     //
     def topic_versions = channel.topic("versions")
@@ -127,7 +184,7 @@ workflow GENOMIC_INTELLIGENCE {
 
     emit:
     multiqc_report = MULTIQC.out.report.map { _meta, report -> [report] }.toList()
-    figures        = PATHOGEN_ROUTER.out.figures
+    figures        = PHYLO_VISUALIZE.out.tree_heatmap.mix(PHYLO_VISUALIZE.out.geo_map)
     auspice        = PATHOGEN_ROUTER.out.auspice
     unsupported    = PATHOGEN_ROUTER.out.unsupported
     versions       = ch_versions

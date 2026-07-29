@@ -20,3 +20,4 @@ dependencies:
   - r-optparse
   - r-maps
   - r-patchwork
+  - r-png

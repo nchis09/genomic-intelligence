@@ -20,6 +20,10 @@ suppressPackageStartupMessages({
   library(ape)
   library(optparse)
   library(RColorBrewer)
+  library(ggplot2)
+  library(patchwork)
+  library(png)
+  library(grid)
 })
 
 # ---------------------------------------------------------------------------
@@ -371,6 +375,12 @@ option_list <- list(
   make_option(c("-x", "--mutation-matrix"), type = "character", default = NULL,
               dest = "mutation_matrix",
               help = "Mutation matrix TSV (first column = tip label)"),
+  make_option(c("--mutation-legend"), type = "character", default = NULL,
+              dest = "mutation_legend",
+              help = "Top-5 mutation legend TSV (mutation, count, source, has_phenotype_evidence)"),
+  make_option(c("--protein-burden"), type = "character", default = NULL,
+              dest = "protein_burden",
+              help = "Per-protein AA mutation burden TSV (protein, total_aa_mutations)"),
   make_option(c("-o", "--output"), type = "character", default = NULL,
               help = "Output PNG file"),
   make_option(c("-p", "--prefix"), type = "character", default = "out",
@@ -437,6 +447,23 @@ info_file <- paste0(args$prefix, "_info.tsv")
 write.table(metadata, info_file,
             sep = "\t", quote = FALSE, row.names = TRUE, col.names = TRUE)
 
+# Load the top-5 mutation legend (mutation, count, source, has_phenotype_evidence)
+# so heatmap columns for mutations with documented phenotype evidence can be
+# flagged with a "*" suffix in their displayed column label.
+mutation_evidence <- character(0)
+if (!is.null(args$mutation_legend) && file.exists(args$mutation_legend)) {
+  legend_df <- read.table(args$mutation_legend,
+                          header = TRUE,
+                          sep = "\t",
+                          check.names = FALSE,
+                          stringsAsFactors = FALSE,
+                          quote = "",
+                          comment.char = "")
+  mutation_evidence <- legend_df$mutation[
+    tolower(as.character(legend_df$has_phenotype_evidence)) == "true"
+  ]
+}
+
 # Read and recode the mutation matrix so each mutation has a distinct colour
 heatmap_matrix <- NULL
 heatmap_colours <- NULL
@@ -454,6 +481,10 @@ if (!is.null(args$mutation_matrix) && file.exists(args$mutation_matrix)) {
   mut_df <- as.data.frame(lapply(mut_df, function(x) as.numeric(as.character(x))),
                           row.names = rownames(mut_df))
   mut_mat <- as.matrix(mut_df)
+  # Flag mutations with documented phenotype evidence in the column label
+  colnames(mut_mat) <- ifelse(colnames(mut_mat) %in% mutation_evidence,
+                              paste0(colnames(mut_mat), "*"),
+                              colnames(mut_mat))
   ncols <- ncol(mut_mat)
   mut_numeric <- mut_mat
   for (j in seq_len(ncols)) {
@@ -486,7 +517,19 @@ if (is.null(output_png)) {
   output_png <- paste0(args$prefix, "_tree_heatmap.png")
 }
 
-# Build the figure
+# Whether a summary side-panel (top-5 mutations + per-protein burden bars)
+# needs to be composited onto the right of the tree figure.
+have_legend <- !is.null(args$mutation_legend) && file.exists(args$mutation_legend)
+have_burden <- !is.null(args$protein_burden) && file.exists(args$protein_burden)
+have_summary <- have_legend || have_burden
+
+tree_png <- if (have_summary) paste0(args$prefix, "_tree_only.png") else output_png
+
+# Build the tree + heatmap figure.
+# - axis = TRUE / axisPos = 1 adds a branch-length scale bar below the tree.
+# - edgeWidth / infoWidth are reduced (relative to treeWidth) since tip
+#   labels are hidden, tightening the gap between the tree and the
+#   country/date annotation columns.
 plotTree(
   tree = args$tree,
   ladderise = "descending",
@@ -497,7 +540,7 @@ plotTree(
   infoFile = info_file,
   infoCols = info_cols,
   colourNodesBy = colour_by,
-  outputPNG = output_png,
+  outputPNG = tree_png,
   w = args$width,
   h = args$height,
   tip.labels = FALSE,
@@ -507,11 +550,94 @@ plotTree(
   colLabelCex = 1.2,
   legend = TRUE,
   legend.pos = "bottomleft",
+  axis = TRUE,
+  axisPos = 1,
   treeWidth = 20,
-  infoWidth = 15,
+  infoWidth = 6,
+  edgeWidth = 0.3,
   dataWidth = 12,
   mainHeight = 150,
   labelHeight = 12
 )
 
-message("Tree + heatmap figure written to: ", output_png)
+message("Tree + heatmap figure written to: ", tree_png)
+
+# ---------------------------------------------------------------------------
+# Summary side-panel: top-5 AA mutations + per-protein mutation burden bars.
+# Composited onto the right side of the tree figure via grid/png rasters
+# (kept independent of the per-tip layout since these are dataset-wide
+# summaries, not per-tip data).
+# ---------------------------------------------------------------------------
+if (have_summary) {
+  panels <- list()
+
+  if (have_legend) {
+    legend_df <- read.table(args$mutation_legend,
+                            header = TRUE, sep = "\t", check.names = FALSE,
+                            stringsAsFactors = FALSE, quote = "", comment.char = "")
+    legend_df <- legend_df[order(-legend_df$count), ]
+    legend_df$label <- sprintf(
+      "%s  (n=%s)%s", legend_df$mutation, legend_df$count,
+      ifelse(tolower(as.character(legend_df$has_phenotype_evidence)) == "true", "  *", "")
+    )
+    legend_df$y <- seq(nrow(legend_df), 1)
+    legend_df$colour <- ifelse(
+      tolower(as.character(legend_df$has_phenotype_evidence)) == "true",
+      "#B22222", "#333333"
+    )
+
+    p_legend <- ggplot(legend_df, aes(x = 1, y = y, label = label, colour = colour)) +
+      geom_text(hjust = 0, size = 4.2, fontface = "bold") +
+      scale_colour_identity() +
+      scale_x_continuous(limits = c(1, 3)) +
+      scale_y_continuous(limits = c(0, nrow(legend_df) + 1)) +
+      labs(title = "Top 5 AA mutations",
+           subtitle = "* = documented phenotype evidence") +
+      theme_void() +
+      theme(plot.title = element_text(face = "bold", size = 14, hjust = 0),
+            plot.subtitle = element_text(size = 10, colour = "grey40", hjust = 0))
+    panels[[length(panels) + 1]] <- p_legend
+  }
+
+  if (have_burden) {
+    burden_df <- read.table(args$protein_burden,
+                            header = TRUE, sep = "\t", check.names = FALSE,
+                            stringsAsFactors = FALSE, quote = "", comment.char = "")
+    burden_df$protein <- factor(burden_df$protein, levels = rev(burden_df$protein))
+
+    p_burden <- ggplot(burden_df, aes(x = protein, y = total_aa_mutations)) +
+      geom_col(fill = "#4477AA", width = 0.7) +
+      geom_text(aes(label = total_aa_mutations), hjust = -0.2, size = 4) +
+      coord_flip(clip = "off") +
+      expand_limits(y = max(burden_df$total_aa_mutations, na.rm = TRUE) * 1.15) +
+      labs(title = "Total AA mutations per protein", x = NULL, y = NULL) +
+      theme_minimal(base_size = 13) +
+      theme(plot.title = element_text(face = "bold", size = 14, hjust = 0),
+            panel.grid.minor = element_blank(),
+            plot.margin = margin(5, 20, 5, 5))
+    panels[[length(panels) + 1]] <- p_burden
+  }
+
+  summary_plot <- if (length(panels) == 2) {
+    panels[[1]] / panels[[2]] + plot_layout(heights = c(1, 1.4))
+  } else {
+    panels[[1]]
+  }
+
+  summary_width_frac <- 0.28
+  tree_raster <- readPNG(tree_png)
+  png(output_png, width = args$width * (1 + summary_width_frac), height = args$height, res = 72)
+  grid.newpage()
+  pushViewport(viewport(x = 0, width = 1 / (1 + summary_width_frac), just = "left"))
+  grid.raster(tree_raster)
+  popViewport()
+  pushViewport(viewport(x = 1 / (1 + summary_width_frac),
+                        width = summary_width_frac / (1 + summary_width_frac),
+                        just = "left"))
+  print(summary_plot, newpage = FALSE)
+  popViewport()
+  dev.off()
+
+  file.remove(tree_png)
+  message("Combined tree + summary figure written to: ", output_png)
+}

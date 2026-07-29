@@ -279,9 +279,9 @@ GENE_SEARCH_MAP = {
 }
 
 ORGANISM_MAP = {
-    "bdbv": "Bundibugyo virus", "ebov": "Ebola virus",
-    "sudv": "Sudan virus", "tafv": "Tai Forest ebolavirus",
-    "restv": "Reston virus",
+    "bdbv": "Bundibugyo ebolavirus", "ebov": "Zaire ebolavirus",
+    "sudv": "Sudan ebolavirus", "tafv": "Tai Forest ebolavirus",
+    "restv": "Reston ebolavirus",
 }
 
 # Genus/family-level term used to fall back to a related species' reviewed
@@ -443,23 +443,43 @@ def download_uniprot_tsv(accessions):
     if not unique_acc:
         return None
 
-    acc_query = " OR ".join(unique_acc)
-    query = f"accession:({acc_query})"
-    url = (
-        f"https://rest.uniprot.org/uniprotkb/search?"
-        f"query={urllib.parse.quote(query)}"
-        f"&format=tsv"
-        f"&fields={','.join(fields)}"
-        f"&size=500"
-    )
+    # UniProt's search API rejects overly long OR-combined queries
+    # (observed HTTP 400 once the accession count grew past ~100 after
+    # adding the reviewed-canonical discovery strategy). Batch requests
+    # to stay well under that limit, then concatenate results (keeping
+    # only the first header line).
+    batch_size = 90
+    batches = [unique_acc[i:i + batch_size] for i in range(0, len(unique_acc), batch_size)]
 
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "PGIRL-pipeline/1.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.read().decode("utf-8")
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
-        print(f"  WARNING: UniProt TSV download failed: {e}", file=sys.stderr)
+    combined_lines = None
+    for batch in batches:
+        acc_query = " OR ".join(batch)
+        query = f"accession:({acc_query})"
+        url = (
+            f"https://rest.uniprot.org/uniprotkb/search?"
+            f"query={urllib.parse.quote(query)}"
+            f"&format=tsv"
+            f"&fields={','.join(fields)}"
+            f"&size=500"
+        )
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "PGIRL-pipeline/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                content = resp.read().decode("utf-8")
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+            print(f"  WARNING: UniProt TSV download failed for a batch of {len(batch)} accessions: {e}", file=sys.stderr)
+            continue
+
+        lines = content.strip().split("\n")
+        if combined_lines is None:
+            combined_lines = lines
+        else:
+            combined_lines.extend(lines[1:])  # skip repeated header
+        time.sleep(0.3)
+
+    if combined_lines is None:
         return None
+    return "\n".join(combined_lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -661,24 +681,38 @@ def main():
         print(f"\n  [Strategy 6] Reviewed-canonical UniProt accessions (species='{organism_name or 'unknown'}', genus fallback='{GENUS_FALLBACK_NAME}'):", file=sys.stderr)
         reviewed_results = search_uniprot_reviewed_canonical(organism_name, GENUS_FALLBACK_NAME, genome_genes)
         n_reviewed = 0
+        n_reviewed_excluded = 0
         for gene, entries in reviewed_results.items():
             for e in entries:
-                n_reviewed += 1
-                all_uniprot_accessions.add(e["accession"])
+                is_xspecies = bool(e.get("cross_species"))
                 reason = (
-                    f"reviewed_canonical_crossspecies:{e.get('organism','')}:{gene}"
-                    if e.get("cross_species")
+                    f"reviewed_canonical_crossspecies_excluded:{e.get('organism','')}:{gene}"
+                    if is_xspecies
                     else f"reviewed_canonical:{e.get('organism','')}:{gene}"
                 )
+                # Cross-species fallback hits are recorded in discovery.tsv for
+                # transparency/debugging, but deliberately NOT added to the
+                # accession set queried for annotation output. Substituting a
+                # related species' entry here is what caused near-identical
+                # rows to appear across different species' uniprotr/rbioapi
+                # results (e.g. the same Zaire ebolavirus accession showing up
+                # for bdbv and sudv alike). A gene with no species-specific
+                # reviewed accession is left uncovered rather than faked.
+                if is_xspecies:
+                    n_reviewed_excluded += 1
+                else:
+                    n_reviewed += 1
+                    all_uniprot_accessions.add(e["accession"])
                 all_discoveries.append({
                     "sample": sample_name, "gene": gene,
                     "ref_tip": "reviewed_canonical_search",
                     "insdc": "",
                     "reason": reason,
-                    "uniprot_accessions": e["accession"],
+                    "uniprot_accessions": "" if is_xspecies else e["accession"],
                 })
 
-        print(f"\n  Total UniProt accessions after all strategies: {len(all_uniprot_accessions)} ({n_reviewed} reviewed-canonical)", file=sys.stderr)
+        print(f"\n  Total UniProt accessions after all strategies: {len(all_uniprot_accessions)} "
+              f"({n_reviewed} reviewed-canonical, {n_reviewed_excluded} cross-species excluded)", file=sys.stderr)
 
         # --- Reconstruct protein sequences ---
         for gene in genome_genes:

@@ -15,7 +15,7 @@ process PHYLO_VISUALIZE {
     conda "${projectDir}/envs/pgirl_ggtree.yml"
 
     input:
-    tuple val(meta), path(results_dir), path(tip_metadata), path(mutation_matrix)
+    tuple val(meta), path(results_dir), path(tip_metadata), path(mutation_matrix), path(mutation_legend), path(protein_burden)
 
     output:
     tuple val(meta), path("*_tree_heatmap.png"), emit: tree_heatmap, optional: true
@@ -25,12 +25,14 @@ process PHYLO_VISUALIZE {
     task.ext.when == null || task.ext.when
 
     script:
-    def args      = task.ext.args ?: ''
-    def prefix    = task.ext.prefix ?: "${meta.id}"
-    def colour_by = task.ext.colour_nodes_by ?: 'country'
-    def width     = task.ext.width ?: 2400
-    def height    = task.ext.height ?: 3000
-    def mut_arg   = mutation_matrix.name != 'NO_FILE' ? "--mutation-matrix ${mutation_matrix}" : ''
+    def args        = task.ext.args ?: ''
+    def prefix      = task.ext.prefix ?: "${meta.id}"
+    def colour_by   = task.ext.colour_nodes_by ?: 'country'
+    def width       = task.ext.width ?: 2400
+    def height      = task.ext.height ?: 3000
+    def mut_arg     = mutation_matrix.name != 'NO_FILE' ? "--mutation-matrix ${mutation_matrix}" : ''
+    def legend_arg  = mutation_legend.name != 'NO_FILE' ? "--mutation-legend ${mutation_legend}" : ''
+    def burden_arg  = protein_burden.name != 'NO_FILE' ? "--protein-burden ${protein_burden}" : ''
     """
     # Locate the refined Nextstrain tree inside the species results directory
     TREE=\$(find -L ${results_dir} -name "tree.nwk" -path "*/all-outbreaks/*" | head -1)
@@ -48,6 +50,8 @@ process PHYLO_VISUALIZE {
         --tree \${TREE} \\
         --metadata ${tip_metadata} \\
         ${mut_arg} \\
+        ${legend_arg} \\
+        ${burden_arg} \\
         --output ${prefix}_tree_heatmap.png \\
         --prefix ${prefix} \\
         --colour-nodes-by ${colour_by} \\

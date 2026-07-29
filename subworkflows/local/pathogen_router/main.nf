@@ -22,7 +22,7 @@
  * workflow.onComplete).
  *
  * Input:  ch_species_data - channel of [ meta(pathogen, species), fasta, metadata ]
- * Output: figures, tip_metadata, auspice, results, unsupported
+ * Output: auspice, results, unsupported
  */
 
 include { EBOLA_WORKFLOW } from '../ebola_workflow/main'
@@ -76,8 +76,6 @@ workflow PATHOGEN_ROUTER {
     EBOLA_WORKFLOW(ch_branched.ebola)
 
     emit:
-    figures      = EBOLA_WORKFLOW.out.figures       // channel: [ meta, png ]
-    tip_metadata = EBOLA_WORKFLOW.out.tip_metadata   // channel: [ meta, tsv ]
     auspice      = EBOLA_WORKFLOW.out.auspice        // channel: [ meta, json ]
     results      = EBOLA_WORKFLOW.out.results        // channel: [ meta, dir ]
     unsupported  = ch_unsupported                    // path: unsupported_pathogens.tsv
