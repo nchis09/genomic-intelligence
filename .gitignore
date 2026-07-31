@@ -9,3 +9,4 @@ testing*
 null/
 .lineage/
 tools/
+.nf-metro-env/

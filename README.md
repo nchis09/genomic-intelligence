@@ -32,6 +32,7 @@
 - **Conda** or **Mamba** (for environment management)
 - **Java 11–24** (required by Nextflow; Java 25 is not yet supported)
 - **Git** (to clone nextstrain/ebola during setup)
+- **[nf-metro](https://github.com/seqeralabs/nf-metro)** (optional) — auto-generates a metro-map diagram of each run's task graph. If `nf-metro` isn't on `PATH`, the pipeline lazily creates a dedicated conda env from `envs/pgirl_nf_metro.yml` on first use (requires `conda`); if that also fails, the diagram is skipped with a warning and the pipeline continues normally.
 
 ### 1. Clone the repository
 
@@ -93,6 +94,8 @@ For each detected species the pipeline produces:
 - `results/nextstrain_ebola/annotations/{species}*_tip_metadata.tsv` and `*_mutation_matrix.tsv` — extracted tip metadata and mutation matrix.
 - `results/figures/{species}_tree_heatmap.png` — static annotated phylogeny with per-genome mutation heatmap.
 - `results/figures/{species}_geo_map.png` — static world map showing the geographic distribution of samples.
+
+Additionally, `results/pipeline_info/pipeline_metro_map_*.html` — an auto-generated [nf-metro](https://github.com/seqeralabs/nf-metro) metro-map diagram of the run's actual Nextflow task graph (skipped with a warning if `nf-metro` is unavailable; see Prerequisites).
 
 ## Credits
 

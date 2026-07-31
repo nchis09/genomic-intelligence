@@ -12,9 +12,9 @@
  * Output: species_groups - channel of [ meta(pathogen, species), fasta, metadata ] per species
  */
 
-include { NEXTCLADE_DATASETGET } from '../../../modules/nf-core/nextclade/datasetget/main'
-include { NEXTCLADE_RUN        } from '../../../modules/nf-core/nextclade/run/main'
-include { SPECIES_ASSIGN       } from '../../../modules/local/species_assign/main'
+include { NEXTCLADE_DATASETGET    } from '../../../modules/nf-core/nextclade/datasetget/main'
+include { NEXTCLADE_RUN           } from '../../../modules/nf-core/nextclade/run/main'
+include { SPECIES_ASSIGN          } from '../../../modules/local/species_assign/main'
 
 workflow CLASSIFICATION {
     take:
@@ -55,12 +55,10 @@ workflow CLASSIFICATION {
     //
     // MODULE: Assign species based on Nextclade QC scores
     //
-    // Collect all Nextclade TSV outputs for species assignment
     ch_all_tsvs = NEXTCLADE_RUN.out.tsv
         .map { meta, tsv -> tsv }
         .collect()
 
-    // Pass original samplesheet + collected TSVs to SPECIES_ASSIGN
     SPECIES_ASSIGN(
         ch_samplesheet.first(),
         ch_all_tsvs

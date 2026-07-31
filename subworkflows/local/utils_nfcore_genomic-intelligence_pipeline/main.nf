@@ -175,6 +175,14 @@ workflow PIPELINE_COMPLETION {
                 log.warn "=============================================================="
             }
         }
+
+        //
+        // Auto-generate a metro-map style diagram of this run's actual task
+        // graph from the Mermaid DAG Nextflow just wrote (dag.file in
+        // nextflow.config, *.mmd). Best-effort only: any failure here only
+        // logs a warning and never fails the pipeline.
+        //
+        renderNfMetroDiagram(outdir)
     }
 
     workflow.onError {
@@ -204,6 +212,93 @@ def validateInputSamplesheet(input) {
     // No-op for FASTA+metadata input; schema validation handles required fields
     return input
 }
+
+//
+// Best-effort: render the Mermaid DAG that Nextflow wrote for this run
+// (nextflow.config dag.file, *.mmd) into an nf-metro metro-map diagram.
+//
+// Nextflow only finalizes the .mmd file AFTER every workflow.onComplete
+// handler has returned (it's part of session shutdown, not concurrent with
+// onComplete), so the file can never be read synchronously from in here —
+// no amount of in-process polling helps. Instead, launch a fully detached
+// background shell script (`&` + `disown`) that survives independently of
+// this JVM: it polls for the file, lazily resolves nf-metro (PATH -> a
+// dedicated conda env built from envs/pgirl_nf_metro.yml -> give up), and
+// renders the diagram. All output/errors go to a log file next to the
+// diagram; nothing here can fail or delay the pipeline itself.
+//
+def renderNfMetroDiagram(outdir) {
+    def dag_mmd    = "${outdir}/pipeline_info/pipeline_dag_${params.trace_report_suffix}.mmd"
+    def metro_html = "${outdir}/pipeline_info/pipeline_metro_map_${params.trace_report_suffix}.html"
+    def metro_log  = "${outdir}/pipeline_info/.nf_metro.log"
+    def env_prefix = "${workflow.projectDir}/.nf-metro-env"
+    def env_yml    = "${workflow.projectDir}/envs/pgirl_nf_metro.yml"
+
+    def assignments_tsv = "${outdir}/classification/species_assignments.tsv"
+    def metro_mmd = "${dag_mmd}.metro.mmd"
+
+    def script = """
+        (
+          for ((i=0; i<120; i++)); do
+            [ -f '${dag_mmd}' ] && break
+            sleep 1
+          done
+          if [ ! -f '${dag_mmd}' ]; then
+            echo "nf-metro: DAG file not found after waiting: ${dag_mmd}"
+            exit 0
+          fi
+          # Wait for species assignments (best-effort; not required for rendering)
+          for ((i=0; i<60; i++)); do
+            [ -f '${assignments_tsv}' ] && break
+            sleep 1
+          done
+          # Rewrite the Mermaid DAG for hierarchical pathogen layout
+          python3 ${workflow.projectDir}/bin/metro_layout_postprocess.py \\
+            --input '${dag_mmd}' \\
+            --assignments '${assignments_tsv}' \\
+            --output '${metro_mmd}' || echo "nf-metro: post-processing failed, falling back to raw DAG"
+          [ -f '${metro_mmd}' ] || cp '${dag_mmd}' '${metro_mmd}'
+
+          NF_METRO_BIN=""
+          if command -v nf-metro >/dev/null 2>&1; then
+            NF_METRO_BIN="nf-metro"
+          elif [ -x '${env_prefix}/bin/nf-metro' ]; then
+            NF_METRO_BIN='${env_prefix}/bin/nf-metro'
+          else
+            CONDA_BIN=""
+            for c in "\$CONDA_EXE" "\$CONDA_PREFIX/bin/conda" "\$HOME/anaconda3/bin/conda" "\$HOME/miniconda3/bin/conda" "\$HOME/miniforge3/bin/conda"; do
+              if [ -n "\$c" ] && [ -x "\$c" ]; then CONDA_BIN="\$c"; break; fi
+            done
+            if [ -z "\$CONDA_BIN" ]; then
+              echo "nf-metro: conda not found -- skipping (install with 'conda install bioconda::nf-metro' or 'pip install nf-metro')."
+              exit 0
+            fi
+            echo "nf-metro: setting up dedicated conda env at ${env_prefix} (one-time, may take a minute)..."
+            "\$CONDA_BIN" env create -f '${env_yml}' -p '${env_prefix}'
+            if [ -x '${env_prefix}/bin/nf-metro' ]; then
+              NF_METRO_BIN='${env_prefix}/bin/nf-metro'
+            else
+              echo "nf-metro: conda env creation failed -- skipping."
+              exit 0
+            fi
+          fi
+          if "\$NF_METRO_BIN" render '${metro_mmd}' --from-nextflow -o '${metro_html}' --title 'pgirl/genomic-intelligence' --section-x-gap 40 --section-y-gap 40; then
+            echo "nf-metro: pipeline metro-map diagram written to ${metro_html}"
+          else
+            echo "nf-metro: render failed"
+          fi
+        ) > '${metro_log}' 2>&1 &
+        disown
+    """.toString()
+
+    try {
+        ['bash', '-c', script].execute()
+        log.info "nf-metro: scheduled background render (log: ${metro_log})"
+    } catch (Exception e) {
+        log.warn "nf-metro: failed to launch background render task (${e.message})."
+    }
+}
+
 //
 // Get attribute from genome config file e.g. fasta
 //
