@@ -70,6 +70,9 @@ message(paste("Searching HDX for:", disease))
 
 datasets <- search_datasets(disease, rows = rows)
 
+epi_dir <- file.path(outdir, "epi_data")
+dir.create(epi_dir, showWarnings = FALSE, recursive = TRUE)
+
 if (length(datasets) == 0) {
   warning("No HDX datasets found for term: ", disease)
   search_summary <- tibble(
@@ -77,12 +80,13 @@ if (length(datasets) == 0) {
     title = character(0),
     name = character(0),
     organization = character(0),
-    source = character(0)
+    source = character(0),
+    species_match = character(0),
+    downloaded = logical(0)
   )
   write.table(search_summary,
               file = file.path(outdir, "rhdx_search_results.tsv"),
               sep = "\t", row.names = FALSE, quote = FALSE)
-  file.create(file.path(outdir, "epi_data.csv"))
   quit(save = "no", status = 0)
 }
 
@@ -108,11 +112,11 @@ get_dataset_org <- function(ds) {
   as.character(out)[1]
 }
 
-species_match_for <- function(ds) {
-  if (is.null(species) || length(dataset_to_species) == 0) return(NA)
+species_list_for <- function(ds) {
+  if (length(dataset_to_species) == 0) return(NA_character_)
   mapped <- dataset_to_species[[get_dataset_name(ds)]]
-  if (is.null(mapped)) return(FALSE)
-  species %in% mapped
+  if (is.null(mapped)) return(NA_character_)
+  paste(mapped, collapse = ",")
 }
 
 search_summary <- tibble(
@@ -121,98 +125,33 @@ search_summary <- tibble(
   name = vapply(datasets, get_dataset_name, character(1)),
   organization = vapply(datasets, get_dataset_org, character(1)),
   source = rep("HDX", length(datasets)),
-  species_match = vapply(datasets, species_match_for, logical(1)),
-  selected = rep(FALSE, length(datasets))
+  species_match = vapply(datasets, species_list_for, character(1)),
+  downloaded = rep(FALSE, length(datasets))
 )
 
-# ---- Find and download the best usable resource ----
-find_usable_resource <- function(datasets) {
+# ---- Helper: find best resource for a dataset ----
+format_score <- function(fmt) {
+  switch(fmt,
+         csv = 1L,
+         xlsx = 2L,
+         xls = 3L,
+         json = 4L,
+         txt = 5L,
+         6L)
+}
+
+find_best_resource <- function(ds) {
   formats <- c("csv", "xlsx", "xls", "json", "txt")
-  candidates <- list()
+  resources <- tryCatch(get_resources(ds, format = formats), error = function(e) list())
+  if (length(resources) == 0) return(NULL)
 
-  for (i in seq_along(datasets)) {
-    ds <- datasets[[i]]
+  fmt_scores <- vapply(resources, function(r) format_score(tolower(r$get_format())), integer(1))
+  resources <- resources[order(fmt_scores)]
 
-    # Species filter: only consider datasets mapped to the requested species
-    if (!is.null(species) && length(dataset_to_species) > 0) {
-      ds_name <- get_dataset_name(ds)
-      mapped_species <- dataset_to_species[[ds_name]]
-      if (is.null(mapped_species) || !(species %in% mapped_species)) next
-    }
-
-    resources <- tryCatch(get_resources(ds, format = formats), error = function(e) list())
-    if (length(resources) == 0) next
-
-    # Prefer CSV over XLSX over XLS over JSON over TXT
-    format_score <- function(fmt) {
-      switch(fmt,
-             csv = 1L,
-             xlsx = 2L,
-             xls = 3L,
-             json = 4L,
-             txt = 5L,
-             6L)
-    }
-    fmt_scores <- vapply(resources, function(r) format_score(tolower(r$get_format())), integer(1))
-    resources <- resources[order(fmt_scores)]
-
-    # Use the best tabular resource in the dataset
-    rs <- resources[[1]]
-    fmt <- tolower(rs$get_format())
-
-    # Parse dataset date for ranking (prefer the most recent)
-    date_val <- tryCatch({
-      date_str <- ds$data$dataset_date
-      if (is.null(date_str) || length(date_str) == 0) stop("no date")
-      # HDX returns ranges like "[2021-01-28T00:00:00 TO 2021-03-17T23:59:59]"
-      first_date <- regmatches(as.character(date_str),
-                               regexpr("\\d{4}-\\d{2}-\\d{2}", as.character(date_str)))
-      as.Date(first_date, format = "%Y-%m-%d")
-    }, error = function(e) as.Date(NA))
-
-    candidates[[length(candidates) + 1]] <- list(
-      ds = ds,
-      rs = rs,
-      rank = i,
-      format = fmt,
-      date = date_val
-    )
-  }
-
-  if (length(candidates) == 0) return(NULL)
-
-  # Rank candidates by date (descending), then by original rank (ascending)
-  ranks <- vapply(candidates, function(x) x$rank, integer(1))
-  dates <- vapply(candidates, function(x) as.numeric(x$date), numeric(1))
-  dates[is.na(dates)] <- 0
-
-  ord <- order(-dates, ranks)
-  candidates[[ord[1]]]
+  rs <- resources[[1]]
+  fmt <- tolower(rs$get_format())
+  list(ds = ds, rs = rs, format = fmt)
 }
-
-hit <- find_usable_resource(datasets)
-
-if (!is.null(hit)) {
-  search_summary$selected[hit$rank] <- TRUE
-}
-
-write.table(search_summary,
-            file = file.path(outdir, "rhdx_search_results.tsv"),
-            sep = "\t", row.names = FALSE, quote = FALSE)
-
-if (is.null(hit)) {
-  msg <- if (!is.null(species)) {
-    paste0("No mapped CSV/XLSX/XLS/JSON/TXT resource found for species '", species, "' under term: ", disease)
-  } else {
-    paste0("No CSV/XLSX/XLS/JSON/TXT resource found for term: ", disease)
-  }
-  warning(msg)
-  file.create(file.path(outdir, "epi_data.csv"))
-  quit(save = "no", status = 0)
-}
-
-message(paste("Selected dataset:", hit$ds$data$title))
-message(paste("Selected resource:", hit$rs$data$name, "(", hit$format, ")"))
 
 # ---- Download/read the resource ----
 # rhdx's read_resource() assumes comma-separated CSVs. Some HDX resources
@@ -245,18 +184,60 @@ download_and_read <- function(rs, fmt, folder) {
   df
 }
 
-df <- tryCatch({
-  download_and_read(hit$rs, hit$format, outdir)
-}, error = function(e) {
-  stop(paste("Unable to read HDX resource:", e$message))
-})
+# ---- Download all mapped datasets ----
+raw_dir <- file.path(outdir, "raw_downloads")
+dir.create(raw_dir, showWarnings = FALSE, recursive = TRUE)
 
-if (is.null(df) || nrow(df) == 0) {
-  warning("Resource returned empty data frame")
-  file.create(file.path(outdir, "epi_data.csv"))
+mapped_names <- names(dataset_to_species)
+if (!is.null(species) && species != "all" && length(dataset_to_species) > 0) {
+  mapped_names <- mapped_names[vapply(mapped_names, function(n) species %in% dataset_to_species[[n]], logical(1))]
+}
+
+downloaded <- 0
+for (ds_name in mapped_names) {
+  idx <- which(search_summary$name == ds_name)
+  if (length(idx) == 0) {
+    message(paste("Mapped dataset not found in HDX search results:", ds_name))
+    next
+  }
+
+  ds <- datasets[[idx[1]]]
+  hit <- find_best_resource(ds)
+  if (is.null(hit)) {
+    message(paste("No usable resource for dataset:", ds_name))
+    next
+  }
+
+  message(paste("Downloading:", ds_name, "-", hit$rs$data$name, "(", hit$format, ")"))
+
+  df <- tryCatch({
+    download_and_read(hit$rs, hit$format, raw_dir)
+  }, error = function(e) {
+    message(paste("ERROR reading resource for", ds_name, ":", e$message))
+    NULL
+  })
+
+  if (is.null(df) || nrow(df) == 0) {
+    message(paste("Skipping empty resource for dataset:", ds_name))
+    next
+  }
+
+  safe_name <- gsub("[^A-Za-z0-9_-]", "_", ds_name)
+  out_csv <- file.path(epi_dir, paste0(safe_name, ".csv"))
+  write_csv(df, out_csv)
+  message(paste("Wrote:", out_csv, "(", nrow(df), "rows x", ncol(df), "cols)"))
+
+  search_summary$downloaded[idx[1]] <- TRUE
+  downloaded <- downloaded + 1
+}
+
+write.table(search_summary,
+            file = file.path(outdir, "rhdx_search_results.tsv"),
+            sep = "\t", row.names = FALSE, quote = FALSE)
+
+if (downloaded == 0) {
+  warning(paste("No mapped datasets could be downloaded for term:", disease))
   quit(save = "no", status = 0)
 }
 
-out_csv <- file.path(outdir, "epi_data.csv")
-write_csv(df, out_csv)
-message(paste("Wrote:", out_csv, "(", nrow(df), "rows x", ncol(df), "cols)"))
+message(paste("Downloaded", downloaded, "dataset(s) to", epi_dir))

@@ -16,7 +16,7 @@ process FETCH_EPIDEMIOLOGICAL_DATA {
     tuple val(meta), val(search_term), val(species)
 
     output:
-    tuple val(meta), path("epi_data.csv"),         emit: epi_raw
+    tuple val(meta), path("epi_data"),               emit: epi_raw
     tuple val(meta), path("rhdx_search_results.tsv"), emit: search_summary
 
     when:
