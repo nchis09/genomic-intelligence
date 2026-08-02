@@ -217,11 +217,27 @@ def flatten_router_block(router_block: list[str], pathogen_raw: str, pathogen_di
                 child_block[0] = set_label(child_block[0], CHILD_RENAMES[child_label])
                 child_indent = len(m.group(1))
                 child_block.insert(1, " " * (child_indent + 4) + "direction LR")
-            child_blocks.append(child_block)
+            child_blocks.append((child_label, child_block))
             j = end
         else:
-            child_blocks.append([line])
+            child_blocks.append((None, [line]))
             j += 1
+
+    # Cosmetic-only reorder for the metro map: move KNOWLEDGE_WAREHOUSE to
+    # render after EVIDENCE_SYNTHESIS. This does not reflect (or change) the
+    # actual Nextflow call order -- it exists purely so nf-metro's section
+    # ordering treats Knowledge Warehouse as non-adjacent to its predecessor
+    # sections (Bioinformatics Analysis/Phenotype Annotation/Epidemiological
+    # Data), which classifies all of its inbound edges as proper bypass
+    # lines instead of misclassifying one as the "main" line. That
+    # misclassification previously caused two lines to collide on the same
+    # entry port and crash rendering with a CurveInvariantError.
+    kw_idx = next((idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "KNOWLEDGE_WAREHOUSE"), None)
+    es_idx = next((idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "EVIDENCE_SYNTHESIS"), None)
+    if kw_idx is not None and es_idx is not None and kw_idx < es_idx:
+        kw_entry = child_blocks.pop(kw_idx)
+        es_idx = next(idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "EVIDENCE_SYNTHESIS")
+        child_blocks.insert(es_idx + 1, kw_entry)
 
     new_lines = [router_block[0], base_indent + "direction TB"]
     # Keep ROUTE_PATHOGEN and any other loose lines before the workflow block.
@@ -229,7 +245,7 @@ def flatten_router_block(router_block: list[str], pathogen_raw: str, pathogen_di
         stripped = line.strip()
         if stripped and stripped != "end":
             new_lines.append(line)
-    for child_block in child_blocks:
+    for _, child_block in child_blocks:
         new_lines.extend(child_block)
     # Keep any loose lines that were after the workflow block.
     for line in inner_lines[wf_end:]:

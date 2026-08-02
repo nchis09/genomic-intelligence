@@ -106,6 +106,11 @@ workflow GENOMIC_INTELLIGENCE {
             .filter { _meta, file -> file.name != 'NO_FILE' }
             .map { _meta, file -> file }
     )
+    ch_multiqc_files = ch_multiqc_files.mix(
+        PATHOGEN_ROUTER.out.knowledge_db_summary
+            .filter { _meta, file -> file.name != 'NO_FILE' }
+            .map { _meta, file -> file }
+    )
     def ch_summary_params = paramsSummaryMap(workflow, parameters_schema: "nextflow_schema.json")
     def ch_workflow_summary = channel.value(paramsSummaryMultiqc(ch_summary_params))
     ch_multiqc_files = ch_multiqc_files.mix(ch_workflow_summary.collectFile(name: 'workflow_summary_mqc.yaml'))

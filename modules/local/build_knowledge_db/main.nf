@@ -11,10 +11,11 @@ process BUILD_KNOWLEDGE_DB {
     conda "${projectDir}/envs/pgirl_knowledge.yml"
 
     input:
-    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary)
+    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary), path(bioinformatics_results), path(uniprotr_results), path(extractr_results), path(rbioapi_results)
 
     output:
     tuple val(meta), path("knowledge_warehouse"), emit: knowledge_db
+    tuple val(meta), path("knowledge_warehouse/*_mqc.tsv"), emit: mqc_summary
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"

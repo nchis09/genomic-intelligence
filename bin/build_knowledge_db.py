@@ -1253,6 +1253,51 @@ def _parse_indicator(text):
 
 
 # ---------------------------------------------------------------------------
+# MultiQC custom-content summary
+# ---------------------------------------------------------------------------
+
+# Key tables to report row counts for in the MultiQC summary. Kept generic
+# (not pathogen-specific) so it works for any future pathogen workflow.
+SUMMARY_TABLES = [
+    "samples",
+    "reference_genomes",
+    "genomes",
+    "mutations",
+    "proteins",
+    "phylogenetic_trees",
+    "epidemiological_records",
+    "pipeline_outputs",
+]
+
+
+def write_mqc_summary(conn, meta_id, outdir, prefix):
+    """Write a MultiQC custom-content TSV reporting row counts per table.
+
+    This also gives BUILD_KNOWLEDGE_DB a real downstream consumer (MultiQC),
+    so its outputs aren't a pipeline dead-end.
+    """
+    counts = {}
+    with conn.cursor() as cur:
+        for table in SUMMARY_TABLES:
+            cur.execute(f"SELECT count(*) FROM {table}")
+            counts[table] = cur.fetchone()[0]
+
+    summary_path = Path(outdir) / f"{prefix}_knowledge_warehouse_mqc.tsv"
+    with open(summary_path, "w") as f:
+        f.write("# id: 'knowledge_warehouse_summary'\n")
+        f.write("# section_name: 'Knowledge Warehouse'\n")
+        f.write("# description: 'Row counts loaded into the per-run PostgreSQL knowledge warehouse.'\n")
+        f.write("# plot_type: 'table'\n")
+        f.write("# pconfig:\n")
+        f.write("#     id: 'knowledge_warehouse_summary_table'\n")
+        f.write("#     namespace: 'Knowledge Warehouse'\n")
+        f.write("Sample\t" + "\t".join(SUMMARY_TABLES) + "\n")
+        f.write(meta_id + "\t" + "\t".join(str(counts[t]) for t in SUMMARY_TABLES) + "\n")
+
+    print(f"  MultiQC summary written to {summary_path}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Database dump
 # ---------------------------------------------------------------------------
 
@@ -1342,6 +1387,9 @@ def main():
 
             print("Loading epidemiological data...", file=sys.stderr)
             load_epi_data(conn, args.meta_id, results_dir, epi_search_summary=args.epi_search_summary)
+
+            print("Writing MultiQC summary...", file=sys.stderr)
+            write_mqc_summary(conn, args.meta_id, outdir, args.prefix)
 
         print("Dumping database...", file=sys.stderr)
         dump_database(pg, outdir, args.prefix)
