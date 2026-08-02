@@ -52,6 +52,7 @@ CHILD_RENAMES = {
     "BIOINFORMATICS_ANALYSIS": "Bioinformatics Analysis",
     "PHENOTYPE_ANNOTATION": "Phenotype Annotation",
     "EPIDEMIOLOGICAL_DATA": "Epidemiological Data",
+    "KNOWLEDGE_WAREHOUSE": "Knowledge Warehouse",
     "EVIDENCE_SYNTHESIS": "Evidence Synthesis",
 }
 
