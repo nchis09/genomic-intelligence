@@ -83,9 +83,15 @@ workflow EBOLA_WORKFLOW {
     // SUBWORKFLOW: Knowledge warehouse (PostgreSQL)
     //
     if (!params.skip_knowledge_warehouse) {
+        // Derive a local copy of the broadcast species_assignments channel so
+        // the DAG traces it back to a node within this workflow's own region
+        // rather than skipping straight back to SPECIES_ASSIGN in Classification
+        // (purely cosmetic: keeps the metro-map connecting line intact).
+        ch_species_assignments_kw = ch_species_assignments.map { it }
+
         KNOWLEDGE_WAREHOUSE(
             ch_species_data,
-            ch_species_assignments,
+            ch_species_assignments_kw,
             ch_epi_raw,
             ch_epi_search_summary
         )
