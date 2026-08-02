@@ -19,10 +19,10 @@ process BUILD_KNOWLEDGE_DB {
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
     def args   = ["--outdir knowledge_warehouse", "--meta-id ${meta.id}", "--prefix ${prefix}"]
-    if (species_assignments.name != 'NO_FILE') args << "--species-assignments ${species_assignments}"
-    if (metadata_tsv.name != 'NO_FILE')          args << "--metadata-tsv ${metadata_tsv}"
-    if (epi_raw_dir.name != 'NO_FILE')           args << "--epi-raw-dir ${epi_raw_dir}"
-    if (epi_search_summary.name != 'NO_FILE')    args << "--epi-search-summary ${epi_search_summary}"
+    if (!species_assignments.name.startsWith('NO_FILE')) args << "--species-assignments ${species_assignments}"
+    if (!metadata_tsv.name.startsWith('NO_FILE'))          args << "--metadata-tsv ${metadata_tsv}"
+    if (!epi_raw_dir.name.startsWith('NO_FILE'))           args << "--epi-raw-dir ${epi_raw_dir}"
+    if (!epi_search_summary.name.startsWith('NO_FILE'))    args << "--epi-search-summary ${epi_search_summary}"
     // Register every published pipeline output in the provenance table without staging the whole tree.
     args << "--results-dir ${params.outdir}"
     """

@@ -22,23 +22,25 @@ workflow KNOWLEDGE_WAREHOUSE {
     main:
     // Re-key inputs by pathogen so epidemiological data (one entry per pathogen)
     // can be broadcast to every species group for that pathogen.
-    def no_file = file('NO_FILE')
+    def no_file_meta    = file('NO_FILE_metadata')
+    def no_file_epi     = file('NO_FILE_epi')
+    def no_file_summary = file('NO_FILE_epi_summary')
 
     ch_species_by_pathogen = ch_species_data
         .map { meta, fasta, metadata ->
-            def meta_tsv = (metadata && metadata.name != 'NO_FILE') ? metadata : no_file
+            def meta_tsv = (metadata && !metadata.name.startsWith('NO_FILE')) ? metadata : no_file_meta
             [ meta.pathogen, meta, meta_tsv ]
         }
 
     ch_epi_by_pathogen = ch_epi_raw
         .map { meta, epi_dir ->
-            def epi = (epi_dir && epi_dir.name != 'NO_FILE') ? epi_dir : no_file
+            def epi = (epi_dir && !epi_dir.name.startsWith('NO_FILE')) ? epi_dir : no_file_epi
             [ meta.pathogen, epi ]
         }
 
     ch_epi_summary_by_pathogen = ch_epi_search_summary
         .map { meta, tsv ->
-            def summary = (tsv && tsv.name != 'NO_FILE') ? tsv : no_file
+            def summary = (tsv && !tsv.name.startsWith('NO_FILE')) ? tsv : no_file_summary
             [ meta.pathogen, summary ]
         }
 
@@ -48,7 +50,7 @@ workflow KNOWLEDGE_WAREHOUSE {
         .join(ch_epi_by_pathogen, by: 0, remainder: true)
         .join(ch_epi_summary_by_pathogen, by: 0, remainder: true)
         .map { pathogen, meta, metadata, epi_dir, epi_summary ->
-            [ meta, metadata ?: no_file, epi_dir ?: no_file, epi_summary ?: no_file ]
+            [ meta, metadata ?: no_file_meta, epi_dir ?: no_file_epi, epi_summary ?: no_file_summary ]
         }
         .combine(ch_species_assignments)
         .map { meta, metadata, epi_dir, epi_summary, assignments ->
