@@ -18,6 +18,7 @@ include { BIOINFORMATICS_ANALYSIS } from '../bioinformatics_analysis/main'
 include { PHENOTYPE_ANNOTATION    } from '../phenotype_annotation/main'
 include { EPIDEMIOLOGICAL_DATA    } from '../epidemiological_data/main'
 include { EVIDENCE_SYNTHESIS      } from '../evidence_synthesis/main'
+include { KNOWLEDGE_WAREHOUSE     } from '../knowledge_warehouse/main'
 
 workflow EBOLA_WORKFLOW {
     take:
@@ -79,6 +80,21 @@ workflow EBOLA_WORKFLOW {
     ch_epi_search_summary = EPIDEMIOLOGICAL_DATA.out.search_summary
 
     //
+    // SUBWORKFLOW: Knowledge warehouse (PostgreSQL)
+    //
+    if (!params.skip_knowledge_warehouse) {
+        KNOWLEDGE_WAREHOUSE(
+            ch_species_data,
+            ch_species_assignments,
+            ch_epi_raw,
+            ch_epi_search_summary
+        )
+        ch_knowledge_db = KNOWLEDGE_WAREHOUSE.out.knowledge_db
+    } else {
+        ch_knowledge_db = channel.empty()
+    }
+
+    //
     // SUBWORKFLOW: Evidence synthesis (tree annotation + visualization)
     //
     EVIDENCE_SYNTHESIS(
@@ -97,4 +113,5 @@ workflow EBOLA_WORKFLOW {
     rbioapi_results  = ch_rbioapi_results                       // channel: [ meta, dir ]
     epi_raw          = ch_epi_raw                              // channel: [ meta, epi_data.csv ]
     epi_search_summary = ch_epi_search_summary                 // channel: [ meta, rhdx_search_results.tsv ]
+    knowledge_db     = ch_knowledge_db                         // channel: [ meta, knowledge_warehouse ]
 }

@@ -25,7 +25,7 @@
  *         ch_nextclade_json_all  - path: all Nextclade JSONs (broadcast)
  *         ch_species_assignments - path: species_assignments.tsv (broadcast)
  * Output: figures, mutations, query_summary, rbioapi_results,
- *         uniprotr_results, extractr_results, unsupported
+ *         uniprotr_results, extractr_results, knowledge_db, unsupported
  */
 
 include { ROUTE_PATHOGEN } from '../../../modules/local/route_pathogen/main'
@@ -107,5 +107,6 @@ workflow PATHOGEN_ROUTER {
     rbioapi_results  = EBOLA_WORKFLOW.out.rbioapi_results  // channel: [ meta, dir ]
     epi_raw          = EBOLA_WORKFLOW.out.epi_raw          // channel: [ meta, epi_data.csv ]
     epi_search_summary = EBOLA_WORKFLOW.out.epi_search_summary // channel: [ meta, rhdx_search_results.tsv ]
+    knowledge_db     = EBOLA_WORKFLOW.out.knowledge_db     // channel: [ meta, knowledge_warehouse ]
     unsupported      = ch_unsupported                        // path: unsupported_pathogens.tsv
 }
