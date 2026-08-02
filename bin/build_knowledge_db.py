@@ -93,7 +93,7 @@ class TemporaryPostgres:
 
     def start(self):
         pg_ctl = find_executable("pg_ctl")
-        options = f"-p {self.port} -h {self.host} -k {self.data_dir}"
+        options = f"-p {self.port} -h {self.host} -k /tmp"
         run_cmd([
             pg_ctl,
             "start",
