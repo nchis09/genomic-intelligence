@@ -1,0 +1,30 @@
+name: pgirl_rhdx
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-base>=4.2
+  - r-remotes
+  - r-pkgbuild
+  - r-crul
+  - r-readxl
+  - r-hoardr
+  - r-sf
+  - r-stars
+  - r-memoise
+  - r-rappdirs
+  - r-digest
+  - r-base64enc
+  - r-countrycode
+  - r-yaml
+  - r-httr
+  - r-curl
+  - r-jsonlite
+  - r-readr
+  - r-dplyr
+  - r-tibble
+  - r-magrittr
+  - r-purrr
+  - r-rlang
+  - r-stringr

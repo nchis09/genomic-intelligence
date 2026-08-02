@@ -1,0 +1,33 @@
+# HDX Ebola dataset -> virus species mapping
+#
+# The R script bin/fetch_rhdx.R loads this file and uses it to filter the HDX
+# search results by the species detected by the pipeline. Only datasets whose
+# HDX 'name' is listed below and that have a tabular resource will be
+# considered for download.
+#
+# Species names should match the short identifiers produced by the
+# SPECIES_ASSIGN step, e.g. 'bdbv', 'sudan', 'zaire', 'tai-forest', 'reston'.
+
+republique-democratique-du-congo-cas-et-deces-d-ebola:
+  - bdbv
+
+ebola-cases-and-deaths-drc-north-kivu:
+  - zaire
+
+ebola-outbreaks-before-2014:
+  - bdbv
+  - sudan
+  - zaire
+  - tai-forest
+  - reston
+
+ebola-cases-2014:
+  - zaire
+
+guinea-ebola-2021-subnational-cases:
+  - zaire
+
+guinea-ebola-2021-cumulative-cases-national:
+  - zaire
+
+

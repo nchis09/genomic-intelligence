@@ -72,9 +72,11 @@ workflow EBOLA_WORKFLOW {
         : PHENOTYPE_ANNOTATION.out.rbioapi_results
 
     //
-    // SUBWORKFLOW: Epidemiological data (placeholder)
+    // SUBWORKFLOW: Epidemiological data (HDX via rhdx)
     //
-    EPIDEMIOLOGICAL_DATA()
+    EPIDEMIOLOGICAL_DATA(ch_species_data)
+    ch_epi_raw        = EPIDEMIOLOGICAL_DATA.out.epi_raw
+    ch_epi_search_summary = EPIDEMIOLOGICAL_DATA.out.search_summary
 
     //
     // SUBWORKFLOW: Evidence synthesis (tree annotation + visualization)
@@ -93,4 +95,6 @@ workflow EBOLA_WORKFLOW {
     uniprotr_results = ch_uniprotr_results                     // channel: [ meta, dir ]
     extractr_results = ch_extractr_results                     // channel: [ meta, dir ]
     rbioapi_results  = ch_rbioapi_results                       // channel: [ meta, dir ]
+    epi_raw          = ch_epi_raw                              // channel: [ meta, epi_data.csv ]
+    epi_search_summary = ch_epi_search_summary                 // channel: [ meta, rhdx_search_results.tsv ]
 }

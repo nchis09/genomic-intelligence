@@ -101,6 +101,16 @@ workflow GENOMIC_INTELLIGENCE {
     // SUBWORKFLOW: Reporting (MultiQC)
     //
     ch_multiqc_files = ch_multiqc_files.mix(ch_collated_versions)
+    ch_multiqc_files = ch_multiqc_files.mix(
+        PATHOGEN_ROUTER.out.epi_search_summary
+            .filter { _meta, file -> file.name != 'NO_FILE' }
+            .map { _meta, file -> file }
+    )
+    ch_multiqc_files = ch_multiqc_files.mix(
+        PATHOGEN_ROUTER.out.epi_raw
+            .filter { _meta, file -> file.name != 'NO_FILE' }
+            .map { _meta, file -> file }
+    )
     def ch_summary_params = paramsSummaryMap(workflow, parameters_schema: "nextflow_schema.json")
     def ch_workflow_summary = channel.value(paramsSummaryMultiqc(ch_summary_params))
     ch_multiqc_files = ch_multiqc_files.mix(ch_workflow_summary.collectFile(name: 'workflow_summary_mqc.yaml'))
@@ -126,6 +136,8 @@ workflow GENOMIC_INTELLIGENCE {
     uniprotr_results    = PATHOGEN_ROUTER.out.uniprotr_results
     extractr_results    = PATHOGEN_ROUTER.out.extractr_results
     rbioapi_results     = PATHOGEN_ROUTER.out.rbioapi_results
+    epi_raw             = PATHOGEN_ROUTER.out.epi_raw
+    epi_search_summary  = PATHOGEN_ROUTER.out.epi_search_summary
 }
 
 /*
