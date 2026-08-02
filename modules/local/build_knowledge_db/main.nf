@@ -28,6 +28,9 @@ process BUILD_KNOWLEDGE_DB {
     """
     mkdir -p knowledge_warehouse
 
+    # Ensure conda env's Python is used (old-style source activate may not update PATH)
+    export PATH="\${CONDA_PREFIX:+\$CONDA_PREFIX/bin:}\$PATH"
+
     python3 ${projectDir}/bin/build_knowledge_db.py ${args.join(' ')}
     """
 }
