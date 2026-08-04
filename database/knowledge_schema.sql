@@ -152,7 +152,16 @@ CREATE TABLE IF NOT EXISTS protein_domains (
     domain_name TEXT,
     start_pos INTEGER,
     end_pos INTEGER,
-    source TEXT
+    source TEXT,
+    hmm_accession TEXT,
+    evalue DOUBLE PRECISION,
+    bit_score DOUBLE PRECISION,
+    hmm_start INTEGER,
+    hmm_end INTEGER,
+    ali_start INTEGER,
+    ali_end INTEGER,
+    env_start INTEGER,
+    env_end INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS go_terms (

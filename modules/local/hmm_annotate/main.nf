@@ -17,10 +17,10 @@ process HMM_ANNOTATE {
 
     output:
     tuple val(meta), path("*_hmm_annotations.tsv"), emit: hmm_annotations
-    path("*_hmm_sequence_table.txt"),     emit: hmm_sequence_table
-    path("*_hmm_domain_table.txt"),       emit: hmm_domain_table
-    path("*_hmm_pfam_table.txt"),         emit: hmm_pfam_table
-    path("*_hmm_report.txt"),             emit: hmm_report
+    tuple val(meta), path("*_hmm_sequence_table.txt"), emit: hmm_sequence_table
+    tuple val(meta), path("*_hmm_domain_table.txt"),   emit: hmm_domain_table
+    tuple val(meta), path("*_hmm_pfam_table.txt"),     emit: hmm_pfam_table
+    tuple val(meta), path("*_hmm_report.txt"),         emit: hmm_report
 
     when:
     task.ext.when == null || task.ext.when

@@ -1219,6 +1219,126 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
     print("  Loaded phenotype annotations", file=sys.stderr)
 
 
+# ---------------------------------------------------------------------------
+# HMMER/Pfam domain annotations
+# ---------------------------------------------------------------------------
+
+def _split_query_id(query_id):
+    if "_" in query_id:
+        return query_id.split("_", 1)
+    return query_id, ""
+
+
+def _ensure_hmm_domain_columns(cur):
+    """Back-fill HMMER columns on warehouses created before this schema change."""
+    cur.execute(
+        """
+        ALTER TABLE protein_domains
+        ADD COLUMN IF NOT EXISTS hmm_accession TEXT,
+        ADD COLUMN IF NOT EXISTS evalue DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS bit_score DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS hmm_start INTEGER,
+        ADD COLUMN IF NOT EXISTS hmm_end INTEGER,
+        ADD COLUMN IF NOT EXISTS ali_start INTEGER,
+        ADD COLUMN IF NOT EXISTS ali_end INTEGER,
+        ADD COLUMN IF NOT EXISTS env_start INTEGER,
+        ADD COLUMN IF NOT EXISTS env_end INTEGER;
+
+        ALTER TABLE protein_domains
+        ALTER COLUMN evalue TYPE DOUBLE PRECISION,
+        ALTER COLUMN bit_score TYPE DOUBLE PRECISION;
+        """
+    )
+
+
+def load_hmm_annotations(conn, run_id, hmm_dir, species=None):
+    hmm_dir = Path(hmm_dir) if hmm_dir else None
+    if not hmm_dir or not hmm_dir.exists():
+        print("  SKIP: no HMM annotations directory provided", file=sys.stderr)
+        return
+    paths = sorted(hmm_dir.rglob("*_hmm_domain_table.txt"))
+    if not paths:
+        print(f"  SKIP: no HMM domain tables found in {hmm_dir}", file=sys.stderr)
+        return
+    loaded = 0
+    with conn.cursor() as cur:
+        _ensure_hmm_domain_columns(cur)
+        for path in paths:
+            for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # hmmscan --domtblout: 22 fixed fields then the description
+                parts = line.split(None, 22)
+                if len(parts) < 22:
+                    continue
+                target_name = normalize_text(parts[0])
+                target_accession = normalize_text(parts[1])
+                query_id = normalize_text(parts[3])
+                evalue = parse_float(parts[12])  # i-Evalue (domain independent)
+                bit_score = parse_float(parts[13])
+                hmm_from = parse_int(parts[15])
+                hmm_to = parse_int(parts[16])
+                ali_from = parse_int(parts[17])
+                ali_to = parse_int(parts[18])
+                env_from = parse_int(parts[19])
+                env_to = parse_int(parts[20])
+                description = normalize_text(parts[22]) if len(parts) > 22 else ""
+                if not query_id or not target_name:
+                    continue
+                sample, gene = _split_query_id(query_id)
+                sample_id = None
+                if sample:
+                    cur.execute(
+                        "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name = %s",
+                        (run_id, sample),
+                    )
+                    r = cur.fetchone()
+                    if r:
+                        sample_id = r[0]
+                protein_id = _get_or_create_protein(
+                    cur, gene, None,
+                    protein_name=query_id, organism=species, length=parse_int(parts[5]),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO protein_domains (
+                        protein_id, domain_name, start_pos, end_pos, source,
+                        hmm_accession, evalue, bit_score,
+                        hmm_start, hmm_end, ali_start, ali_end, env_start, env_end
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        protein_id, target_name, env_from, env_to, "HMMER/Pfam",
+                        target_accession, evalue, bit_score,
+                        hmm_from, hmm_to, ali_from, ali_to, env_from, env_to,
+                    ),
+                )
+                if description:
+                    cur.execute(
+                        """
+                        INSERT INTO protein_functions (protein_id, source, function_text)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (protein_id, "HMMER/Pfam", description),
+                    )
+                if sample_id:
+                    cur.execute(
+                        """
+                        INSERT INTO entity_evidence (table_name, entity_id, source_id, confidence, reference)
+                        VALUES ('proteins', %s, NULL, %s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (protein_id, "HMMER/Pfam", f"hmm:{path.name}"),
+                    )
+                loaded += 1
+    conn.commit()
+    print(f"  Loaded {loaded} HMM domain rows", file=sys.stderr)
+
+
 def _get_or_create_protein(cur, gene, uniprot_accession, protein_name=None, organism=None, length=None):
     if uniprot_accession:
         cur.execute(
@@ -1537,6 +1657,7 @@ def parse_args():
     parser.add_argument("--rbioapi-dir", help="rbioapi annotation output directory")
     parser.add_argument("--auspice-json", help="Auspice JSON file for the phylogenetic tree")
     parser.add_argument("--query-data-dir", help="Directory of EXTRACT_QUERY_PROTEINS outputs (discovery.tsv, accessions.txt, query_proteins.fasta, etc.)")
+    parser.add_argument("--hmm-dir", help="Directory of HMM_ANNOTATE outputs (*_hmm_*.txt)")
     parser.add_argument("--db-host", help="Host of an already-running shared PostgreSQL instance (started by START_KNOWLEDGE_DB). When set, this script connects to it instead of managing its own temporary server, and skips the final dump/stop (owned by STOP_KNOWLEDGE_DB).")
     parser.add_argument("--db-port", type=int, help="Port of the shared PostgreSQL instance (required with --db-host)")
     return parser.parse_args()
@@ -1600,6 +1721,8 @@ def main():
                 register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.rbioapi_dir)
             if args.query_data_dir:
                 register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.query_data_dir)
+            if args.hmm_dir:
+                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.hmm_dir)
 
             print("Registering epidemiological data outputs...", file=sys.stderr)
             if args.epi_raw_dir:
@@ -1632,6 +1755,9 @@ def main():
                 extractr_dir=args.extractr_dir,
                 rbioapi_dir=args.rbioapi_dir,
             )
+
+            print("Loading HMMER/Pfam annotations...", file=sys.stderr)
+            load_hmm_annotations(conn, args.meta_id, hmm_dir=args.hmm_dir, species=args.species)
 
             print("Loading epidemiological data...", file=sys.stderr)
             load_epi_data(

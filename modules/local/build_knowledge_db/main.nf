@@ -11,7 +11,7 @@ process BUILD_KNOWLEDGE_DB {
     conda "${projectDir}/envs/pgirl_knowledge.yml"
 
     input:
-    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary), path(bioinformatics_results), path(uniprotr_results), path(extractr_results), path(rbioapi_results), path(auspice_json), path(query_data_files, stageAs: 'query_data/*')
+    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary), path(bioinformatics_results), path(uniprotr_results), path(extractr_results), path(rbioapi_results), path(auspice_json), path(query_data_files, stageAs: 'query_data/*'), path(hmm_files, stageAs: 'hmm/*')
     val(db_host)
     val(db_port)
 
@@ -34,6 +34,9 @@ process BUILD_KNOWLEDGE_DB {
     def qd_list  = query_data_files instanceof List ? query_data_files : [query_data_files]
     def qd_real  = qd_list.findAll { !it.name.startsWith('NO_FILE') }
     if (qd_real)                                           args << "--query-data-dir query_data"
+    def hmm_list = hmm_files instanceof List ? hmm_files : [hmm_files]
+    def hmm_real = hmm_list.findAll { !it.name.startsWith('NO_FILE') }
+    if (hmm_real)                                          args << "--hmm-dir hmm"
     // `bioinformatics_results` is the guaranteed-staged copy of NEXTSTRAIN_EBOLA's
     // own "results/" output dir (already an input above) -- reuse it directly
     // instead of params.outdir, which is a relative string that would otherwise

@@ -29,10 +29,19 @@ workflow PHENOTYPE_ANNOTATION {
     // MODULES: HMM database annotation (optional)
     //
     ch_hmm_annotations = channel.empty()
+    ch_hmm_results     = ch_auspice_results.map { meta, _auspice, _results -> [ meta, file('NO_FILE_hmm') ] }
     if (!params.skip_hmm_annotation) {
         PREPARE_HMMDB(params.hmm_db_url)
         HMM_ANNOTATE(EXTRACT_QUERY_PROTEINS.out.proteins.combine(PREPARE_HMMDB.out.hmm_db_dir))
         ch_hmm_annotations = HMM_ANNOTATE.out.hmm_annotations
+        ch_hmm_results = HMM_ANNOTATE.out.hmm_annotations
+            .join(HMM_ANNOTATE.out.hmm_sequence_table, by: 0)
+            .join(HMM_ANNOTATE.out.hmm_domain_table, by: 0)
+            .join(HMM_ANNOTATE.out.hmm_pfam_table, by: 0)
+            .join(HMM_ANNOTATE.out.hmm_report, by: 0)
+            .map { meta, ann, seq, dom, pfam, rep ->
+                [ meta, [ ann, seq, dom, pfam, rep ] ]
+            }
     }
 
     //
@@ -57,4 +66,5 @@ workflow PHENOTYPE_ANNOTATION {
     extractr_results = UNIPROT_EXTRACTR_ANNOTATE.out.extractr_results      // [ meta, dir ]
     rbioapi_results  = RBIOAPI_ANNOTATE.out.rbioapi_results        // [ meta, dir ]
     hmm_annotations  = ch_hmm_annotations                          // [ meta, tsv ]
+    hmm_results      = ch_hmm_results                              // [ meta, [files] ]
 }

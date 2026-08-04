@@ -109,6 +109,7 @@ workflow EBOLA_WORKFLOW {
         def no_file_uniprotr = file('NO_FILE_uniprotr')
         def no_file_extractr = file('NO_FILE_extractr')
         def no_file_rbioapi  = file('NO_FILE_rbioapi')
+        def no_file_hmm      = file('NO_FILE_hmm')
 
         // Epidemiological data is now fetched per species, so it is keyed by meta.
         ch_species_for_kw = ch_species_data
@@ -145,6 +146,10 @@ workflow EBOLA_WORKFLOW {
                 [ meta, (auspice && !auspice.name.startsWith('NO_FILE')) ? auspice : no_file_auspice ]
             }
 
+        ch_hmm_for_kw = params.skip_phenotype_annotation
+            ? BIOINFORMATICS_AND_EPIDEMIOLOGICAL.out.auspice.map { meta, _auspice -> [ meta, no_file_hmm ] }
+            : PHENOTYPE_ANNOTATION.out.hmm_results
+
         ch_kw_input = ch_species_for_kw
             .join(ch_epi_for_kw, by: 0, remainder: true)
             .join(ch_epi_summary_for_kw, by: 0, remainder: true)
@@ -157,16 +162,17 @@ workflow EBOLA_WORKFLOW {
             .join(ch_rbioapi_safe, by: 0)
             .join(ch_auspice_for_kw, by: 0)
             .join(ch_query_data_for_kw, by: 0)
+            .join(ch_hmm_for_kw, by: 0)
             .combine(ch_species_assignments_kw)
-            .map { meta, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, query_data, assignments ->
-                [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, query_data ]
+            .map { meta, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, query_data, hmm, assignments ->
+                [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, query_data, hmm ]
             }
     } else {
         ch_kw_input = channel.empty()
     }
 
     emit:
-    kw_input         = ch_kw_input                             // channel: [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, query_data ]
+    kw_input         = ch_kw_input                             // channel: [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, query_data, hmm ]
     mutations        = ch_phenotype_mutations                  // channel: [ meta, tsv ]
     query_summary    = ch_phenotype_summary                    // channel: [ meta, json ]
     uniprotr_results = ch_uniprotr_results                     // channel: [ meta, dir ]
