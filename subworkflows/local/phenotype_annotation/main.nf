@@ -12,7 +12,7 @@ include { EXTRACT_QUERY_PROTEINS      } from '../../../modules/local/extract_que
 include { UNIPROT_ANNOTATE            } from '../../../modules/local/uniprot_annotate/main'
 include { UNIPROT_EXTRACTR_ANNOTATE   } from '../../../modules/local/uniprotextractr_annotate/main'
 include { RBIOAPI_ANNOTATE            } from '../../../modules/local/rbioapi_annotate/main'
-include { PREPARE_VOGDB               } from '../../../modules/local/prepare_vogdb/main'
+include { PREPARE_HMMDB               } from '../../../modules/local/prepare_hmmdb/main'
 include { HMM_ANNOTATE                } from '../../../modules/local/hmm_annotate/main'
 
 workflow PHENOTYPE_ANNOTATION {
@@ -26,12 +26,12 @@ workflow PHENOTYPE_ANNOTATION {
     EXTRACT_QUERY_PROTEINS(ch_auspice_results)
 
     //
-    // MODULES: VOGDB HMM annotation (optional)
+    // MODULES: HMM database annotation (optional)
     //
     ch_hmm_annotations = channel.empty()
     if (!params.skip_hmm_annotation) {
-        PREPARE_VOGDB(params.vogdb_url)
-        HMM_ANNOTATE(EXTRACT_QUERY_PROTEINS.out.proteins.combine(PREPARE_VOGDB.out.vogdb_dir))
+        PREPARE_HMMDB(params.hmm_db_url)
+        HMM_ANNOTATE(EXTRACT_QUERY_PROTEINS.out.proteins.combine(PREPARE_HMMDB.out.hmm_db_dir))
         ch_hmm_annotations = HMM_ANNOTATE.out.hmm_annotations
     }
 

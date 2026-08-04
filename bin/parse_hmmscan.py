@@ -24,7 +24,7 @@ def parse_args():
 
 def split_sample_gene(query_id):
     if "_" in query_id:
-        sample, gene = query_id.rsplit("_", 1)
+        sample, gene = query_id.split("_", 1)
         return sample, gene
     return query_id, ""
 
@@ -36,7 +36,7 @@ def main():
     with open(args.tblout) as infile, open(out_path, "w", newline="") as out:
         writer = csv.writer(out, delimiter="\t", lineterminator="\n")
         writer.writerow([
-            "query_id", "sample", "gene", "vog_id", "vog_accession",
+            "query_id", "sample", "gene", "hmm_id", "hmm_accession",
             "tlen", "evalue", "bit_score", "bias", "num_domains",
             "best_domain_evalue", "best_domain_score", "best_domain_bias",
             "exp", "description",
@@ -47,34 +47,34 @@ def main():
             if not line or line.startswith("#"):
                 continue
 
-            # First 23 hmmscan --tblout fields, then the description.
-            parts = line.split(None, 23)
-            if len(parts) < 23:
+            # hmmscan --tblout: 18 fixed fields then the description.
+            parts = line.split(None, 18)
+            if len(parts) < 18:
                 continue
 
-            query_id = parts[3]
-            evalue = float(parts[6])
+            query_id = parts[2]
+            evalue = float(parts[4])
             if evalue > args.evalue:
                 continue
 
             sample, gene = split_sample_gene(query_id)
-            description = parts[23] if len(parts) > 23 else ""
+            description = parts[18] if len(parts) > 18 else ""
 
             writer.writerow([
                 query_id,
                 sample,
                 gene,
-                parts[0],          # vog_id
-                parts[1],          # vog_accession
-                parts[2],          # tlen
-                parts[6],          # evalue
-                parts[7],          # bit_score
-                parts[8],          # bias
-                parts[9],          # num_domains
-                parts[12],         # best_domain_evalue (i-Evalue)
-                parts[13],         # best_domain_score
-                parts[14],         # best_domain_bias
-                parts[15],         # exp
+                parts[0],          # hmm_id
+                parts[1],          # hmm_accession
+                "",                # tlen not reported by hmmscan
+                evalue,
+                parts[5],          # bit_score
+                parts[6],          # bias
+                parts[15],         # num reported domains
+                parts[7],          # best_domain_evalue
+                parts[8],          # best_domain_score
+                parts[9],          # best_domain_bias
+                parts[10],         # exp
                 description,
             ])
 

@@ -9,5 +9,5 @@ testing*
 null/
 .lineage/
 tools/
-database/vogdb/
+database/hmmdb/
 .nf-metro-env/

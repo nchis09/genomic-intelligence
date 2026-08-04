@@ -798,7 +798,9 @@ def main():
     # 5. Reconstructed protein sequences FASTA
     fasta_file = f"{args.prefix}_query_proteins.fasta"
     with open(fasta_file, "w") as f:
-        for header, seq in sorted(reconstructed_seqs.items()):
+        for header, raw_seq in sorted(reconstructed_seqs.items()):
+            # Truncate at the first in-sequence stop codon for HMMER compatibility
+            seq = raw_seq.split('*', 1)[0]
             f.write(f">{header}\n")
             for i in range(0, len(seq), 80):
                 f.write(seq[i:i+80] + "\n")
