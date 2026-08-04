@@ -12,6 +12,8 @@ include { EXTRACT_QUERY_PROTEINS      } from '../../../modules/local/extract_que
 include { UNIPROT_ANNOTATE            } from '../../../modules/local/uniprot_annotate/main'
 include { UNIPROT_EXTRACTR_ANNOTATE   } from '../../../modules/local/uniprotextractr_annotate/main'
 include { RBIOAPI_ANNOTATE            } from '../../../modules/local/rbioapi_annotate/main'
+include { PREPARE_VOGDB               } from '../../../modules/local/prepare_vogdb/main'
+include { HMM_ANNOTATE                } from '../../../modules/local/hmm_annotate/main'
 
 workflow PHENOTYPE_ANNOTATION {
     take:
@@ -22,6 +24,16 @@ workflow PHENOTYPE_ANNOTATION {
     // MODULE: Extract query sample mutations + download UniProtKB TSV
     //
     EXTRACT_QUERY_PROTEINS(ch_auspice_results)
+
+    //
+    // MODULES: VOGDB HMM annotation (optional)
+    //
+    ch_hmm_annotations = channel.empty()
+    if (!params.skip_hmm_annotation) {
+        PREPARE_VOGDB(params.vogdb_url)
+        HMM_ANNOTATE(EXTRACT_QUERY_PROTEINS.out.proteins.combine(PREPARE_VOGDB.out.vogdb_dir))
+        ch_hmm_annotations = HMM_ANNOTATE.out.hmm_annotations
+    }
 
     //
     // MODULES: Run UniprotR, UniProtExtractR, and rbioapi on extracted data
@@ -44,4 +56,5 @@ workflow PHENOTYPE_ANNOTATION {
     uniprotr_results = UNIPROT_ANNOTATE.out.uniprotr_results      // [ meta, dir ]
     extractr_results = UNIPROT_EXTRACTR_ANNOTATE.out.extractr_results      // [ meta, dir ]
     rbioapi_results  = RBIOAPI_ANNOTATE.out.rbioapi_results        // [ meta, dir ]
+    hmm_annotations  = ch_hmm_annotations                          // [ meta, tsv ]
 }
