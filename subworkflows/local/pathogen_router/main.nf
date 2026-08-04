@@ -8,8 +8,8 @@
  * families are handled by which workflow. Multiple pathogen families can
  * share the same workflow entry (e.g. future flu subtypes could all map to
  * a shared 'FLU' workflow). Modules used by a workflow (e.g. NEXTSTRAIN_EBOLA,
- * PHYLO_ANNOTATE, PHYLO_VISUALIZE) stay generic/reusable so a future workflow
- * can call them again instead of duplicating logic.
+ * QUERY_KNOWLEDGE_DB, PHYLO_VISUALIZE) stay generic/reusable so a future
+ * workflow can call them again instead of duplicating logic.
  *
  * To add a new pathogen workflow:
  *   1. Add its pathogen family key(s) to WORKFLOW_REGISTRY below.
@@ -24,8 +24,8 @@
  * Input:  ch_species_data       - channel of [ meta(pathogen, species), fasta, metadata ]
  *         ch_nextclade_json_all  - path: all Nextclade JSONs (broadcast)
  *         ch_species_assignments - path: species_assignments.tsv (broadcast)
- * Output: figures, mutations, query_summary, rbioapi_results,
- *         uniprotr_results, extractr_results, knowledge_db, unsupported
+ * Output: kw_input, mutations, query_summary, rbioapi_results,
+ *         uniprotr_results, extractr_results, epi_raw, epi_search_summary, unsupported
  */
 
 include { ROUTE_PATHOGEN } from '../../../modules/local/route_pathogen/main'
@@ -85,10 +85,11 @@ workflow PATHOGEN_ROUTER {
         )
 
     //
-    // Run the Ebola workflow for orthoebolavirus species groups. Ebola owns
-    // its own phenotype annotation + tree annotation internally (see
-    // EBOLA_WORKFLOW) — only the final PHYLO_VISUALIZE render stays shared
-    // across all pathogens, called once in the main workflow.
+    // Run the Ebola workflow for orthoebolavirus species groups. Ebola now
+    // owns only the per-species analysis modules (bioinformatics, phenotype
+    // annotation, epidemiological data). The shared DB and figures are handled
+    // in the main workflow so they can be used across pathogen-specific
+    // analyses.
     //
     EBOLA_WORKFLOW(ch_branched.ebola, ch_nextclade_json_all, ch_species_assignments)
 
@@ -99,7 +100,7 @@ workflow PATHOGEN_ROUTER {
     // is the correct way to recombine them.
     //
     emit:
-    figures          = EBOLA_WORKFLOW.out.figures          // channel: [ meta, png ]
+    kw_input         = EBOLA_WORKFLOW.out.kw_input         // channel: [ meta, kw inputs ]
     mutations        = EBOLA_WORKFLOW.out.mutations        // channel: [ meta, tsv ]
     query_summary    = EBOLA_WORKFLOW.out.query_summary    // channel: [ meta, json ]
     uniprotr_results = EBOLA_WORKFLOW.out.uniprotr_results // channel: [ meta, dir ]
@@ -107,7 +108,5 @@ workflow PATHOGEN_ROUTER {
     rbioapi_results  = EBOLA_WORKFLOW.out.rbioapi_results  // channel: [ meta, dir ]
     epi_raw          = EBOLA_WORKFLOW.out.epi_raw          // channel: [ meta, epi_data.csv ]
     epi_search_summary = EBOLA_WORKFLOW.out.epi_search_summary // channel: [ meta, rhdx_search_results.tsv ]
-    knowledge_db     = EBOLA_WORKFLOW.out.knowledge_db     // channel: [ meta, knowledge_warehouse ]
-    knowledge_db_summary = EBOLA_WORKFLOW.out.knowledge_db_summary // channel: [ meta, mqc_summary.tsv ]
     unsupported      = ch_unsupported                        // path: unsupported_pathogens.tsv
 }

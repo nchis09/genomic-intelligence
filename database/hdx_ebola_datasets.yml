@@ -6,7 +6,7 @@
 # considered for download.
 #
 # Species names should match the short identifiers produced by the
-# SPECIES_ASSIGN step, e.g. 'bdbv', 'sudan', 'zaire', 'tai-forest', 'reston'.
+# SPECIES_ASSIGN step, e.g. 'bdbv', 'sudv', 'zaire', 'tai-forest', 'reston'.
 
 republique-democratique-du-congo-cas-et-deces-d-ebola:
   - bdbv
@@ -16,7 +16,7 @@ ebola-cases-and-deaths-drc-north-kivu:
 
 ebola-outbreaks-before-2014:
   - bdbv
-  - sudan
+  - sudv
   - zaire
   - tai-forest
   - reston

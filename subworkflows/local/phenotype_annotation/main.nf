@@ -36,6 +36,8 @@ workflow PHENOTYPE_ANNOTATION {
 
     emit:
     discovery        = EXTRACT_QUERY_PROTEINS.out.discovery        // [ meta, tsv ]
+    accessions       = EXTRACT_QUERY_PROTEINS.out.accessions       // [ meta, txt ]
+    uniprot_tsv      = EXTRACT_QUERY_PROTEINS.out.uniprot_tsv      // [ meta, tsv ]
     mutations        = EXTRACT_QUERY_PROTEINS.out.mutations        // [ meta, tsv ]
     query_summary    = EXTRACT_QUERY_PROTEINS.out.summary          // [ meta, json ]
     query_proteins   = EXTRACT_QUERY_PROTEINS.out.proteins         // [ meta, fasta ]

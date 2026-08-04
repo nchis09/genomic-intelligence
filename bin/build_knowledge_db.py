@@ -70,17 +70,32 @@ def find_executable(name):
 
 
 class TemporaryPostgres:
-    def __init__(self, data_dir, log_file=None, host="127.0.0.1"):
+    def __init__(self, data_dir, log_file=None, host="127.0.0.1", port=None):
         self.data_dir = Path(data_dir).resolve()
         self.log_file = Path(log_file or self.data_dir.parent / "postgres.log").resolve()
         self.host = host
-        self.port = get_free_port(host)
+        self.port = port or get_free_port(host)
         self.db_name = "genomic_intelligence"
         self.superuser = "postgres"
 
-    def init(self):
+    def is_running(self):
+        try:
+            with socket.create_connection((self.host, self.port), timeout=2):
+                return True
+        except OSError:
+            return False
+
+    def init(self, reset=True):
+        """Initialize the data directory. `reset=False` makes this idempotent
+        for a shared, pipeline-lifetime instance: if the directory already
+        looks initialized (has PG_VERSION), leave it alone."""
         if self.data_dir.exists():
-            shutil.rmtree(self.data_dir)
+            if not reset:
+                if (self.data_dir / "PG_VERSION").exists():
+                    return
+                shutil.rmtree(self.data_dir)
+            else:
+                shutil.rmtree(self.data_dir)
         initdb = find_executable("initdb")
         run_cmd([
             initdb,
@@ -92,6 +107,11 @@ class TemporaryPostgres:
         ], check=True)
 
     def start(self):
+        """Start the server. No-op if it's already accepting connections
+        (safe to call from multiple concurrent tasks against a shared
+        data dir, though only one should ever actually win the race)."""
+        if self.is_running():
+            return
         pg_ctl = find_executable("pg_ctl")
         options = f"-p {self.port} -h {self.host} -k /tmp"
         run_cmd([
@@ -106,11 +126,9 @@ class TemporaryPostgres:
     def _wait_for_server(self, timeout=60):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            try:
-                with socket.create_connection((self.host, self.port), timeout=2):
-                    return
-            except OSError:
-                time.sleep(0.5)
+            if self.is_running():
+                return
+            time.sleep(0.5)
         raise RuntimeError("PostgreSQL server did not become ready within timeout")
 
     def stop(self):
@@ -118,8 +136,16 @@ class TemporaryPostgres:
         run_cmd([pg_ctl, "stop", "-D", str(self.data_dir), "-m", "fast"], check=False)
 
     def create_db(self):
-        createdb = find_executable("createdb")
+        """Create the warehouse database if it doesn't already exist."""
         env = {"PGUSER": self.superuser}
+        psql = find_executable("psql")
+        check = run_cmd([
+            psql, "-h", self.host, "-p", str(self.port), "-U", self.superuser,
+            "-tAc", f"SELECT 1 FROM pg_database WHERE datname = '{self.db_name}'",
+        ], check=True, env=env, capture_output=True, text=True)
+        if check.stdout.strip() == "1":
+            return
+        createdb = find_executable("createdb")
         run_cmd([
             createdb,
             "-h", self.host,
@@ -135,6 +161,24 @@ class TemporaryPostgres:
             dbname=self.db_name,
             user=self.superuser,
         )
+
+
+def with_advisory_lock(conn, key, fn):
+    """Run `fn()` while holding a Postgres session-level advisory lock,
+    serializing concurrent callers (e.g. multiple species' BUILD_KNOWLEDGE_DB
+    processes racing to CREATE TABLE against the same shared database)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_lock(%s)", (key,))
+    try:
+        return fn()
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (key,))
+
+
+# Fixed advisory-lock key used to serialize schema creation across species
+# processes connecting to the shared knowledge-warehouse database.
+SCHEMA_LOCK_KEY = 927364501
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +351,34 @@ def get_or_create_location(cur, country, admin1=None, admin2=None, locality=None
 # Provenance: register every output file
 # ---------------------------------------------------------------------------
 
-def register_pipeline_outputs(conn, run_id, results_dir):
+_TEXT_EXTS = ("csv", "tsv", "json", "txt", "fasta", "fa", "fna", "nwk", "newick", "gff3", "gff", "md", "yml", "yaml")
+
+
+def _insert_pipeline_output(cur, run_id, stage, process_name, path):
+    ext = path.suffix.lower().lstrip(".") if path.suffix else "none"
+    row_count = None
+    notes = "registered by reference"
+    if ext in _TEXT_EXTS:
+        notes = "text file registered"
+        row_count = count_text_rows(path)
+    cur.execute(
+        """
+        INSERT INTO pipeline_outputs (run_id, stage, process_name, file_type, file_name, file_path, file_hash, row_count, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
+        """,
+        (run_id, stage, process_name, ext, path.name, str(path), file_hash(path), row_count, notes),
+    )
+
+
+def register_pipeline_outputs(conn, run_id, results_dir, stage=None):
+    """Register every file under a staged directory as pipeline provenance.
+
+    `stage` should be passed explicitly whenever the caller knows exactly
+    which stage this directory belongs to (e.g. a directly-staged process
+    input); it's only inferred from the path via `infer_stage()` when the
+    directory layout is expected to mirror the published results/ tree.
+    """
     results_dir = Path(results_dir)
     if not results_dir.exists():
         print(f"  SKIP: results directory not found: {results_dir}", file=sys.stderr)
@@ -320,25 +391,32 @@ def register_pipeline_outputs(conn, run_id, results_dir):
     with conn.cursor() as cur:
         for path in files:
             rel = path.relative_to(results_dir)
-            stage = infer_stage(rel)
-            ext = path.suffix.lower().lstrip(".") if path.suffix else "none"
-            row_count = None
-            notes = "registered by reference"
-            if ext in ("csv", "tsv", "json", "txt", "fasta", "fa", "fna", "nwk", "newick", "gff3", "gff", "md", "yml", "yaml"):
-                notes = "text file registered"
-                row_count = count_text_rows(path)
-            cur.execute(
-                """
-                INSERT INTO pipeline_outputs (run_id, stage, process_name, file_type, file_name, file_path, file_hash, row_count, notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT DO NOTHING
-                """,
-                (run_id, stage, str(rel.parent), ext, path.name, str(path), file_hash(path), row_count, notes),
-            )
+            row_stage = stage if stage else infer_stage(rel)
+            _insert_pipeline_output(cur, run_id, row_stage, str(rel.parent), path)
             inserted += 1
     conn.commit()
-    print(f"  Registered {inserted} pipeline output files", file=sys.stderr)
+    print(f"  Registered {inserted} pipeline output files (stage={stage or 'inferred'})", file=sys.stderr)
     return inserted
+
+
+def register_dir_outputs(conn, run_id, stage, base_dir):
+    """Register every file under a reliably-staged process input directory
+    (always an absolute, complete path as staged by Nextflow) with an
+    explicit stage tag, bypassing path-keyword guessing entirely."""
+    return register_pipeline_outputs(conn, run_id, base_dir, stage=stage)
+
+
+def register_file_output(conn, run_id, stage, path):
+    """Register a single reliably-staged process input file (e.g. auspice_json)."""
+    path = Path(path)
+    if not path.exists() or not path.is_file():
+        print(f"  SKIP: file not found: {path}", file=sys.stderr)
+        return 0
+    with conn.cursor() as cur:
+        _insert_pipeline_output(cur, run_id, stage, stage, path)
+    conn.commit()
+    print(f"  Registered 1 pipeline output file (stage={stage})", file=sys.stderr)
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -444,9 +522,12 @@ def load_reference_genomes_and_genes(conn, run_id, results_dir):
 # Samples
 # ---------------------------------------------------------------------------
 
-def load_samples(conn, run_id, results_dir, metadata_tsv=None):
+def load_samples(conn, run_id, results_dir, species_assignments=None, metadata_tsv=None):
     results_dir = Path(results_dir)
-    species_assignments = results_dir / "classification" / "species_assignments.tsv"
+    if species_assignments:
+        species_assignments = Path(species_assignments)
+    else:
+        species_assignments = results_dir / "classification" / "species_assignments.tsv"
     if not species_assignments.exists() and metadata_tsv:
         species_assignments = Path(metadata_tsv)
     if not species_assignments.exists():
@@ -636,10 +717,33 @@ def _update_samples_from_nextclade(conn, run_id, results_dir):
 # Trees and tips
 # ---------------------------------------------------------------------------
 
-def load_trees_and_tips(conn, run_id, results_dir):
+def _get_node_value(node_attrs, key):
+    val = node_attrs.get(key)
+    if isinstance(val, dict):
+        return val.get("value")
+    return val
+
+
+def _collect_tips(tree, tips=None):
+    if tips is None:
+        tips = []
+    children = tree.get("children")
+    if not children:
+        tips.append(tree)
+    else:
+        for child in children:
+            _collect_tips(child, tips)
+    return tips
+
+
+def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None):
     results_dir = Path(results_dir)
     # Auspice JSON files under nextstrain_ebola/<species>/auspice/
-    auspice_files = sorted(results_dir.rglob("*all-outbreaks.json"))
+    auspice_files = []
+    if auspice_json and Path(auspice_json).exists():
+        auspice_files = [Path(auspice_json)]
+    else:
+        auspice_files = sorted(results_dir.rglob("*all-outbreaks.json"))
     if not auspice_files:
         print("  SKIP: no Auspice JSON files found", file=sys.stderr)
         return
@@ -653,9 +757,9 @@ def load_trees_and_tips(conn, run_id, results_dir):
                     break
             tree_source = str(path)
             newick = None
-            newick_path = path.parent.parent / "results" / species / "tree.nwk" if species else None
-            if newick_path and newick_path.exists():
-                newick = newick_path.read_text().strip()
+            newick_candidates = sorted(results_dir.rglob("tree.nwk"))
+            if newick_candidates:
+                newick = newick_candidates[0].read_text().strip()
             cur.execute(
                 """
                 INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_source, newick)
@@ -666,7 +770,8 @@ def load_trees_and_tips(conn, run_id, results_dir):
             )
             tree_id = cur.fetchone()[0]
             # Load tip metadata if present
-            tip_path = results_dir / "nextstrain_ebola" / "annotations" / f"orthoebolavirus_{species}_tip_metadata.tsv" if species else None
+            tip_candidates = sorted(results_dir.rglob("*_tip_metadata.tsv"))
+            tip_path = tip_candidates[0] if tip_candidates else None
             if tip_path and tip_path.exists():
                 for row in read_tsv_or_csv(tip_path):
                     label = normalize_text(row.get("label"))
@@ -714,6 +819,54 @@ def load_trees_and_tips(conn, run_id, results_dir):
                         ),
                     )
                     loaded += 1
+            else:
+                # Fall back to parsing the Auspice JSON for tip attributes
+                with open(path) as f:
+                    data = json.load(f)
+                for tip in _collect_tips(data.get("tree", {})):
+                    label = normalize_text(tip.get("name"))
+                    if not label:
+                        continue
+                    node_attrs = tip.get("node_attrs", {})
+                    cur.execute(
+                        "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name = %s",
+                        (run_id, label),
+                    )
+                    r = cur.fetchone()
+                    sample_id = r[0] if r else None
+                    is_query = sample_id is not None
+                    country = normalize_country(_get_node_value(node_attrs, "country"))
+                    admin1 = normalize_text(_get_node_value(node_attrs, "division"))
+                    locality = normalize_text(_get_node_value(node_attrs, "location"))
+                    location_id = get_or_create_location(cur, country, admin1, None, locality)
+                    cur.execute(
+                        """
+                        INSERT INTO tree_tips (
+                            tree_id, sample_id, label, is_query, ppx_accession, insdc_accession,
+                            country, admin1, admin2, locality, host, outbreak, tip_date, div,
+                            genome_coverage, nextclade_qc, aa_mutation_count, nuc_mutation_count
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (
+                            tree_id, sample_id, label, is_query,
+                            normalize_text(_get_node_value(node_attrs, "PPX_accession")),
+                            normalize_text(_get_node_value(node_attrs, "INSDC_accession")),
+                            country,
+                            admin1,
+                            None,
+                            locality,
+                            normalize_text(_get_node_value(node_attrs, "host")),
+                            normalize_text(_get_node_value(node_attrs, "outbreak")),
+                            normalize_date(_get_node_value(node_attrs, "date")),
+                            parse_float(_get_node_value(node_attrs, "div")),
+                            parse_float(_get_node_value(node_attrs, "genome_coverage")),
+                            normalize_text(_get_node_value(node_attrs, "nextclade_qc")),
+                            parse_int(_get_node_value(node_attrs, "aa_mutation_count")),
+                            parse_int(_get_node_value(node_attrs, "nuc_mutation_count")),
+                        ),
+                    )
+                    loaded += 1
     conn.commit()
     print(f"  Loaded {len(auspice_files)} tree(s) and {loaded} tip(s)", file=sys.stderr)
 
@@ -753,7 +906,7 @@ def load_mutations(conn, run_id, results_dir):
                     )
 
         # From Nextclade TSV aaSubstitutions (filter to matching species from filename)
-        for path in sorted((results_dir / "nextclade" / "results").glob("*.tsv")) if (results_dir / "nextclade" / "results").exists() else []:
+        for path in sorted(results_dir.rglob("nextclade.tsv")) + sorted(results_dir.rglob("*_nextclade.tsv")):
             file_species = _infer_species_from_path(path)
             for row in read_tsv_or_csv(path):
                 sample = normalize_text(row.get("seqName"))
@@ -898,11 +1051,43 @@ def _insert_mutation(cur, protein_id, gene, label, ref_aa, pos, alt_aa):
 # Phenotype annotations (proteins, discovery, mutagenesis)
 # ---------------------------------------------------------------------------
 
-def load_phenotype_annotations(conn, run_id, results_dir):
-    results_dir = Path(results_dir)
+def _rglob_dirs(dirs, patterns):
+    hits = []
+    for d in dirs:
+        for p in patterns:
+            hits.extend(d.rglob(p))
+    return sorted(set(hits))
+
+
+def _first_col(row, *names):
+    """Return the first non-empty value among several known column-name
+    variants. UniProt annotation outputs go through R (UniprotR/UniProtExtractR),
+    which sanitizes column names differently depending on the export step
+    (e.g. "Function [CC]" -> "Function..CC." -> "func.Function..CC."), so the
+    same semantic field can show up under several different exact header
+    strings depending on which output file is being read.
+    """
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=None, rbioapi_dir=None):
+    search_dirs = []
+    if uniprotr_dir:
+        search_dirs.append(Path(uniprotr_dir))
+    if extractr_dir:
+        search_dirs.append(Path(extractr_dir))
+    if rbioapi_dir:
+        search_dirs.append(Path(rbioapi_dir))
+    if not search_dirs:
+        print("  SKIP: no phenotype annotation directories provided", file=sys.stderr)
+        return
     with conn.cursor() as cur:
         # Discovery.tsv -> proteins and entity_evidence
-        for path in sorted(results_dir.rglob("*_discovery.tsv")):
+        for path in _rglob_dirs(search_dirs, ["*_discovery.tsv"]):
             for row in read_tsv_or_csv(path):
                 sample = normalize_text(row.get("sample"))
                 gene = normalize_text(row.get("gene"))
@@ -933,22 +1118,34 @@ def load_phenotype_annotations(conn, run_id, results_dir):
                                 (protein_id, reason, f"discovery:{path.name}"),
                             )
 
-        # UniProt download TSV -> enrich proteins
-        for path in sorted(results_dir.rglob("*_uniprot_download.tsv")):
+        # UniProt download TSV/CSV -> enrich proteins. Different annotation
+        # stages sanitize UniProt's column names differently (raw download vs
+        # UniProtExtractR vs the combined UniprotR export), so every field is
+        # looked up across all observed variants via _first_col().
+        for path in _rglob_dirs(search_dirs, [
+            "*_uniprot_download.tsv",
+            "*_uniprotextractr_clean.tsv",
+            "*_uniprotextractr.tsv",
+            "*_uniprotextractr.csv",
+            "*_uniprotr_combined.tsv",
+            "*_uniprotr_combined.csv",
+        ]):
             rows = read_tsv_or_csv(path)
             if not rows:
                 continue
             for row in rows:
-                acc = normalize_text(row.get("Entry"))
+                acc = normalize_text(_first_col(row, "Entry", "taxa.Entry", "accession"))
                 if not acc:
                     continue
-                gene = normalize_text(row.get("Gene Names") or row.get("Gene Names (primary )"))
-                protein_name = normalize_text(row.get("Protein names"))
-                organism = normalize_text(row.get("Organism"))
-                length = parse_int(row.get("Length"))
+                gene = normalize_text(_first_col(
+                    row, "Gene.Names", "Gene Names", "Gene Names (primary )", "taxa.Gene.Names",
+                ))
+                protein_name = normalize_text(_first_col(row, "Protein.names", "Protein names", "taxa.Protein.names"))
+                organism = normalize_text(_first_col(row, "Organism", "taxa.Organism"))
+                length = parse_int(_first_col(row, "Length"))
                 protein_id = _get_or_create_protein(cur, gene, acc, protein_name=protein_name, organism=organism, length=length)
                 # Functions
-                func_text = row.get("Function [CC]")
+                func_text = _first_col(row, "Function [CC]", "Function..CC.", "func.Function..CC.")
                 if func_text:
                     cur.execute(
                         """
@@ -958,7 +1155,9 @@ def load_phenotype_annotations(conn, run_id, results_dir):
                         (protein_id, "UniProtKB", func_text),
                     )
                 # GO terms
-                go_ids = row.get("Gene Ontology (GO)") or row.get("Gene Ontology IDs")
+                go_ids = _first_col(
+                    row, "Gene Ontology (GO)", "Gene Ontology IDs", "Gene.Ontology.IDs", "go.Gene.Ontology.IDs",
+                )
                 if go_ids:
                     for go_id in re.findall(r"GO:\d+", go_ids):
                         cur.execute(
@@ -969,7 +1168,9 @@ def load_phenotype_annotations(conn, run_id, results_dir):
                             (protein_id, go_id, "UniProtKB"),
                         )
                 # Domains
-                domain_text = row.get("Domain [FT]")
+                domain_text = _first_col(
+                    row, "Domain [FT]", "Domain..FT.", "Domain..FT.edit", "family.Domain..FT.",
+                )
                 if domain_text:
                     for m in re.finditer(r"DOMAIN\s+(\d+)\.\.(\d+);\s*/note=\"([^\"]+)\"", domain_text):
                         cur.execute(
@@ -981,7 +1182,7 @@ def load_phenotype_annotations(conn, run_id, results_dir):
                         )
 
         # rbioapi mutagenesis/variation -> mutation_phenotypes
-        for path in sorted(results_dir.rglob("*_mutagenesis.tsv")) + sorted(results_dir.rglob("*_variation.tsv")):
+        for path in _rglob_dirs(search_dirs, ["*_mutagenesis.tsv", "*_variation.tsv"]):
             rows = read_tsv_or_csv(path)
             if not rows:
                 continue
@@ -1063,26 +1264,24 @@ def _get_or_create_protein(cur, gene, uniprot_accession, protein_name=None, orga
 # Epidemiological data
 # ---------------------------------------------------------------------------
 
-def load_epi_data(conn, run_id, results_dir, epi_search_summary=None):
-    results_dir = Path(results_dir)
-    epi_dir = results_dir / "epidemiological_data" / "epi_data"
+def load_epi_data(conn, run_id, epi_raw_dir, epi_search_summary=None, species=None):
+    if not epi_raw_dir:
+        print("  SKIP: no epi raw directory provided", file=sys.stderr)
+        return
+    epi_dir = Path(epi_raw_dir)
     if not epi_dir.exists():
         print(f"  SKIP: epi data directory not found: {epi_dir}", file=sys.stderr)
         return
+    if species:
+        species_dir = epi_dir / species
+        if not species_dir.exists():
+            print(f"  SKIP: no epi data subfolder for species '{species}': {species_dir}", file=sys.stderr)
+            return
+        epi_dir = species_dir
     csv_files = sorted(epi_dir.glob("*.csv"))
     if not csv_files:
         print(f"  SKIP: no CSV files in {epi_dir}", file=sys.stderr)
         return
-
-    # Build species_match map from search summary if provided
-    species_map = {}
-    summary_path = epi_search_summary or (results_dir / "epidemiological_data" / "rhdx_search_results.tsv")
-    if summary_path and Path(summary_path).exists():
-        for row in read_tsv_or_csv(summary_path):
-            name = normalize_text(row.get("name"))
-            match = normalize_text(row.get("species_match"))
-            if name and match:
-                species_map[name] = match
 
     with conn.cursor() as cur:
         for csv_path in csv_files:
@@ -1093,7 +1292,6 @@ def load_epi_data(conn, run_id, results_dir, epi_search_summary=None):
 
             # Detect dataset type from filename/columns
             dataset_type = _infer_dataset_type(csv_path.name, rows[0].keys())
-            species = species_map.get(csv_path.stem)
             pathogen = None
             if species:
                 pathogen = "orthoebolavirus"
@@ -1265,6 +1463,7 @@ SUMMARY_TABLES = [
     "mutations",
     "proteins",
     "phylogenetic_trees",
+    "tree_tips",
     "epidemiological_records",
     "pipeline_outputs",
 ]
@@ -1332,6 +1531,14 @@ def parse_args():
     parser.add_argument("--metadata-tsv", help="Per-species or input metadata TSV")
     parser.add_argument("--epi-raw-dir", help="Directory containing epidemiological CSVs")
     parser.add_argument("--epi-search-summary", help="rhdx_search_results.tsv")
+    parser.add_argument("--species", help="Current run's species short code (e.g. bdbv, sudv)")
+    parser.add_argument("--uniprotr-dir", help="UniProtR annotation output directory")
+    parser.add_argument("--extractr-dir", help="UniProtExtractR annotation output directory")
+    parser.add_argument("--rbioapi-dir", help="rbioapi annotation output directory")
+    parser.add_argument("--auspice-json", help="Auspice JSON file for the phylogenetic tree")
+    parser.add_argument("--query-data-dir", help="Directory of EXTRACT_QUERY_PROTEINS outputs (discovery.tsv, accessions.txt, query_proteins.fasta, etc.)")
+    parser.add_argument("--db-host", help="Host of an already-running shared PostgreSQL instance (started by START_KNOWLEDGE_DB). When set, this script connects to it instead of managing its own temporary server, and skips the final dump/stop (owned by STOP_KNOWLEDGE_DB).")
+    parser.add_argument("--db-port", type=int, help="Port of the shared PostgreSQL instance (required with --db-host)")
     return parser.parse_args()
 
 
@@ -1340,26 +1547,40 @@ def main():
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    pg_data_dir = outdir / "postgres_data"
-    pg_log_file = outdir / "postgres.log"
+    shared_mode = bool(args.db_host)
 
-    pg = TemporaryPostgres(pg_data_dir, pg_log_file)
+    if shared_mode:
+        pg = TemporaryPostgres(outdir / "unused_data_dir", host=args.db_host, port=args.db_port)
+    else:
+        pg_data_dir = outdir / "postgres_data"
+        pg_log_file = outdir / "postgres.log"
+        pg = TemporaryPostgres(pg_data_dir, pg_log_file)
 
     try:
-        print("Initializing PostgreSQL data directory...", file=sys.stderr)
-        pg.init()
-        print("Starting PostgreSQL...", file=sys.stderr)
-        pg.start()
-        print("Creating database...", file=sys.stderr)
-        pg.create_db()
+        if not shared_mode:
+            print("Initializing PostgreSQL data directory...", file=sys.stderr)
+            pg.init()
+            print("Starting PostgreSQL...", file=sys.stderr)
+            pg.start()
+            print("Creating database...", file=sys.stderr)
+            pg.create_db()
 
         with pg.connect() as conn:
             schema_path = Path(__file__).parent.parent / "database" / "knowledge_schema.sql"
-            print("Loading schema...", file=sys.stderr)
-            load_schema(conn, schema_path)
 
-            print("Creating run record...", file=sys.stderr)
-            create_run(conn, args.meta_id)
+            def _load_schema_and_run():
+                print("Loading schema...", file=sys.stderr)
+                load_schema(conn, schema_path)
+                print("Creating run record...", file=sys.stderr)
+                create_run(conn, args.meta_id)
+
+            if shared_mode:
+                # Multiple species processes may connect concurrently; guard
+                # schema creation with an advisory lock so they don't race on
+                # CREATE TABLE against the same live database.
+                with_advisory_lock(conn, SCHEMA_LOCK_KEY, _load_schema_and_run)
+            else:
+                _load_schema_and_run()
 
             results_dir = args.results_dir
             if not results_dir:
@@ -1368,38 +1589,74 @@ def main():
             results_dir = Path(results_dir).resolve()
 
             print("Registering pipeline outputs...", file=sys.stderr)
-            register_pipeline_outputs(conn, args.meta_id, results_dir)
+            register_pipeline_outputs(conn, args.meta_id, results_dir, stage="bioinformatics")
+
+            print("Registering phenotype annotation outputs...", file=sys.stderr)
+            if args.uniprotr_dir:
+                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.uniprotr_dir)
+            if args.extractr_dir:
+                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.extractr_dir)
+            if args.rbioapi_dir:
+                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.rbioapi_dir)
+            if args.query_data_dir:
+                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.query_data_dir)
+
+            print("Registering epidemiological data outputs...", file=sys.stderr)
+            if args.epi_raw_dir:
+                register_dir_outputs(conn, args.meta_id, "epidemiological_data", args.epi_raw_dir)
+
+            print("Registering auspice tree output...", file=sys.stderr)
+            if args.auspice_json:
+                register_file_output(conn, args.meta_id, "bioinformatics", args.auspice_json)
 
             print("Loading reference genomes...", file=sys.stderr)
             load_reference_genomes_and_genes(conn, args.meta_id, results_dir)
 
             print("Loading samples...", file=sys.stderr)
-            load_samples(conn, args.meta_id, results_dir, metadata_tsv=args.metadata_tsv)
+            load_samples(
+                conn, args.meta_id, results_dir,
+                species_assignments=args.species_assignments,
+                metadata_tsv=args.metadata_tsv,
+            )
 
             print("Loading phylogenetic trees and tips...", file=sys.stderr)
-            load_trees_and_tips(conn, args.meta_id, results_dir)
+            load_trees_and_tips(conn, args.meta_id, results_dir, auspice_json=args.auspice_json)
 
             print("Loading mutations...", file=sys.stderr)
             load_mutations(conn, args.meta_id, results_dir)
 
             print("Loading phenotype annotations...", file=sys.stderr)
-            load_phenotype_annotations(conn, args.meta_id, results_dir)
+            load_phenotype_annotations(
+                conn, args.meta_id,
+                uniprotr_dir=args.uniprotr_dir,
+                extractr_dir=args.extractr_dir,
+                rbioapi_dir=args.rbioapi_dir,
+            )
 
             print("Loading epidemiological data...", file=sys.stderr)
-            load_epi_data(conn, args.meta_id, results_dir, epi_search_summary=args.epi_search_summary)
+            load_epi_data(
+                conn, args.meta_id,
+                epi_raw_dir=args.epi_raw_dir,
+                epi_search_summary=args.epi_search_summary,
+                species=args.species,
+            )
 
             print("Writing MultiQC summary...", file=sys.stderr)
             write_mqc_summary(conn, args.meta_id, outdir, args.prefix)
 
-        print("Dumping database...", file=sys.stderr)
-        dump_database(pg, outdir, args.prefix)
+        if shared_mode:
+            print("Shared DB mode: skipping per-species dump/stop (owned by STOP_KNOWLEDGE_DB).", file=sys.stderr)
+        else:
+            print("Dumping database...", file=sys.stderr)
+            dump_database(pg, outdir, args.prefix)
 
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         raise
     finally:
-        print("Stopping PostgreSQL...", file=sys.stderr)
-        pg.stop()
+        if not shared_mode:
+            print("Stopping PostgreSQL...", file=sys.stderr)
+            pg.stop()
 
 
 if __name__ == "__main__":

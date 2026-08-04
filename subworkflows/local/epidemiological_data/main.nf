@@ -21,12 +21,7 @@ workflow EPIDEMIOLOGICAL_DATA {
     ch_search_input = ch_species_data
         .map { meta, fasta, metadata ->
             def search_term = params.epi_search_term ?: disease_map.get(meta.pathogen, meta.pathogen)
-            [ meta.pathogen, search_term, meta ]
-        }
-        .groupTuple(by: [0, 1])
-        .map { pathogen, search_term, metas ->
-            def representative_meta = [id: pathogen, pathogen: pathogen, species: 'all']
-            [ representative_meta, search_term, 'all' ]
+            [ meta, search_term, meta.species ]
         }
 
     if (!params.skip_epi_data) {

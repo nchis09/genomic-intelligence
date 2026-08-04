@@ -71,6 +71,9 @@ message(paste("Searching HDX for:", disease))
 datasets <- search_datasets(disease, rows = rows)
 
 epi_dir <- file.path(outdir, "epi_data")
+if (!is.null(species) && species != "all") {
+  epi_dir <- file.path(epi_dir, species)
+}
 dir.create(epi_dir, showWarnings = FALSE, recursive = TRUE)
 
 if (length(datasets) == 0) {
@@ -184,6 +187,37 @@ download_and_read <- function(rs, fmt, folder) {
   df
 }
 
+# ---- Species-column filters for datasets that mix multiple species ----
+# Some HDX datasets (e.g. "Ebola outbreaks before 2014") are mapped to more
+# than one species in hdx_ebola_datasets.yml but contain a column that
+# identifies which species each row belongs to. For those datasets, filter
+# rows down to only the species currently being fetched so each species'
+# epi_data/<species>/ folder only ever contains rows relevant to it.
+dataset_species_column <- list(
+  "ebola-outbreaks-before-2014" = list(
+    column = "Ebola subtype",
+    values = list(
+      bdbv = "Bundibugyo virus",
+      sudv = "Sudan virus",
+      zaire = "Zaire virus",
+      "tai-forest" = "Ta\u00ef Forest virus",
+      reston = "Reston virus"
+    )
+  )
+)
+
+filter_by_species <- function(df, ds_name, species) {
+  spec <- dataset_species_column[[ds_name]]
+  if (is.null(spec) || is.null(species) || species == "all") return(df)
+  expected_value <- spec$values[[species]]
+  if (is.null(expected_value) || !(spec$column %in% colnames(df))) return(df)
+  before <- nrow(df)
+  df <- df[df[[spec$column]] == expected_value & !is.na(df[[spec$column]]), , drop = FALSE]
+  message(paste0("Filtered '", ds_name, "' by ", spec$column, " == '", expected_value,
+                 "': ", before, " -> ", nrow(df), " rows"))
+  df
+}
+
 # ---- Download all mapped datasets ----
 raw_dir <- file.path(outdir, "raw_downloads")
 dir.create(raw_dir, showWarnings = FALSE, recursive = TRUE)
@@ -219,6 +253,13 @@ for (ds_name in mapped_names) {
 
   if (is.null(df) || nrow(df) == 0) {
     message(paste("Skipping empty resource for dataset:", ds_name))
+    next
+  }
+
+  df <- filter_by_species(df, ds_name, species)
+
+  if (nrow(df) == 0) {
+    message(paste("Skipping dataset with no rows for species", species, "after filtering:", ds_name))
     next
   }
 

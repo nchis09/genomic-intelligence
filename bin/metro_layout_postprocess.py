@@ -18,10 +18,13 @@ Goals:
   ROUTE_PATHOGEN node (nf-metro renders every subgraph level as a sibling
   station regardless of nesting depth, so there is no benefit to nesting).
 - Rename child subworkflows under the pathogen workflow (Bioinformatics
-  Analysis, Phenotype Annotation, Epidemiological Data, Evidence Synthesis).
+  Analysis, Phenotype Annotation, Epidemiological Data, Figures).
 - Reorganise so child modules stack vertically (direction TB) while their
   internal process chains extend horizontally (direction LR) for a compact,
   readable layout.
+- Strip the pipeline-lifetime shared-DB lifecycle nodes (START_KNOWLEDGE_DB,
+  STOP_KNOWLEDGE_DB) entirely -- they are infrastructure plumbing with no
+  scientific output, not a real pipeline stage.
 """
 
 import argparse
@@ -49,12 +52,16 @@ PATHOGEN_DISPLAY_NAMES = {
 }
 
 CHILD_RENAMES = {
+    "BIOINFORMATICS_AND_EPIDEMIOLOGICAL": "Bioinformatics + Epidemiology",
     "BIOINFORMATICS_ANALYSIS": "Bioinformatics Analysis",
     "PHENOTYPE_ANNOTATION": "Phenotype Annotation",
     "EPIDEMIOLOGICAL_DATA": "Epidemiological Data",
     "KNOWLEDGE_WAREHOUSE": "Knowledge Warehouse",
-    "EVIDENCE_SYNTHESIS": "Evidence Synthesis",
 }
+
+# Plain-process nodes that are pipeline-lifetime infrastructure (not a real
+# analysis stage) and should be stripped from the rendered diagram entirely.
+HIDDEN_NODE_LABELS = {"START_KNOWLEDGE_DB", "STOP_KNOWLEDGE_DB"}
 
 
 def detect_pathogen(assignments_tsv: Path) -> tuple[str, str]:
@@ -223,21 +230,21 @@ def flatten_router_block(router_block: list[str], pathogen_raw: str, pathogen_di
             child_blocks.append((None, [line]))
             j += 1
 
-    # Cosmetic-only reorder for the metro map: move KNOWLEDGE_WAREHOUSE to
-    # render after EVIDENCE_SYNTHESIS. This does not reflect (or change) the
-    # actual Nextflow call order -- it exists purely so nf-metro's section
-    # ordering treats Knowledge Warehouse as non-adjacent to its predecessor
-    # sections (Bioinformatics Analysis/Phenotype Annotation/Epidemiological
-    # Data), which classifies all of its inbound edges as proper bypass
-    # lines instead of misclassifying one as the "main" line. That
-    # misclassification previously caused two lines to collide on the same
-    # entry port and crash rendering with a CurveInvariantError.
-    kw_idx = next((idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "KNOWLEDGE_WAREHOUSE"), None)
-    es_idx = next((idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "EVIDENCE_SYNTHESIS"), None)
-    if kw_idx is not None and es_idx is not None and kw_idx < es_idx:
-        kw_entry = child_blocks.pop(kw_idx)
-        es_idx = next(idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "EVIDENCE_SYNTHESIS")
-        child_blocks.insert(es_idx + 1, kw_entry)
+    # Cosmetic-only reorder (same rationale as above): move PHENOTYPE_ANNOTATION
+    # to render after EPIDEMIOLOGICAL_DATA. PHENOTYPE_ANNOTATION's entry port
+    # receives edges from both CLASSIFICATION (species_assignments) and
+    # BIOINFORMATICS_ANALYSIS. When PHENOTYPE_ANNOTATION sits immediately after
+    # BIOINFORMATICS_ANALYSIS, nf-metro classifies one of these two inbound
+    # edges as the "main" line and the other as a bypass line landing on the
+    # same entry port, which collide and crash rendering with a
+    # CurveInvariantError. Making it non-adjacent to BIOINFORMATICS_ANALYSIS
+    # causes nf-metro to route both edges as distinct bypass lines instead.
+    pa_idx = next((idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "PHENOTYPE_ANNOTATION"), None)
+    epi_idx = next((idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "EPIDEMIOLOGICAL_DATA"), None)
+    if pa_idx is not None and epi_idx is not None and pa_idx < epi_idx:
+        pa_entry = child_blocks.pop(pa_idx)
+        epi_idx = next(idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "EPIDEMIOLOGICAL_DATA")
+        child_blocks.insert(epi_idx + 1, pa_entry)
 
     new_lines = [router_block[0], base_indent + "direction TB"]
     # Keep ROUTE_PATHOGEN and any other loose lines before the workflow block.
@@ -298,6 +305,46 @@ def rewrite_mermaid(mmd_text: str, pathogen_raw: str, pathogen_display: str) -> 
     return "\n".join(new_lines) + "\n"
 
 
+def strip_hidden_nodes(mmd_text: str, labels: set[str]) -> str:
+    """
+    Remove plain-process nodes whose label is in `labels` (e.g.
+    START_KNOWLEDGE_DB/STOP_KNOWLEDGE_DB), along with every edge line that
+    references them, from the final Mermaid text. These are pipeline-
+    lifetime infrastructure steps with no scientific output, not a real
+    analysis stage, so they're hidden from the diagram entirely rather than
+    given a station.
+
+    Any neighbour left without an edge on one side (e.g. the channel marker
+    nodes feeding/fed by these processes) simply renders as an origin/
+    terminal marker, the same harmless pattern already produced elsewhere
+    in these DAGs for unconsumed channel outputs.
+    """
+    node_decl_re = re.compile(r'^\s*(\w+)\(\["([^"]+)"\]\)\s*$')
+    edge_re = re.compile(r'^\s*(\w+)\s*-->\s*(\w+)\s*$')
+
+    node_ids = set()
+    kept_lines = []
+    for line in mmd_text.splitlines():
+        m = node_decl_re.match(line)
+        if m and m.group(2) in labels:
+            node_ids.add(m.group(1))
+            continue
+        kept_lines.append(line)
+
+    if not node_ids:
+        return mmd_text
+
+    final_lines = [
+        line
+        for line in kept_lines
+        if not (
+            (m := edge_re.match(line))
+            and (m.group(1) in node_ids or m.group(2) in node_ids)
+        )
+    ]
+    return "\n".join(final_lines) + "\n"
+
+
 def simple_rewrite(mmd_text: str, pathogen_display: str) -> str:
     """Fallback regex-based rewrite when structural parsing fails."""
     mmd_text = re.sub(r'\[CLASSIFICATION\]', '[Classification]', mmd_text)
@@ -328,6 +375,7 @@ def main():
     pathogen_raw, pathogen_display = detect_pathogen(args.assignments)
 
     new_mmd = rewrite_mermaid(mmd_text, pathogen_raw, pathogen_display)
+    new_mmd = strip_hidden_nodes(new_mmd, HIDDEN_NODE_LABELS)
     args.output.write_text(new_mmd)
     print(f"Wrote hierarchical metro DAG to {args.output}")
 
