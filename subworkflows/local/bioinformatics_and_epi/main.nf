@@ -30,6 +30,8 @@ workflow BIOINFORMATICS_AND_EPIDEMIOLOGICAL {
     emit:
     auspice        = BIOINFORMATICS_ANALYSIS.out.auspice      // channel: [ meta, json ]
     results        = BIOINFORMATICS_ANALYSIS.out.results      // channel: [ meta, dir ]
+    alignment      = BIOINFORMATICS_ANALYSIS.out.alignment    // channel: [ meta, fasta ]
+    tree           = BIOINFORMATICS_ANALYSIS.out.tree         // channel: [ meta, newick ]
     auspice_results = ch_auspice_results                      // channel: [ meta, json, dir ]
     epi_raw        = EPIDEMIOLOGICAL_DATA.out.epi_raw         // channel: [ meta, csv ]
     epi_search_summary = EPIDEMIOLOGICAL_DATA.out.search_summary  // channel: [ meta, tsv ]

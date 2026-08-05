@@ -1,0 +1,7 @@
+name: pgirl_iqtree
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - mafft
+  - iqtree>=2.2.0
