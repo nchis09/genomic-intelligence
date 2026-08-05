@@ -100,9 +100,11 @@ CREATE TABLE IF NOT EXISTS phylogenetic_trees (
     run_id TEXT REFERENCES analysis_runs(run_id),
     species TEXT,
     pathogen TEXT,
+    tree_method TEXT,
     tree_source TEXT,
     newick TEXT
 );
+ALTER TABLE phylogenetic_trees ADD COLUMN IF NOT EXISTS tree_method TEXT;
 
 CREATE TABLE IF NOT EXISTS tree_tips (
     tip_id SERIAL PRIMARY KEY,

@@ -11,7 +11,7 @@ process BUILD_KNOWLEDGE_DB {
     conda "${projectDir}/envs/pgirl_knowledge.yml"
 
     input:
-    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary), path(bioinformatics_results), path(uniprotr_results), path(extractr_results), path(rbioapi_results), path(auspice_json), path(query_data_files, stageAs: 'query_data/*'), path(hmm_files, stageAs: 'hmm/*')
+    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary), path(bioinformatics_results), path(uniprotr_results), path(extractr_results), path(rbioapi_results), path(auspice_json), path(iqtree), path(query_data_files, stageAs: 'query_data/*'), path(hmm_files, stageAs: 'hmm/*')
     val(db_host)
     val(db_port)
 
@@ -31,6 +31,7 @@ process BUILD_KNOWLEDGE_DB {
     if (!extractr_results.name.startsWith('NO_FILE'))      args << "--extractr-dir ${extractr_results}"
     if (!rbioapi_results.name.startsWith('NO_FILE'))       args << "--rbioapi-dir ${rbioapi_results}"
     if (!auspice_json.name.startsWith('NO_FILE'))          args << "--auspice-json ${auspice_json}"
+    if (!iqtree.name.startsWith('NO_FILE'))                args << "--iqtree ${iqtree}"
     def qd_list  = query_data_files instanceof List ? query_data_files : [query_data_files]
     def qd_real  = qd_list.findAll { !it.name.startsWith('NO_FILE') }
     if (qd_real)                                           args << "--query-data-dir query_data"

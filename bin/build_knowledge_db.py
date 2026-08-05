@@ -736,7 +736,7 @@ def _collect_tips(tree, tips=None):
     return tips
 
 
-def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None):
+def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=None):
     results_dir = Path(results_dir)
     # Auspice JSON files under nextstrain_ebola/<species>/auspice/
     auspice_files = []
@@ -755,18 +755,16 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None):
                 if part.lower() in ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan"):
                     species = part.lower()
                     break
-            tree_source = str(path)
-            newick = None
             newick_candidates = sorted(results_dir.rglob("tree.nwk"))
-            if newick_candidates:
-                newick = newick_candidates[0].read_text().strip()
+            newick = newick_candidates[0].read_text().strip() if newick_candidates else None
+            tree_source = str(newick_candidates[0]) if newick_candidates else str(path)
             cur.execute(
                 """
-                INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_source, newick)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_method, tree_source, newick)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING tree_id
                 """,
-                (run_id, "orthoebolavirus", species, tree_source, newick),
+                (run_id, "orthoebolavirus", species, "nextstrain", tree_source, newick),
             )
             tree_id = cur.fetchone()[0]
             # Load tip metadata if present
@@ -867,7 +865,19 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None):
                         ),
                     )
                     loaded += 1
-    conn.commit()
+        if iqtree:
+            iqtree_path = Path(iqtree)
+            if iqtree_path.exists():
+                species = _infer_species_from_path(iqtree_path)
+                newick = iqtree_path.read_text().strip()
+                cur.execute(
+                    """
+                    INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_method, tree_source, newick)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (run_id, "orthoebolavirus", species, "iqtree2", str(iqtree_path), newick),
+                )
+        conn.commit()
     print(f"  Loaded {len(auspice_files)} tree(s) and {loaded} tip(s)", file=sys.stderr)
 
 
@@ -1656,6 +1666,7 @@ def parse_args():
     parser.add_argument("--extractr-dir", help="UniProtExtractR annotation output directory")
     parser.add_argument("--rbioapi-dir", help="rbioapi annotation output directory")
     parser.add_argument("--auspice-json", help="Auspice JSON file for the phylogenetic tree")
+    parser.add_argument("--iqtree", help="IQ-TREE2 treefile (Newick) to add to phylogenetic_trees")
     parser.add_argument("--query-data-dir", help="Directory of EXTRACT_QUERY_PROTEINS outputs (discovery.tsv, accessions.txt, query_proteins.fasta, etc.)")
     parser.add_argument("--hmm-dir", help="Directory of HMM_ANNOTATE outputs (*_hmm_*.txt)")
     parser.add_argument("--db-host", help="Host of an already-running shared PostgreSQL instance (started by START_KNOWLEDGE_DB). When set, this script connects to it instead of managing its own temporary server, and skips the final dump/stop (owned by STOP_KNOWLEDGE_DB).")
@@ -1731,6 +1742,8 @@ def main():
             print("Registering auspice tree output...", file=sys.stderr)
             if args.auspice_json:
                 register_file_output(conn, args.meta_id, "bioinformatics", args.auspice_json)
+            if args.iqtree:
+                register_file_output(conn, args.meta_id, "bioinformatics", args.iqtree)
 
             print("Loading reference genomes...", file=sys.stderr)
             load_reference_genomes_and_genes(conn, args.meta_id, results_dir)
@@ -1743,7 +1756,7 @@ def main():
             )
 
             print("Loading phylogenetic trees and tips...", file=sys.stderr)
-            load_trees_and_tips(conn, args.meta_id, results_dir, auspice_json=args.auspice_json)
+            load_trees_and_tips(conn, args.meta_id, results_dir, auspice_json=args.auspice_json, iqtree=args.iqtree)
 
             print("Loading mutations...", file=sys.stderr)
             load_mutations(conn, args.meta_id, results_dir)
