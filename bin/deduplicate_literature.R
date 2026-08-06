@@ -77,22 +77,22 @@ dedup_metagear <- function(df) {
 # Fallback: exact DOI match, exact normalized title match, then fuzzy title similarity with stringdist.
 dedup_custom <- function(df) {
   if (nrow(df) == 0) return(integer(0))
-  df$doi_norm <- tolower(trimws(df$doi))
-  df$title_norm <- tolower(trimws(gsub("[^[:alnum:]]+", " ", df$title)))
+  df$doi_norm <- tolower(trimws(as.character(df$doi)))
+  df$title_norm <- tolower(trimws(gsub("[^[:alnum:]]+", " ", as.character(df$title))))
   df$title_norm <- trimws(gsub("  +", " ", df$title_norm))
 
   # Prefer the richest record when deciding which duplicate to keep.
   df$score <- (
-    (nchar(df$abstract) > 0) +
-    (nchar(df$doi) > 0) +
-    (nchar(df$year) > 0) +
-    (nchar(df$journal) > 0) +
-    (nchar(df$pmcid) > 0) +
-    (sapply(df$authors, length) > 0)
+    as.integer(!is.na(df$abstract) & nchar(df$abstract) > 0) +
+    as.integer(!is.na(df$doi) & nchar(df$doi) > 0) +
+    as.integer(!is.na(df$year) & nchar(df$year) > 0) +
+    as.integer(!is.na(df$journal) & nchar(df$journal) > 0) +
+    as.integer(!is.na(df$pmcid) & nchar(df$pmcid) > 0) +
+    as.integer(sapply(df$authors, length) > 0)
   )
 
   # Deterministic tie-breaker by pmid.
-  df <- df[order(df$score, decreasing = TRUE, df$pmid, decreasing = FALSE), ]
+  df <- df[order(df$score, df$pmid, decreasing = c(TRUE, FALSE), na.last = TRUE), ]
 
   has_stringdist <- requireNamespace("stringdist", quietly = TRUE)
   keep <- rep(TRUE, nrow(df))
@@ -103,17 +103,17 @@ dedup_custom <- function(df) {
     d <- df$doi_norm[i]
     t <- df$title_norm[i]
 
-    if (nchar(d) > 0 && d %in% seen_doi) {
+    if (!is.na(d) && nchar(d) > 0 && d %in% seen_doi) {
       keep[i] <- FALSE
       next
     }
 
-    if (nchar(t) > 0 && t %in% seen_title) {
+    if (!is.na(t) && nchar(t) > 0 && t %in% seen_title) {
       keep[i] <- FALSE
       next
     }
 
-    if (has_stringdist && nchar(t) > 0 && length(seen_title) > 0) {
+    if (has_stringdist && !is.na(t) && nchar(t) > 0 && length(seen_title) > 0) {
       sim <- tryCatch(
         stringdist::stringsim(t, seen_title, method = "lv"),
         error = function(e) numeric(0)
@@ -124,8 +124,8 @@ dedup_custom <- function(df) {
       }
     }
 
-    if (nchar(d) > 0) seen_doi <- c(seen_doi, d)
-    if (nchar(t) > 0) seen_title <- c(seen_title, t)
+    if (!is.na(d) && nchar(d) > 0) seen_doi <- c(seen_doi, d)
+    if (!is.na(t) && nchar(t) > 0) seen_title <- c(seen_title, t)
   }
 
   df$idx[keep]
