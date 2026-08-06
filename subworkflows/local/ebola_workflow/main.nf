@@ -9,10 +9,12 @@
  *         ch_nextclade_json_all  - path: all Nextclade JSONs (broadcast)
  *         ch_species_assignments - path: species_assignments.tsv (broadcast/value channel)
  * Output: kw_input, mutations, query_summary, rbioapi_results,
- *         uniprotr_results, extractr_results, epi_raw, epi_search_summary
+ *         uniprotr_results, extractr_results, epi_raw, epi_search_summary,
+ *         lit_results
  */
 
 include { BIOINFORMATICS_AND_EPIDEMIOLOGICAL } from '../bioinformatics_and_epi/main'
+include { LITERATURE_RETRIEVAL               } from '../literature_retrieval/main'
 include { PHENOTYPE_ANNOTATION               } from '../phenotype_annotation/main'
 
 workflow EBOLA_WORKFLOW {
@@ -29,6 +31,12 @@ workflow EBOLA_WORKFLOW {
     ch_auspice_results = BIOINFORMATICS_AND_EPIDEMIOLOGICAL.out.auspice_results
     ch_epi_raw        = BIOINFORMATICS_AND_EPIDEMIOLOGICAL.out.epi_raw
     ch_epi_search_summary = BIOINFORMATICS_AND_EPIDEMIOLOGICAL.out.epi_search_summary
+
+    //
+    // SUBWORKFLOW: Literature retrieval (OpenAlex per-species, per-domain search)
+    //
+    LITERATURE_RETRIEVAL(ch_species_data)
+    ch_lit_results = LITERATURE_RETRIEVAL.out.lit_results
 
     //
     // SUBWORKFLOW: Phenotype annotation (UniprotR + UniProtExtractR + rbioapi)
@@ -182,4 +190,5 @@ workflow EBOLA_WORKFLOW {
     rbioapi_results  = ch_rbioapi_results                       // channel: [ meta, dir ]
     epi_raw          = ch_epi_raw                              // channel: [ meta, epi_data.csv ]
     epi_search_summary = ch_epi_search_summary                 // channel: [ meta, rhdx_search_results.tsv ]
+    lit_results      = ch_lit_results                          // channel: [ meta, [ literature result files ] ]
 }

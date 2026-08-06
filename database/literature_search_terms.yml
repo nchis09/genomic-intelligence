@@ -1,0 +1,163 @@
+---
+# OpenAlex literature search configuration
+# The species key is injected from the pipeline's `meta.species` (e.g. bdbv, ebov, sudv, tafv, restv).
+# Each domain produces a separate OpenAlex query with the species synonyms AND the domain terms.
+
+species_synonyms:
+  bdbv:
+    - "Bundibugyo ebolavirus"
+    - "Bundibugyo virus"
+    - "BDBV"
+  ebov:
+    - "Zaire ebolavirus"
+    - "Ebola virus"
+    - "EBOV"
+    - "ZEBOV"
+  sudv:
+    - "Sudan ebolavirus"
+    - "Sudan virus"
+    - "SUDV"
+  tafv:
+    - "Tai Forest ebolavirus"
+    - "Tai Forest virus"
+    - "TAFV"
+  restv:
+    - "Reston ebolavirus"
+    - "Reston virus"
+    - "RESTV"
+
+# Terms applied to every species search in addition to species-specific synonyms.
+shared_terms:
+  - "orthoebolavirus"
+  - "Ebolavirus"
+  - "filovirus"
+
+# One OpenAlex query is generated per domain per species.
+domains:
+  seroprevalence:
+    name: "Seroprevalence and immunity"
+    terms:
+      - "seroprevalence"
+      - "serosurvey"
+      - "sero-survey"
+      - "seropositivity"
+      - "antibody prevalence"
+
+  variant_phenotype:
+    name: "Phenotypic and functional impact of variants"
+    terms:
+      - "mutation"
+      - "variant"
+      - "genomic"
+      - "immune escape"
+      - "virulence"
+      - "transmissibility"
+      - "antiviral resistance"
+      - "GP"
+      - "NP"
+      - "VP24"
+      - "VP35"
+      - "VP40"
+
+  vaccine_therapeutic:
+    name: "Vaccine and therapeutic effectiveness"
+    terms:
+      - "vaccine"
+      - "vaccination"
+      - "monoclonal antibody"
+      - "therapeutic"
+      - "antiviral"
+      - "ring vaccination"
+      - "vaccine effectiveness"
+      - "vaccine efficacy"
+
+  diagnostic:
+    name: "Diagnostic test performance and primer mismatches"
+    terms:
+      - "diagnostic"
+      - "RT-PCR"
+      - "primer"
+      - "probe"
+      - "mismatch"
+      - "sensitivity"
+      - "specificity"
+      - "rapid diagnostic test"
+      - "RDT"
+      - "CRISPR"
+
+  transmission:
+    name: "Transmission dynamics"
+    terms:
+      - "transmission"
+      - "R0"
+      - "serial interval"
+      - "generation time"
+      - "superspreading"
+      - "superspreader"
+      - "transmission route"
+
+  clinical:
+    name: "Clinical severity and risk groups"
+    terms:
+      - "clinical"
+      - "case fatality rate"
+      - "CFR"
+      - "severity"
+      - "hospitalization"
+      - "symptom"
+      - "risk factor"
+
+  reservoir:
+    name: "Reservoir and spillover (One Health)"
+    terms:
+      - "reservoir"
+      - "spillover"
+      - "bushmeat"
+      - "bat"
+      - "animal host"
+      - "One Health"
+      - "zoonotic"
+      - "zoonosis"
+
+  intervention:
+    name: "Intervention and control measures"
+    terms:
+      - "intervention"
+      - "contact tracing"
+      - "quarantine"
+      - "isolation"
+      - "infection prevention and control"
+      - "IPC"
+
+  epidemiological_context:
+    name: "Epidemiological context"
+    terms:
+      - "outbreak"
+      - "attack rate"
+      - "epidemic"
+      - "spatial"
+      - "temporal"
+      - "seasonality"
+      - "geographic"
+
+  genomic_surveillance:
+    name: "Genomic surveillance quality indicators"
+    terms:
+      - "genomic surveillance"
+      - "lineage"
+      - "clade"
+      - "phylogenetic"
+      - "nextstrain"
+      - "sequencing"
+      - "reference panel"
+
+  policy:
+    name: "Policy and risk assessment"
+    terms:
+      - "risk assessment"
+      - "WHO"
+      - "CDC"
+      - "travel advisory"
+      - "quarantine policy"
+      - "forecast"
+      - "modeling"

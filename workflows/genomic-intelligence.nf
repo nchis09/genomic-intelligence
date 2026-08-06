@@ -114,6 +114,7 @@ workflow GENOMIC_INTELLIGENCE {
     rbioapi_results     = PATHOGEN_ROUTER.out.rbioapi_results
     epi_raw             = PATHOGEN_ROUTER.out.epi_raw
     epi_search_summary  = PATHOGEN_ROUTER.out.epi_search_summary
+    lit_results         = PATHOGEN_ROUTER.out.lit_results
     knowledge_db        = ch_knowledge_db
     knowledge_db_summary = ch_knowledge_db_summary
 }
