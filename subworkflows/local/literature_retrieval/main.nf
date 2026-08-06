@@ -25,8 +25,9 @@ workflow LITERATURE_RETRIEVAL {
 
         if (!params.skip_pubmed_metadata) {
             ch_pubmed_input = ch_lit_results.flatMap { meta, files ->
-                files.findAll { it.name == 'results.json' }.collect { f ->
-                    [meta + [domain: f.parent.name], f]
+                files.findAll { it.name == 'results.json' }.collect { json ->
+                    def tsv = files.find { it.name == 'results.tsv' && it.parent == json.parent }
+                    [meta + [domain: json.parent.name], json, tsv]
                 }
             }
             PUBMED_METADATA(ch_pubmed_input)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fetch PubMed metadata for a single domain's Europe PMC results."""
 import argparse
+import csv
 import json
 import sys
 import time
@@ -20,6 +21,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--species", required=True, help="Species key")
     parser.add_argument("--domain", required=True, help="Domain key")
     parser.add_argument("--outdir", required=True, help="Output directory")
+    parser.add_argument(
+        "--results-tsv", default=None, help="Optional LITERATURE_SEARCH results.tsv"
+    )
     parser.add_argument(
         "--email", default=None, help="NCBI Entrez contact email"
     )
@@ -54,6 +58,26 @@ def load_results(path: Path) -> List[Dict[str, Any]]:
     with open(path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
     return data.get("results", [])
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def load_tsv(path: Path) -> Dict[str, Dict[str, str]]:
+    rows: Dict[str, Dict[str, str]] = {}
+    if not path or not path.is_file():
+        return rows
+    with open(path, "r", encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for row in reader:
+            pmid = str(row.get("id", "")).strip()
+            if pmid:
+                rows[pmid] = row
+    return rows
 
 
 def parse_article(article: Dict[str, Any]) -> Dict[str, Any]:
@@ -187,6 +211,9 @@ def main() -> None:
         pmids.append(pmid)
         original[pmid] = w
 
+    tsv_path = Path(args.results_tsv) if args.results_tsv else Path(args.results_json).parent / "results.tsv"
+    tsv_by_id = load_tsv(tsv_path)
+
     numeric_pmids = [p for p in pmids if p.isdigit()]
     pubmed: Dict[str, Dict[str, Any]] = {}
     if numeric_pmids:
@@ -205,6 +232,7 @@ def main() -> None:
 
     for pmid in pmids:
         original_work = original.get(pmid, {})
+        tsv_work = tsv_by_id.get(pmid, {})
 
         if pmid in pubmed:
             record = pubmed[pmid]
@@ -215,17 +243,35 @@ def main() -> None:
                 "abstract": "",
                 "authors": [original_work.get("first_author", "")] if original_work.get("first_author") else [],
                 "year": original_work.get("publication_year", ""),
-                "doi": original_work.get("doi", ""),
+                "doi": "",
                 "journal": original_work.get("source", ""),
                 "keywords": [],
                 "pmcid": "",
             }
 
+        # Backfill empty fields from the literature search JSON or TSV
+        for source in (original_work, tsv_work):
+            for out_key, src_key in (
+                ("doi", "doi"),
+                ("title", "display_name"),
+                ("year", "publication_year"),
+                ("journal", "source"),
+            ):
+                if not record.get(out_key) and source.get(src_key):
+                    record[out_key] = source[src_key]
+
         record["species"] = args.species
         record["domain"] = args.domain
-        record["publication_date"] = original_work.get("publication_date", "")
-        record["cited_by_count"] = original_work.get("cited_by_count", 0)
-        record["is_oa"] = original_work.get("is_oa", "")
+        record["publication_date"] = (
+            original_work.get("publication_date", "")
+            or tsv_work.get("publication_date", "")
+        )
+        record["cited_by_count"] = (
+            original_work.get("cited_by_count")
+            if original_work.get("cited_by_count") is not None
+            else _to_int(tsv_work.get("cited_by_count"))
+        )
+        record["is_oa"] = None  # leave as unknown until manually verified
 
         out_path = outdir / f"{pmid}.json"
         with open(out_path, "w", encoding="utf-8") as fh:

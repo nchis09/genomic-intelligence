@@ -14,7 +14,7 @@ process PUBMED_METADATA {
     conda "${projectDir}/envs/pgirl_pubmed.yml"
 
     input:
-    tuple val(meta), path("results.json")
+    tuple val(meta), path("results.json"), path("results.tsv")
 
     output:
     tuple val(meta), path("*.json"), emit: metadata
@@ -29,6 +29,7 @@ process PUBMED_METADATA {
     """
     python ${projectDir}/bin/fetch_pubmed_metadata.py \
         --results-json results.json \
+        --results-tsv results.tsv \
         --species "${meta.species}" \
         --domain "${meta.domain}" \
         --outdir . \
