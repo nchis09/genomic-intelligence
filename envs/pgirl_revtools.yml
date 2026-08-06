@@ -6,4 +6,4 @@ dependencies:
   - r-base>=4.2
   - r-jsonlite
   - r-dplyr
-  - r-stringdist
+  - r-revtools

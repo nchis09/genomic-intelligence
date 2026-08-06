@@ -1,8 +1,9 @@
 #!/usr/bin/env Rscript
-# Remove records with no abstract and deduplicate per-paper PubMed JSON files.
+# Thin wrapper around revtools: drop empty abstracts and deduplicate per-domain JSON files.
 
 suppressPackageStartupMessages(library(jsonlite))
 suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(revtools))
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
 
@@ -27,162 +28,73 @@ in_files <- list.files(input_dir, pattern = "\\.json$", full.names = TRUE)
 # Avoid reprocessing a summary file if the module is ever rerun on its own output.
 in_files <- in_files[!grepl("^deduplication_summary\\.json$", basename(in_files))]
 
-records <- lapply(in_files, function(f) fromJSON(f, simplifyVector = TRUE))
-
-# Build a searchable metadata table while preserving the original index into `records`.
-meta <- bind_rows(lapply(seq_along(records), function(i) {
-  r <- records[[i]]
-  tibble(
-    idx = i,
-    pmid = as.character(r$pmid %||% ""),
-    title = as.character(r$title %||% ""),
-    doi = as.character(r$doi %||% ""),
-    abstract = as.character(r$abstract %||% ""),
-    year = as.character(r$year %||% ""),
-    journal = as.character(r$journal %||% ""),
-    pmcid = as.character(r$pmcid %||% ""),
-    publication_date = as.character(r$publication_date %||% ""),
-    cited_by_count = as.integer(r$cited_by_count %||% 0),
-    is_oa = list(r$is_oa),
-    authors = list(r$authors %||% character(0)),
-    keywords = list(r$keywords %||% character(0))
-  )
-}))
-
-input_count <- nrow(meta)
+records <- lapply(in_files, fromJSON, simplifyVector = TRUE)
+input_count <- length(records)
 
 # Drop records with missing/empty abstracts.
-meta <- meta %>% filter(!is.na(abstract) & trimws(abstract) != "")
-no_abstract_removed <- input_count - nrow(meta)
-
-# --- Deduplication backends --------------------------------------------
-
-dedup_revtools <- function(df) {
-  if (!requireNamespace("revtools", quietly = TRUE)) stop("revtools not installed")
-  d <- df
-  d$record_id <- d$idx
-  d$author <- sapply(d$authors, function(x) paste(unlist(x), collapse = " "))
-  dup <- revtools::find_duplicates(d, match_type = "exact")
-  uniq <- revtools::extract_unique_references(d, dup)
-  as.integer(uniq$record_id)
+has_abstract <- function(r) {
+  a <- r$abstract
+  !is.null(a) && length(a) > 0 && !is.na(a[1]) && nchar(trimws(as.character(a[1]))) > 0
 }
+records <- records[vapply(records, has_abstract, logical(1))]
+no_abstract_removed <- input_count - length(records)
 
-dedup_metagear <- function(df) {
-  if (!requireNamespace("metagear", quietly = TRUE)) stop("metagear not installed")
-  # metagear has no stable deduplication API we can rely on; any error falls back to custom.
-  result <- metagear::find_duplicates(df, match_on = c("title", "doi"))
-  as.integer(df$idx[result$unique])
-}
-
-# Fallback: exact DOI match, exact normalized title match, then fuzzy title similarity with stringdist.
-dedup_custom <- function(df) {
-  if (nrow(df) == 0) return(integer(0))
-  df$doi_norm <- tolower(trimws(as.character(df$doi)))
-  df$title_norm <- tolower(trimws(gsub("[^[:alnum:]]+", " ", as.character(df$title))))
-  df$title_norm <- trimws(gsub("  +", " ", df$title_norm))
-
-  # Prefer the richest record when deciding which duplicate to keep.
-  df$score <- (
-    as.integer(!is.na(df$abstract) & nchar(df$abstract) > 0) +
-    as.integer(!is.na(df$doi) & nchar(df$doi) > 0) +
-    as.integer(!is.na(df$year) & nchar(df$year) > 0) +
-    as.integer(!is.na(df$journal) & nchar(df$journal) > 0) +
-    as.integer(!is.na(df$pmcid) & nchar(df$pmcid) > 0) +
-    as.integer(sapply(df$authors, length) > 0)
+if (length(records) == 0) {
+  dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+  summary <- list(
+    species = species,
+    domain = domain,
+    method = "revtools",
+    input_count = input_count,
+    no_abstract_removed = no_abstract_removed,
+    duplicate_removed = 0,
+    output_count = 0
   )
-
-  # Deterministic tie-breaker by pmid.
-  df <- df[order(df$score, df$pmid, decreasing = c(TRUE, FALSE), na.last = TRUE), ]
-
-  has_stringdist <- requireNamespace("stringdist", quietly = TRUE)
-  keep <- rep(TRUE, nrow(df))
-  seen_doi <- character(0)
-  seen_title <- character(0)
-
-  for (i in seq_len(nrow(df))) {
-    d <- df$doi_norm[i]
-    t <- df$title_norm[i]
-
-    if (!is.na(d) && nchar(d) > 0 && d %in% seen_doi) {
-      keep[i] <- FALSE
-      next
-    }
-
-    if (!is.na(t) && nchar(t) > 0 && t %in% seen_title) {
-      keep[i] <- FALSE
-      next
-    }
-
-    if (has_stringdist && !is.na(t) && nchar(t) > 0 && length(seen_title) > 0) {
-      sim <- tryCatch(
-        stringdist::stringsim(t, seen_title, method = "lv"),
-        error = function(e) numeric(0)
-      )
-      if (length(sim) > 0 && any(sim >= 0.85, na.rm = TRUE)) {
-        keep[i] <- FALSE
-        next
-      }
-    }
-
-    if (!is.na(d) && nchar(d) > 0) seen_doi <- c(seen_doi, d)
-    if (!is.na(t) && nchar(t) > 0) seen_title <- c(seen_title, t)
-  }
-
-  df$idx[keep]
+  write_json(summary, file.path(outdir, "deduplication_summary.json"), pretty = TRUE, auto_unbox = TRUE)
+  quit(save = "no", status = 0)
 }
 
-# --- Run deduplication -------------------------------------------------
+# Build a revtools-compatible data frame.
+df <- tibble(
+  id = seq_along(records),
+  pmid = vapply(records, function(r) as.character(r$pmid %||% ""), character(1)),
+  title = vapply(records, function(r) as.character(r$title %||% ""), character(1)),
+  author = vapply(records, function(r) paste(unlist(r$authors %||% character(0)), collapse = " "), character(1)),
+  year = vapply(records, function(r) as.character(r$year %||% ""), character(1)),
+  journal = vapply(records, function(r) as.character(r$journal %||% ""), character(1)),
+  doi = vapply(records, function(r) as.character(r$doi %||% ""), character(1)),
+  abstract = vapply(records, function(r) as.character(r$abstract %||% ""), character(1))
+)
 
-keep_idx <- NULL
-method <- "custom"
+# Deduplicate with revtools.
+dup <- find_duplicates(df)
+uniq <- extract_unique_references(df, dup)
 
-if (nrow(meta) > 0) {
-  for (m in c("revtools", "metagear")) {
-    tryCatch({
-      if (m == "revtools") {
-        keep_idx <- dedup_revtools(meta)
-      } else {
-        keep_idx <- dedup_metagear(meta)
-      }
-      method <- m
-      break
-    }, error = function(e) {
-      message(m, " failed or not available: ", conditionMessage(e))
-    })
-  }
-  if (is.null(keep_idx)) {
-    keep_idx <- dedup_custom(meta)
-    method <- "custom_stringdist"
-  }
+if ("id" %in% names(uniq)) {
+  keep_idx <- as.integer(uniq$id)
+} else if ("record_id" %in% names(uniq)) {
+  keep_idx <- as.integer(uniq$record_id)
 } else {
-  keep_idx <- integer(0)
-  method <- "none"
+  keep_idx <- as.integer(rownames(uniq))
 }
 
-# --- Write outputs -----------------------------------------------------
-
-dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
-
-out_meta <- meta[meta$idx %in% keep_idx, ]
-out_meta <- out_meta[order(out_meta$idx), ]
-
-for (i in out_meta$idx) {
+# Write selected records back out.
+dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+for (i in keep_idx) {
   r <- records[[i]]
   if (is.character(r$authors) && !is.list(r$authors)) r$authors <- as.list(r$authors)
   if (is.character(r$keywords) && !is.list(r$keywords)) r$keywords <- as.list(r$keywords)
-
-  out_path <- file.path(outdir, paste0(r$pmid, ".json"))
+  out_path <- file.path(outdir, paste0(as.character(r$pmid %||% i), ".json"))
   write_json(r, out_path, pretty = TRUE, auto_unbox = TRUE)
 }
 
 summary <- list(
   species = species,
   domain = domain,
-  method = method,
+  method = "revtools",
   input_count = input_count,
   no_abstract_removed = no_abstract_removed,
-  duplicate_removed = input_count - no_abstract_removed - nrow(out_meta),
-  output_count = nrow(out_meta)
+  duplicate_removed = length(records) - length(keep_idx),
+  output_count = length(keep_idx)
 )
-
 write_json(summary, file.path(outdir, "deduplication_summary.json"), pretty = TRUE, auto_unbox = TRUE)
