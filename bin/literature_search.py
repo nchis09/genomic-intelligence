@@ -8,6 +8,7 @@ The species group, domain group, and a 10-year publication date filter are AND-e
 
 import argparse
 import csv
+import html
 import json
 import sys
 import time
@@ -55,8 +56,11 @@ def work_text(work: dict) -> str:
 
 def normalize_work(hit: dict) -> dict:
     """Map a Europe PMC hit to the common schema used for filtering and saving."""
-    abstract = hit.get("abstractText")
-    if not isinstance(abstract, str):
+    raw_abstract = hit.get("abstractText")
+    if isinstance(raw_abstract, str):
+        abstract = re.sub(r"<[^>]+>", "", raw_abstract)
+        abstract = html.unescape(abstract)
+    else:
         abstract = ""
     author = hit.get("authorString") or ""
     first_author = author.split(",")[0] if author else ""
@@ -112,11 +116,11 @@ def filter_and_score(
             continue
 
         required_hits = term_hits(text, required_terms)
-        if required_hits == 0:
-            # Not enough domain signal.
+        related_hits = term_hits(text, related_terms)
+        if required_hits == 0 and related_hits == 0:
+            # No domain signal at all.
             continue
 
-        related_hits = term_hits(text, related_terms)
         score = (
             10 * exact_hits
             + 5 * broad_hits
@@ -228,7 +232,6 @@ def save_domain(outdir: Path, domain: str, works: list) -> None:
             "source",
             "is_oa",
             "cited_by_count",
-            "abstract",
         ])
         for work in works:
             writer.writerow([
@@ -241,7 +244,6 @@ def save_domain(outdir: Path, domain: str, works: list) -> None:
                 work.get("source", ""),
                 work.get("is_oa", ""),
                 work.get("cited_by_count", 0),
-                work.get("abstract", ""),
             ])
 
 
@@ -320,6 +322,7 @@ def main():
             works.sort(key=lambda w: w.get("_relevance_score", 0), reverse=True)
             for w in works:
                 w.pop("_relevance_score", None)
+                w.pop("abstract", None)
             works = works[: args.max_results]
         except requests.exceptions.RequestException as exc:
             print(
