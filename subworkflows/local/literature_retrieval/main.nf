@@ -12,6 +12,7 @@ include { PUBMED_METADATA } from '../../../modules/local/pubmed_metadata/main'
 include { LITERATURE_DEDUPLICATE } from '../../../modules/local/literature_deduplicate/main'
 include { LITERATURE_SCREEN } from '../../../modules/local/literature_screen/main'
 include { LITERATURE_PDF } from '../../../modules/local/literature_pdf/main'
+include { LITERATURE_GROBID } from '../../../modules/local/literature_grobid/main'
 
 workflow LITERATURE_RETRIEVAL {
     take:
@@ -48,6 +49,9 @@ workflow LITERATURE_RETRIEVAL {
 
             if (!params.skip_literature_pdf) {
                 LITERATURE_PDF(ch_pubmed_results)
+                if (!params.skip_literature_grobid) {
+                    LITERATURE_GROBID(LITERATURE_PDF.out.pdfs)
+                }
             }
         } else {
             ch_pubmed_results = channel.empty()

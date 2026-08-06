@@ -102,6 +102,42 @@
                     "default": 3,
                     "description": "Number of retries per PDF resolver.",
                     "fa_icon": "fas fa-redo"
+                },
+                "skip_literature_grobid": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set to true to skip GROBID PDF-to-XML conversion.",
+                    "fa_icon": "fas fa-file-code"
+                },
+                "grobid_url": {
+                    "type": "string",
+                    "default": "http://localhost:8070",
+                    "description": "URL of the GROBID REST service.",
+                    "fa_icon": "fas fa-server"
+                },
+                "grobid_timeout": {
+                    "type": "integer",
+                    "default": 60,
+                    "description": "HTTP timeout for GROBID requests.",
+                    "fa_icon": "fas fa-clock"
+                },
+                "grobid_sleep": {
+                    "type": "number",
+                    "default": 1.0,
+                    "description": "Seconds between GROBID requests.",
+                    "fa_icon": "fas fa-pause"
+                },
+                "grobid_retries": {
+                    "type": "integer",
+                    "default": 3,
+                    "description": "Number of retries per PDF for GROBID.",
+                    "fa_icon": "fas fa-redo"
+                },
+                "grobid_batch_size": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Number of PDFs to send per GROBID batch.",
+                    "fa_icon": "fas fa-layer-group"
                 }
             }
         },
