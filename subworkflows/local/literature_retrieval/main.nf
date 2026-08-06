@@ -10,6 +10,7 @@
 include { LITERATURE_SEARCH } from '../../../modules/local/literature_search/main'
 include { PUBMED_METADATA } from '../../../modules/local/pubmed_metadata/main'
 include { LITERATURE_DEDUPLICATE } from '../../../modules/local/literature_deduplicate/main'
+include { LITERATURE_SCREEN } from '../../../modules/local/literature_screen/main'
 
 workflow LITERATURE_RETRIEVAL {
     take:
@@ -37,6 +38,11 @@ workflow LITERATURE_RETRIEVAL {
             if (!params.skip_literature_deduplication) {
                 LITERATURE_DEDUPLICATE(ch_pubmed_results)
                 ch_pubmed_results = LITERATURE_DEDUPLICATE.out.deduplicated
+            }
+
+            if (!params.skip_literature_screening) {
+                LITERATURE_SCREEN(ch_pubmed_results, file(params.literature_search_terms))
+                ch_pubmed_results = LITERATURE_SCREEN.out.screened
             }
         } else {
             ch_pubmed_results = channel.empty()
