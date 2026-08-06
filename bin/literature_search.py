@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Search OpenAlex for per-species, per-domain literature and save results as JSON/TSV.
+Search Europe PMC for per-species, per-domain literature and save results as JSON/TSV.
 
-One OpenAlex query is built per domain using the species synonyms from the YAML
-and a separate `title_and_abstract.search` filter is used for the domain terms.
-The two filters are AND-ed by repeating the `title_and_abstract.search` filter.
+One Europe PMC query is built per domain using the species synonyms from the YAML.
+The species group, domain group, and a 10-year publication date filter are AND-ed.
 """
 
 import argparse
@@ -13,70 +12,132 @@ import json
 import sys
 import time
 import datetime
+import re
 from pathlib import Path
 
 import requests
 import yaml
 
-BASE_URL = "https://api.openalex.org/works"
-SELECT_FIELDS = (
-    "id,display_name,doi,publication_year,publication_date,"
-    "abstract_inverted_index,authorships,primary_location,locations,"
-    "type,open_access,cited_by_count"
-)
+BASE_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 
 
 def quote_term(term: str) -> str:
-    """Quote multi-word or special terms for OpenAlex filter values."""
+    """Quote multi-word or special phrases for Europe PMC."""
     if " " in term or "|" in term or "," in term or "+" in term:
         term = term.replace('"', '\\"')
         return f'"{term}"'
     return term
 
 
-def build_pipe_group(terms: list) -> str:
-    """Join terms with the OpenAlex OR pipe."""
-    return "|".join(quote_term(t) for t in terms)
+def build_query_value(terms: list) -> str:
+    """Join terms with the Europe PMC OR operator."""
+    return " OR ".join(quote_term(t) for t in terms)
 
 
-def build_filter_value(species_terms: list, domain_terms: list, from_date: str = None) -> str:
+def build_query(species_terms: list, domain_terms: list, from_date: str, to_date: str) -> str:
     """
-    Build the OpenAlex `filter` value.
-    Two `title_and_abstract.search` filters are AND-ed by repeating the filter
-    key and separating with a comma. Optionally AND with a `from_publication_date`.
+    Build a Europe PMC `query` string.
+    The species and domain term groups are AND-ed with a 10-year date range.
     """
-    species_group = build_pipe_group(species_terms)
-    domain_group = build_pipe_group(domain_terms)
-    filter_value = (
-        f"title_and_abstract.search:{species_group},"
-        f"title_and_abstract.search:{domain_group}"
+    species_group = build_query_value(species_terms)
+    domain_group = build_query_value(domain_terms)
+    return f"({species_group}) AND ({domain_group}) AND FIRST_PDATE:[{from_date} TO {to_date}]"
+
+
+def work_text(work: dict) -> str:
+    """Combine title and abstract for local term matching."""
+    title = work.get("display_name", "")
+    abstract = work.get("abstract", "")
+    if not isinstance(abstract, str):
+        abstract = ""
+    return f"{title} {abstract}".lower()
+
+
+def normalize_work(hit: dict) -> dict:
+    """Map a Europe PMC hit to the common schema used for filtering and saving."""
+    abstract = hit.get("abstractText")
+    if not isinstance(abstract, str):
+        abstract = ""
+    author = hit.get("authorString") or ""
+    first_author = author.split(",")[0] if author else ""
+    return {
+        "id": hit.get("pmid") or hit.get("id", ""),
+        "display_name": hit.get("title", ""),
+        "doi": hit.get("doi", ""),
+        "publication_year": hit.get("pubYear", ""),
+        "publication_date": hit.get("firstPublicationDate", ""),
+        "abstract": abstract,
+        "cited_by_count": int(hit.get("citedByCount") or 0),
+        "first_author": first_author,
+        "source": hit.get("journalTitle", ""),
+        "is_oa": hit.get("isOpenAccess", ""),
+    }
+
+
+def term_hits(text: str, terms: list) -> int:
+    """Count how many terms appear in text as whole phrases (case-insensitive)."""
+    if not terms:
+        return 0
+    return sum(
+        1
+        for term in terms
+        if re.search(r"\b" + re.escape(term) + r"\b", text, re.IGNORECASE)
     )
-    if from_date:
-        filter_value += f",from_publication_date:{from_date}"
-    return filter_value
 
 
-def abstract_from_inverted_index(inv_index: dict) -> str:
-    """Reconstruct plain text from OpenAlex abstract_inverted_index."""
-    if not inv_index:
-        return ""
-    positions = {}
-    for word, indices in inv_index.items():
-        for pos in indices:
-            positions[pos] = word
-    if not positions:
-        return ""
-    max_pos = max(positions.keys())
-    words = [positions.get(i, "") for i in range(max_pos + 1)]
-    return " ".join(words)
+def filter_and_score(
+    works: list,
+    exact_terms: list,
+    broad_terms: list,
+    shared_terms: list,
+    excluded_terms: list,
+    required_terms: list,
+    related_terms: list,
+) -> list:
+    """Drop off-topic works and score the rest by species/domain relevance."""
+    filtered = []
+    for work in works:
+        text = work_text(work)
+
+        # Drop if it mentions another species or Marburg.
+        if term_hits(text, excluded_terms) > 0:
+            continue
+
+        exact_hits = term_hits(text, exact_terms)
+        broad_hits = term_hits(text, broad_terms)
+        shared_hits = term_hits(text, shared_terms)
+        # Require at least one species-specific (exact or broad) term.
+        # Shared terms like "orthoebolavirus" are too generic on their own.
+        if exact_hits + broad_hits == 0:
+            continue
+
+        required_hits = term_hits(text, required_terms)
+        if required_hits == 0:
+            # Not enough domain signal.
+            continue
+
+        related_hits = term_hits(text, related_terms)
+        score = (
+            10 * exact_hits
+            + 5 * broad_hits
+            + 2 * shared_hits
+            + 4 * required_hits
+            + 1 * related_hits
+            + 0.01 * work.get("cited_by_count", 0)
+        )
+        work["_relevance_score"] = score
+        filtered.append(work)
+
+    return filtered
 
 
-MAX_RETRY_WAIT = 30.0  # seconds; never honor a Retry-After longer than this
+MAX_RETRY_WAIT = 60.0  # seconds; never honor a Retry-After longer than this
 
 
 def fetch_page(params: dict, timeout: int = 60, max_retries: int = 5) -> dict:
-    """Fetch one page from the OpenAlex API, with 429 backoff."""
+    """Fetch one page from the Europe PMC API, with 429 backoff."""
     for attempt in range(max_retries + 1):
+        time.sleep(1.0)  # Throttle to stay within Europe PMC per-second limits
         response = requests.get(BASE_URL, params=params, timeout=timeout)
         if response.status_code == 429:
             if attempt == max_retries:
@@ -84,61 +145,59 @@ def fetch_page(params: dict, timeout: int = 60, max_retries: int = 5) -> dict:
             retry_after = response.headers.get("Retry-After")
             if retry_after:
                 try:
-                    wait = min(float(retry_after), MAX_RETRY_WAIT)
+                    # Increase backoff on each 429 even when the server suggests a value
+                    wait = min(float(retry_after) + (attempt * 15), MAX_RETRY_WAIT)
                 except ValueError:
-                    wait = min(2 ** attempt, MAX_RETRY_WAIT)
+                    wait = min((2 ** attempt) * 10, MAX_RETRY_WAIT)
             else:
-                wait = min(2 ** attempt, MAX_RETRY_WAIT)
+                wait = min((2 ** attempt) * 10, MAX_RETRY_WAIT)
             print(
-                f"OpenAlex 429: rate limited. Waiting {wait}s (retry {attempt + 1}/{max_retries}) ...",
+                f"Europe PMC 429: rate limited. Waiting {wait}s (retry {attempt + 1}/{max_retries}) ...",
                 file=sys.stderr,
             )
             time.sleep(wait)
             continue
         response.raise_for_status()
         return response.json()
-    raise requests.exceptions.HTTPError("Max retries exceeded for OpenAlex request.")
+    raise requests.exceptions.HTTPError("Max retries exceeded for Europe PMC request.")
 
 
-def search_openalex(
+def search_europepmc(
     species_terms: list,
     domain_terms: list,
     max_results: int,
-    mailto: str = None,
-    api_key: str = None,
     per_page: int = 100,
     sleep: float = 1.0,
     max_retries: int = 2,
 ) -> list:
-    """Paginate OpenAlex `filter` searches up to `max_results`."""
+    """Paginate Europe PMC `search` requests up to `max_results`."""
     results = []
     cursor = "*"
 
-    ten_years_ago = (datetime.date.today() - datetime.timedelta(days=10 * 365)).isoformat()
+    min_date = (datetime.date.today() - datetime.timedelta(days=10 * 365)).isoformat()
+    max_date = datetime.date.today().isoformat()
 
     while len(results) < max_results:
+        query = build_query(species_terms, domain_terms, min_date, max_date)
         params = {
-            "filter": build_filter_value(species_terms, domain_terms, from_date=ten_years_ago),
-            "per_page": per_page,
-            "cursor": cursor,
-            "select": SELECT_FIELDS,
+            "query": query,
+            "format": "json",
+            "resultType": "core",
+            "pageSize": min(per_page, max_results),
+            "cursorMark": cursor,
         }
-        if mailto:
-            params["mailto"] = mailto
-        if api_key:
-            params["api_key"] = api_key
 
         data = fetch_page(params, max_retries=max_retries)
-        page_results = data.get("results", [])
-        meta = data.get("meta", {})
+        page_results = data.get("resultList", {}).get("result", [])
 
         if not page_results:
             break
 
-        results.extend(page_results)
+        for hit in page_results:
+            results.append(normalize_work(hit))
 
-        next_cursor = meta.get("next_cursor")
-        if not next_cursor or len(page_results) < per_page:
+        next_cursor = data.get("nextCursorMark")
+        if not next_cursor or next_cursor == cursor or len(page_results) < per_page:
             break
 
         cursor = next_cursor
@@ -160,7 +219,7 @@ def save_domain(outdir: Path, domain: str, works: list) -> None:
     with open(tsv_path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh, delimiter="\t")
         writer.writerow([
-            "openalex_id",
+            "id",
             "title",
             "doi",
             "year",
@@ -172,71 +231,48 @@ def save_domain(outdir: Path, domain: str, works: list) -> None:
             "abstract",
         ])
         for work in works:
-            openalex_id = work.get("id", "")
-            title = work.get("display_name", "")
-            doi = work.get("doi", "")
-            year = work.get("publication_year", "")
-            pub_date = work.get("publication_date", "")
-
-            first_author = ""
-            authorships = work.get("authorships", [])
-            if authorships:
-                author = authorships[0].get("author", {})
-                first_author = author.get("display_name", "")
-
-            source = ""
-            primary = work.get("primary_location") or {}
-            if primary and primary.get("source"):
-                source = primary["source"].get("display_name", "")
-
-            is_oa = ""
-            open_access = work.get("open_access", {})
-            if open_access:
-                is_oa = open_access.get("is_oa", "")
-
-            cited = work.get("cited_by_count", "")
-            abstract = abstract_from_inverted_index(work.get("abstract_inverted_index", {}))
-
             writer.writerow([
-                openalex_id,
-                title,
-                doi,
-                year,
-                pub_date,
-                first_author,
-                source,
-                is_oa,
-                cited,
-                abstract,
+                work.get("id", ""),
+                work.get("display_name", ""),
+                work.get("doi", ""),
+                work.get("publication_year", ""),
+                work.get("publication_date", ""),
+                work.get("first_author", ""),
+                work.get("source", ""),
+                work.get("is_oa", ""),
+                work.get("cited_by_count", 0),
+                work.get("abstract", ""),
             ])
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Search OpenAlex per species and domain and save results."
+        description="Search Europe PMC per species and domain and save results."
     )
     parser.add_argument("--species", required=True, help="Species key, e.g. ebov")
     parser.add_argument("--terms-yaml", required=True, help="Path to literature_search_terms.yml")
     parser.add_argument("--max-results", type=int, default=1000, help="Max results per domain")
-    parser.add_argument("--mailto", default=None, help="Email for OpenAlex polite pool")
-    parser.add_argument("--api-key", default=None, help="OpenAlex API key")
+    parser.add_argument("--mailto", default=None, help="Unused legacy OpenAlex email argument")
+    parser.add_argument("--api-key", default=None, help="Unused legacy OpenAlex API key argument")
     parser.add_argument("--outdir", required=True, help="Output directory")
     args = parser.parse_args()
 
     with open(args.terms_yaml, "r", encoding="utf-8") as fh:
         config = yaml.safe_load(fh)
 
-    species_synonyms = config.get("species_synonyms", {}).get(args.species, [])
+    species_cfg = config.get("species_synonyms", {}).get(args.species, {})
+    exact_terms = species_cfg.get("exact", [])
+    broad_terms = species_cfg.get("broad", [])
     shared_terms = config.get("shared_terms", [])
+    excluded_terms = config.get("excluded_terms", {}).get(args.species, [])
 
-    if not species_synonyms:
+    species_search_terms = list(dict.fromkeys(exact_terms + broad_terms + shared_terms))
+    if not species_search_terms:
         print(
-            f"Warning: no synonyms for species '{args.species}', using shared terms only.",
+            f"Error: no species terms for '{args.species}' in the terms YAML.",
             file=sys.stderr,
         )
-        species_terms = list(shared_terms)
-    else:
-        species_terms = list(dict.fromkeys(species_synonyms + shared_terms))
+        sys.exit(1)
 
     domains = config.get("domains", {})
     if not domains:
@@ -245,8 +281,10 @@ def main():
 
     outdir = Path(args.outdir)
     for domain_key, domain_info in domains.items():
-        domain_terms = domain_info.get("terms", [])
-        if not domain_terms:
+        required_terms = domain_info.get("required", [])
+        related_terms = domain_info.get("related", [])
+        domain_search_terms = list(dict.fromkeys(required_terms + related_terms))
+        if not domain_search_terms:
             continue
 
         json_path = outdir / domain_key / "results.json"
@@ -263,15 +301,26 @@ def main():
                 # Corrupt/partial file; re-download.
                 pass
 
-        print(f"[{args.species}/{domain_key}] Searching OpenAlex ...", file=sys.stderr)
+        print(f"[{args.species}/{domain_key}] Searching Europe PMC ...", file=sys.stderr)
         try:
-            works = search_openalex(
-                species_terms=species_terms,
-                domain_terms=domain_terms,
+            raw = search_europepmc(
+                species_terms=species_search_terms,
+                domain_terms=domain_search_terms,
                 max_results=args.max_results,
-                mailto=args.mailto,
-                api_key=args.api_key,
             )
+            works = filter_and_score(
+                raw,
+                exact_terms=exact_terms,
+                broad_terms=broad_terms,
+                shared_terms=shared_terms,
+                excluded_terms=excluded_terms,
+                required_terms=required_terms,
+                related_terms=related_terms,
+            )
+            works.sort(key=lambda w: w.get("_relevance_score", 0), reverse=True)
+            for w in works:
+                w.pop("_relevance_score", None)
+            works = works[: args.max_results]
         except requests.exceptions.RequestException as exc:
             print(
                 f"[{args.species}/{domain_key}] Search failed ({exc}). Writing empty results.",
@@ -280,6 +329,7 @@ def main():
             works = []
         save_domain(outdir, domain_key, works)
         print(f"[{args.species}/{domain_key}] Saved {len(works)} results.", file=sys.stderr)
+        time.sleep(3.0)  # Space out Europe PMC domain requests
 
 
 if __name__ == "__main__":

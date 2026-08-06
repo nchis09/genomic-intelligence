@@ -9,6 +9,7 @@
 process LITERATURE_SEARCH {
     tag "$meta.id - $meta.species"
     label 'process_low'
+    maxForks 1
 
     // Use the env YAML; Nextflow builds and activates the conda env.
     // Call 'python' (not 'python3') because 'python3' on this system resolves
@@ -17,6 +18,8 @@ process LITERATURE_SEARCH {
 
     input:
     tuple val(meta), path(fasta), path(metadata)
+    path terms_yaml
+    path script
 
     output:
     tuple val(meta), path("*/results.*"), emit: results
@@ -29,9 +32,9 @@ process LITERATURE_SEARCH {
     def mailto = params.literature_search_mailto ? "--mailto ${params.literature_search_mailto}" : ""
     def api_key = params.literature_search_api_key ? "--api-key ${params.literature_search_api_key}" : ""
     """
-    python ${projectDir}/bin/literature_search.py \
+    python ${script} \
         --species "${meta.species}" \
-        --terms-yaml "${params.literature_search_terms}" \
+        --terms-yaml "${terms_yaml}" \
         --max-results ${max_results} \
         ${mailto} \
         ${api_key} \

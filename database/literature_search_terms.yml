@@ -1,58 +1,138 @@
 ---
-# OpenAlex literature search configuration
+# Europe PMC literature search configuration
 # The species key is injected from the pipeline's `meta.species` (e.g. bdbv, ebov, sudv, tafv, restv).
-# Each domain produces a separate OpenAlex query with the species synonyms AND the domain terms.
+# Each domain produces a separate Europe PMC query with the species synonyms AND the domain terms.
+# After retrieval, results are filtered locally to require at least one high-specificity
+# domain term and at least one species-specific term, and to exclude papers about other species.
 
 species_synonyms:
   bdbv:
-    - "Bundibugyo ebolavirus"
-    - "Bundibugyo virus"
-    - "BDBV"
+    exact:
+      - "Bundibugyo ebolavirus"
+      - "BDBV"
+    broad:
+      - "Bundibugyo virus"
   ebov:
-    - "Zaire ebolavirus"
-    - "Ebola virus"
-    - "EBOV"
-    - "ZEBOV"
+    exact:
+      - "Zaire ebolavirus"
+      - "Ebola virus"
+      - "EBOV"
+      - "ZEBOV"
+    broad:
+      - "Ebolavirus"
   sudv:
-    - "Sudan ebolavirus"
-    - "Sudan virus"
-    - "SUDV"
+    exact:
+      - "Sudan ebolavirus"
+      - "SUDV"
+    broad:
+      - "Sudan virus"
   tafv:
-    - "Tai Forest ebolavirus"
-    - "Tai Forest virus"
-    - "TAFV"
+    exact:
+      - "Tai Forest ebolavirus"
+      - "Tai Forest virus"
+      - "TAFV"
+    broad:
+      - "Cote d'Ivoire ebolavirus"
   restv:
-    - "Reston ebolavirus"
-    - "Reston virus"
-    - "RESTV"
+    exact:
+      - "Reston ebolavirus"
+      - "Reston virus"
+      - "RESTV"
+    broad:
+      - "Reston ebolavirus"
 
 # Terms applied to every species search in addition to species-specific synonyms.
+# Keep this minimal; "orthoebolavirus" is the only shared, higher-order term.
 shared_terms:
   - "orthoebolavirus"
-  - "Ebolavirus"
-  - "filovirus"
+
+# Terms that should NOT appear in a relevant paper for the given species.
+# Excluding the other ebolavirus species and Marburg keeps results species-specific.
+# "Ebola virus" is intentionally NOT excluded for non-EBOV species because it is used
+# as a generic disease name; the species-specific exact terms are enough to resolve matches.
+excluded_terms:
+  bdbv:
+    - "Zaire ebolavirus"
+    - "EBOV"
+    - "Sudan ebolavirus"
+    - "SUDV"
+    - "Reston ebolavirus"
+    - "RESTV"
+    - "Tai Forest ebolavirus"
+    - "TAFV"
+    - "Marburg"
+    - "MARV"
+  ebov:
+    - "Bundibugyo ebolavirus"
+    - "BDBV"
+    - "Sudan ebolavirus"
+    - "SUDV"
+    - "Reston ebolavirus"
+    - "RESTV"
+    - "Tai Forest ebolavirus"
+    - "TAFV"
+    - "Marburg"
+    - "MARV"
+  sudv:
+    - "Zaire ebolavirus"
+    - "EBOV"
+    - "Bundibugyo ebolavirus"
+    - "BDBV"
+    - "Reston ebolavirus"
+    - "RESTV"
+    - "Tai Forest ebolavirus"
+    - "TAFV"
+    - "Marburg"
+    - "MARV"
+  tafv:
+    - "Zaire ebolavirus"
+    - "EBOV"
+    - "Bundibugyo ebolavirus"
+    - "BDBV"
+    - "Sudan ebolavirus"
+    - "SUDV"
+    - "Reston ebolavirus"
+    - "RESTV"
+    - "Marburg"
+    - "MARV"
+  restv:
+    - "Zaire ebolavirus"
+    - "EBOV"
+    - "Bundibugyo ebolavirus"
+    - "BDBV"
+    - "Sudan ebolavirus"
+    - "SUDV"
+    - "Tai Forest ebolavirus"
+    - "TAFV"
+    - "Marburg"
+    - "MARV"
 
 # One OpenAlex query is generated per domain per species.
+# `required` terms are high-specificity and are used for local post-filtering:
+# a paper must contain at least one required domain term and at least one
+# species-specific (exact or broad) term to be kept. `related` terms boost the
+# relevance score but are not mandatory.
 domains:
   seroprevalence:
     name: "Seroprevalence and immunity"
-    terms:
+    required:
       - "seroprevalence"
       - "serosurvey"
-      - "sero-survey"
-      - "seropositivity"
       - "antibody prevalence"
+    related:
+      - "seropositivity"
 
   variant_phenotype:
     name: "Phenotypic and functional impact of variants"
-    terms:
+    required:
       - "mutation"
       - "variant"
-      - "genomic"
       - "immune escape"
       - "virulence"
-      - "transmissibility"
       - "antiviral resistance"
+    related:
+      - "genomic"
+      - "transmissibility"
       - "GP"
       - "NP"
       - "VP24"
@@ -61,33 +141,35 @@ domains:
 
   vaccine_therapeutic:
     name: "Vaccine and therapeutic effectiveness"
-    terms:
+    required:
       - "vaccine"
-      - "vaccination"
       - "monoclonal antibody"
       - "therapeutic"
       - "antiviral"
+    related:
+      - "vaccination"
       - "ring vaccination"
       - "vaccine effectiveness"
       - "vaccine efficacy"
 
   diagnostic:
     name: "Diagnostic test performance and primer mismatches"
-    terms:
-      - "diagnostic"
+    required:
       - "RT-PCR"
       - "primer"
       - "probe"
-      - "mismatch"
       - "sensitivity"
       - "specificity"
       - "rapid diagnostic test"
       - "RDT"
       - "CRISPR"
+      - "diagnostic"
+    related:
+      - "mismatch"
 
   transmission:
     name: "Transmission dynamics"
-    terms:
+    required:
       - "transmission"
       - "R0"
       - "serial interval"
@@ -95,54 +177,60 @@ domains:
       - "superspreading"
       - "superspreader"
       - "transmission route"
+    related: []
 
   clinical:
     name: "Clinical severity and risk groups"
-    terms:
-      - "clinical"
+    required:
       - "case fatality rate"
       - "CFR"
-      - "severity"
       - "hospitalization"
       - "symptom"
+      - "clinical"
+      - "severity"
+    related:
       - "risk factor"
 
   reservoir:
     name: "Reservoir and spillover (One Health)"
-    terms:
+    required:
       - "reservoir"
       - "spillover"
       - "bushmeat"
-      - "bat"
       - "animal host"
-      - "One Health"
       - "zoonotic"
       - "zoonosis"
+      - "bat"
+    related:
+      - "One Health"
 
   intervention:
     name: "Intervention and control measures"
-    terms:
+    required:
       - "intervention"
       - "contact tracing"
       - "quarantine"
       - "isolation"
       - "infection prevention and control"
       - "IPC"
+    related:
+      - "infection control"
 
   epidemiological_context:
     name: "Epidemiological context"
-    terms:
+    required:
       - "outbreak"
       - "attack rate"
       - "epidemic"
+      - "seasonality"
+    related:
       - "spatial"
       - "temporal"
-      - "seasonality"
       - "geographic"
 
   genomic_surveillance:
     name: "Genomic surveillance quality indicators"
-    terms:
+    required:
       - "genomic surveillance"
       - "lineage"
       - "clade"
@@ -150,14 +238,17 @@ domains:
       - "nextstrain"
       - "sequencing"
       - "reference panel"
+    related:
+      - "genomic"
 
   policy:
     name: "Policy and risk assessment"
-    terms:
+    required:
       - "risk assessment"
-      - "WHO"
-      - "CDC"
       - "travel advisory"
       - "quarantine policy"
       - "forecast"
+    related:
+      - "WHO"
+      - "CDC"
       - "modeling"

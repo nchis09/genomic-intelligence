@@ -13,7 +13,11 @@ workflow LITERATURE_RETRIEVAL {
 
     main:
     if (!params.skip_literature_search) {
-        LITERATURE_SEARCH(ch_species_data)
+        LITERATURE_SEARCH(
+            ch_species_data,
+            file(params.literature_search_terms),
+            file("${projectDir}/bin/literature_search.py")
+        )
         ch_lit_results = LITERATURE_SEARCH.out.results
     } else {
         ch_lit_results = channel.empty()
