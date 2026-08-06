@@ -23,6 +23,7 @@ process LITERATURE_DEDUPLICATE {
 
     script:
     """
+    [ -n "\${CONDA_PREFIX}" ] && export PATH="\${CONDA_PREFIX}/bin:\${PATH}"
     Rscript ${projectDir}/bin/deduplicate_literature.R \
         --input-dir . \
         --outdir . \

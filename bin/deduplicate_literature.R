@@ -3,6 +3,11 @@
 
 suppressPackageStartupMessages(library(jsonlite))
 suppressPackageStartupMessages(library(dplyr))
+
+# r-revtools is not on conda-forge; install revtools from CRAN the first time this runs.
+if (!requireNamespace("revtools", quietly = TRUE)) {
+  install.packages("revtools", repos = "https://cloud.r-project.org", dependencies = c("Depends", "Imports", "LinkingTo"))
+}
 suppressPackageStartupMessages(library(revtools))
 
 `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
@@ -66,8 +71,8 @@ df <- tibble(
   abstract = vapply(records, function(r) as.character(r$abstract %||% ""), character(1))
 )
 
-# Deduplicate with revtools.
-dup <- find_duplicates(df)
+# Deduplicate with revtools (title-only to avoid multi-column data.frame == bug).
+dup <- find_duplicates(df, match_variable = "title")
 uniq <- extract_unique_references(df, dup)
 
 if ("id" %in% names(uniq)) {
