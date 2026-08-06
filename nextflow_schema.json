@@ -73,6 +73,35 @@
                     "type": "string",
                     "description": "Comma-separated query sample names to highlight in tree plots (auto-detected from FASTA if null).",
                     "fa_icon": "fas fa-search"
+                },
+                "skip_literature_pdf": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set to true to skip full-text PDF download.",
+                    "fa_icon": "fas fa-file-pdf"
+                },
+                "pdf_email": {
+                    "type": "string",
+                    "description": "Contact email required by the Unpaywall API.",
+                    "fa_icon": "fas fa-envelope"
+                },
+                "pdf_timeout": {
+                    "type": "integer",
+                    "default": 30,
+                    "description": "HTTP request timeout in seconds for PDF downloads.",
+                    "fa_icon": "fas fa-clock"
+                },
+                "pdf_sleep": {
+                    "type": "number",
+                    "default": 1.0,
+                    "description": "Seconds to sleep between consecutive PDF download requests.",
+                    "fa_icon": "fas fa-pause"
+                },
+                "pdf_retries": {
+                    "type": "integer",
+                    "default": 3,
+                    "description": "Number of retries per PDF resolver.",
+                    "fa_icon": "fas fa-redo"
                 }
             }
         },
