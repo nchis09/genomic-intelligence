@@ -9,6 +9,7 @@
 
 include { LITERATURE_SEARCH } from '../../../modules/local/literature_search/main'
 include { PUBMED_METADATA } from '../../../modules/local/pubmed_metadata/main'
+include { LITERATURE_DEDUPLICATE } from '../../../modules/local/literature_deduplicate/main'
 
 workflow LITERATURE_RETRIEVAL {
     take:
@@ -32,6 +33,11 @@ workflow LITERATURE_RETRIEVAL {
             }
             PUBMED_METADATA(ch_pubmed_input)
             ch_pubmed_results = PUBMED_METADATA.out.metadata
+
+            if (!params.skip_literature_deduplication) {
+                LITERATURE_DEDUPLICATE(ch_pubmed_results)
+                ch_pubmed_results = LITERATURE_DEDUPLICATE.out.deduplicated
+            }
         } else {
             ch_pubmed_results = channel.empty()
         }

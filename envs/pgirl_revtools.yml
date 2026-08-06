@@ -1,0 +1,9 @@
+name: pgirl_revtools
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base>=4.2
+  - r-jsonlite
+  - r-dplyr
+  - r-stringdist
