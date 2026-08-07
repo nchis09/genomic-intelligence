@@ -1,0 +1,9 @@
+name: pgirl_agentslr
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - llama-cpp-python
+  - pyyaml
+  - pydantic
+  - requests

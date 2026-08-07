@@ -108,6 +108,36 @@
                     "default": false,
                     "description": "Set to true to skip PDF-to-text extraction.",
                     "fa_icon": "fas fa-file-alt"
+                },
+                "skip_literature_evidence": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set to true to skip AgentSLR structured evidence extraction.",
+                    "fa_icon": "fas fa-robot"
+                },
+                "llm_gguf": {
+                    "type": "string",
+                    "default": null,
+                    "description": "Path to the local .gguf LLM file used by AgentSLR evidence extraction.",
+                    "fa_icon": "fas fa-brain"
+                },
+                "llm_n_ctx": {
+                    "type": "integer",
+                    "default": 4096,
+                    "description": "Context window size for the local LLM.",
+                    "fa_icon": "fas fa-expand-arrows-alt"
+                },
+                "llm_temperature": {
+                    "type": "number",
+                    "default": 0.1,
+                    "description": "Sampling temperature for the local LLM.",
+                    "fa_icon": "fas fa-thermometer-half"
+                },
+                "llm_seed": {
+                    "type": "integer",
+                    "default": 42,
+                    "description": "Deterministic seed for the local LLM.",
+                    "fa_icon": "fas fa-seedling"
                 }
             }
         },

@@ -18,7 +18,7 @@ process LITERATURE_TEXT {
     path "pdf_text_summary.json", emit: summary
 
     when:
-    !params.skip_literature_grobid && (task.ext.when == null || task.ext.when)
+    !params.skip_literature_text && (task.ext.when == null || task.ext.when)
 
     script:
     """
