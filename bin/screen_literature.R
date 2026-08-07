@@ -49,6 +49,7 @@ if (is.null(species_syn) || is.null(species_syn$exact)) {
   stop("Species '", species, "' not found or has no exact synonyms in ", terms_file)
 }
 excluded_terms <- terms$excluded_terms[[species]] %||% character(0)
+domain_excluded_terms <- terms$domain_excluded_terms[[domain]] %||% character(0)
 
 clean_in <- function(x) {
   x <- tolower(trimws(as.character(x)))
@@ -120,6 +121,7 @@ req_terms <- tolower(as.character(domain_terms$required))
 exact_terms <- tolower(as.character(species_syn$exact))
 broad_terms <- tolower(as.character(species_syn$broad %||% character(0)))
 exc_terms <- tolower(as.character(excluded_terms))
+domain_exc_terms <- tolower(as.character(domain_excluded_terms))
 
 df <- df %>%
   mutate(
@@ -127,9 +129,11 @@ df <- df %>%
     has_exact = has_match(text, exact_terms),
     has_broad = if (length(broad_terms) > 0) has_match(text, broad_terms) else FALSE,
     has_excluded = if (length(exc_terms) > 0) has_match(text, exc_terms) else FALSE,
-    # Positive seed: matches domain term, has exact species term, no excluded species
+    has_domain_excluded = if (length(domain_exc_terms) > 0) has_match(text, domain_exc_terms) else FALSE,
+    # Positive seed: matches domain term, has exact species term, no excluded species/domain terms
     included = case_when(
       has_excluded ~ 0L,
+      has_domain_excluded ~ 0L,
       has_required & has_exact ~ 1L,
       TRUE ~ 0L
     )

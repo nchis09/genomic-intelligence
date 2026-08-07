@@ -115,29 +115,53 @@
                     "description": "Set to true to skip AgentSLR structured evidence extraction.",
                     "fa_icon": "fas fa-robot"
                 },
-                "llm_gguf": {
+                "agentslr_model_name": {
                     "type": "string",
-                    "default": null,
-                    "description": "Path to the local .gguf LLM file used by AgentSLR evidence extraction.",
+                    "default": "qwen2.5:7b",
+                    "description": "Ollama model name for AgentSLR evidence extraction.",
                     "fa_icon": "fas fa-brain"
                 },
-                "llm_n_ctx": {
-                    "type": "integer",
-                    "default": 4096,
-                    "description": "Context window size for the local LLM.",
-                    "fa_icon": "fas fa-expand-arrows-alt"
+                "agentslr_base_url": {
+                    "type": "string",
+                    "default": "http://localhost:11434/v1",
+                    "description": "Ollama OpenAI-compatible API endpoint URL for AgentSLR.",
+                    "fa_icon": "fas fa-link"
                 },
-                "llm_temperature": {
-                    "type": "number",
-                    "default": 0.1,
-                    "description": "Sampling temperature for the local LLM.",
-                    "fa_icon": "fas fa-thermometer-half"
+                "agentslr_api_key": {
+                    "type": "string",
+                    "default": "ollama",
+                    "description": "API key for the AgentSLR OpenAI-compatible endpoint (placeholder for Ollama).",
+                    "fa_icon": "fas fa-key"
                 },
-                "llm_seed": {
+                "ollama_models_dir": {
+                    "type": "string",
+                    "default": "tools/ollama_models",
+                    "description": "Directory for storing Ollama model weights. Requires system-level Ollama installation (brew install ollama).",
+                    "fa_icon": "fas fa-folder"
+                },
+                "agentslr_config_json": {
+                    "type": "string",
+                    "default": null,
+                    "description": "Optional path to config.json with API keys for AgentSLR.",
+                    "fa_icon": "fas fa-file-code"
+                },
+                "agentslr_extraction_concurrency": {
                     "type": "integer",
-                    "default": 42,
-                    "description": "Deterministic seed for the local LLM.",
-                    "fa_icon": "fas fa-seedling"
+                    "default": 1,
+                    "description": "Number of articles to process in parallel during AgentSLR extraction.",
+                    "fa_icon": "fas fa-stream"
+                },
+                "agentslr_max_completion_tokens": {
+                    "type": "integer",
+                    "default": 65536,
+                    "description": "Max completion tokens per LLM call in AgentSLR extraction.",
+                    "fa_icon": "fas fa-align-right"
+                },
+                "pubmed_email": {
+                    "type": "string",
+                    "default": null,
+                    "description": "NCBI Entrez contact email (required for PubMed metadata fetch).",
+                    "fa_icon": "fas fa-envelope"
                 }
             }
         },

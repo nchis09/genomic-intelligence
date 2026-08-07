@@ -3,7 +3,17 @@ channels:
   - conda-forge
 dependencies:
   - python>=3.10
-  - llama-cpp-python
+  - pandas
+  - openai
   - pyyaml
   - pydantic
   - requests
+  - tqdm
+  - scikit-learn
+  - numpy
+  - matplotlib
+  - seaborn
+  - lxml
+  - urllib3
+  - pyarrow
+  - huggingface_hub

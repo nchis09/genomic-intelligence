@@ -107,6 +107,36 @@ excluded_terms:
     - "Marburg"
     - "MARV"
 
+# Optional per-domain exclusion terms. A paper containing any of these terms is
+# dropped from that domain's results even if it matches a required/related term,
+# because these terms reliably indicate the paper is off-target for what the
+# domain's evidence_templates.yml fields ask for (e.g. animal-model-only studies
+# for the human "clinical" domain). These are NOT applied to the Europe PMC
+# query itself, only to local post-filtering in bin/literature_search.py.
+domain_excluded_terms:
+  clinical:
+    - "macaque"
+    - "macaques"
+    - "cynomolgus"
+    - "guinea pig"
+    - "guinea pigs"
+    - "non-human primate"
+    - "non-human primates"
+    - "nonhuman primate"
+    - "nonhuman primates"
+    - "mouse model"
+    - "mouse models"
+    - "murine model"
+    - "murine models"
+    - "IFNAR"
+    - "ferret model"
+    - "ferret models"
+  diagnostic:
+    - "post-traumatic stress"
+    - "posttraumatic stress"
+    - "anxiety"
+    - "stigma"
+
 # One OpenAlex query is generated per domain per species.
 # `required` terms are high-specificity and are used for local post-filtering:
 # a paper must contain at least one required domain term and at least one
@@ -163,7 +193,11 @@ domains:
       - "rapid diagnostic test"
       - "RDT"
       - "CRISPR"
-      - "diagnostic"
+      - "diagnostic test"
+      - "diagnostic assay"
+      - "diagnostic accuracy"
+      - "point-of-care test"
+      - "limit of detection"
     related:
       - "mismatch"
 
@@ -186,8 +220,12 @@ domains:
       - "CFR"
       - "hospitalization"
       - "symptom"
-      - "clinical"
-      - "severity"
+      - "clinical characteristics"
+      - "clinical presentation"
+      - "clinical outcome"
+      - "clinical severity"
+      - "clinical features"
+      - "disease severity"
     related:
       - "risk factor"
 

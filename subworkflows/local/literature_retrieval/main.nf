@@ -53,7 +53,10 @@ workflow LITERATURE_RETRIEVAL {
                 if (!params.skip_literature_text) {
                     LITERATURE_TEXT(LITERATURE_PDF.out.pdfs)
                     if (!params.skip_literature_evidence) {
-                        LITERATURE_EVIDENCE(LITERATURE_TEXT.out.text)
+                        // Join text files with metadata JSONs by meta (species + domain)
+                        // so LITERATURE_EVIDENCE can merge metadata into output JSONs
+                        ch_text_with_meta = LITERATURE_TEXT.out.text.join(ch_pubmed_results, by: [0])
+                        LITERATURE_EVIDENCE(ch_text_with_meta, file("${projectDir}/database/evidence_templates.yml"))
                     }
                 }
             }

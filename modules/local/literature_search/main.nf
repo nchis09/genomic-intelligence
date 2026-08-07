@@ -1,7 +1,7 @@
 /*
  * Local module: LITERATURE_SEARCH
  *
- * Search OpenAlex for each detected species and for every domain defined in
+ * Search Europe PMC for each detected species and for every domain defined in
  * database/literature_search_terms.yml. One JSON and one TSV are written per
  * domain under <species>/<domain>/.
  */
@@ -29,15 +29,11 @@ process LITERATURE_SEARCH {
 
     script:
     def max_results = params.literature_search_max_results ?: 1000
-    def mailto = params.literature_search_mailto ? "--mailto ${params.literature_search_mailto}" : ""
-    def api_key = params.literature_search_api_key ? "--api-key ${params.literature_search_api_key}" : ""
     """
     python ${script} \
         --species "${meta.species}" \
         --terms-yaml "${terms_yaml}" \
         --max-results ${max_results} \
-        ${mailto} \
-        ${api_key} \
         --outdir .
     """
 }

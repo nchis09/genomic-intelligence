@@ -97,14 +97,21 @@ def filter_and_score(
     excluded_terms: list,
     required_terms: list,
     related_terms: list,
+    domain_excluded_terms: list = None,
 ) -> list:
     """Drop off-topic works and score the rest by species/domain relevance."""
+    domain_excluded_terms = domain_excluded_terms or []
     filtered = []
     for work in works:
         text = work_text(work)
 
         # Drop if it mentions another species or Marburg.
         if term_hits(text, excluded_terms) > 0:
+            continue
+
+        # Drop if it matches a domain-level exclusion (e.g. animal-model-only
+        # studies in the human "clinical" domain).
+        if term_hits(text, domain_excluded_terms) > 0:
             continue
 
         exact_hits = term_hits(text, exact_terms)
@@ -281,6 +288,8 @@ def main():
         print("Error: no domains defined in terms YAML.", file=sys.stderr)
         sys.exit(1)
 
+    all_domain_excluded_terms = config.get("domain_excluded_terms", {})
+
     outdir = Path(args.outdir)
     for domain_key, domain_info in domains.items():
         required_terms = domain_info.get("required", [])
@@ -288,6 +297,7 @@ def main():
         domain_search_terms = list(dict.fromkeys(required_terms + related_terms))
         if not domain_search_terms:
             continue
+        domain_excluded_terms = all_domain_excluded_terms.get(domain_key, [])
 
         json_path = outdir / domain_key / "results.json"
         if json_path.is_file() and json_path.stat().st_size > 0:
@@ -318,6 +328,7 @@ def main():
                 excluded_terms=excluded_terms,
                 required_terms=required_terms,
                 related_terms=related_terms,
+                domain_excluded_terms=domain_excluded_terms,
             )
             works.sort(key=lambda w: w.get("_relevance_score", 0), reverse=True)
             for w in works:
