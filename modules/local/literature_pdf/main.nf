@@ -22,7 +22,8 @@ process LITERATURE_PDF {
     !params.skip_literature_pdf && (task.ext.when == null || task.ext.when)
 
     script:
-    def email_arg = params.pdf_email ? "--email \"${params.pdf_email}\"" : ""
+    def email = params.pdf_email ?: params.pubmed_email
+    def email_arg = email ? "--email \"${email}\"" : ""
     def timeout_arg = params.pdf_timeout ? "--timeout ${params.pdf_timeout}" : ""
     def sleep_arg = params.pdf_sleep ? "--sleep ${params.pdf_sleep}" : ""
     def retries_arg = params.pdf_retries ? "--retries ${params.pdf_retries}" : ""

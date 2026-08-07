@@ -13,16 +13,18 @@ pdf_download_summary.json with a failed status.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urljoin
 
 import requests
 
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; pgirl-genomic-intelligence/1.0; +https://github.com/pgirl/genomic-intelligence)",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/pdf, application/octet-stream, */*",
 }
 
@@ -51,11 +53,12 @@ def _is_pdf_response(response: requests.Response) -> bool:
 
 
 def _safe_get(
-    url: str, timeout: int, retries: int, sleep: float
+    url: str, timeout: int, retries: int, sleep: float, headers: Optional[Dict[str, str]] = None
 ) -> Optional[requests.Response]:
+    headers = headers if headers is not None else HEADERS
     for attempt in range(retries):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+            r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
             r.raise_for_status()
             return r
         except Exception:
@@ -91,20 +94,23 @@ def _try_europepmc(
                 results = data.get("resultList", {}).get("result", [])
                 if results:
                     pmcid = results[0].get("pmcid", "")
-            except Exception:
-                pass
+                    print(f"[fetch] PMID {pmid} resolved to PMCID {pmcid} via Europe PMC search", file=sys.stderr)
+            except Exception as exc:
+                print(f"[fetch] Europe PMC search for PMID {pmid} failed: {exc}", file=sys.stderr)
 
     if not pmcid:
         return None, "No PMCID available for Europe PMC OA lookup"
 
     # OA PDF endpoint: works for OA articles in PubMed Central.
-    pdf_url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/pdf/oa"
-    r = _safe_get(pdf_url, timeout, retries, sleep)
-    if r is None:
-        return None, "Europe PMC OA PDF request failed"
-    if not _is_pdf_response(r):
-        return None, "Europe PMC response was not a PDF"
-    return r.content, None
+    endpoints = [
+        f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/pdf/oa",
+        f"https://europepmc.org/backend/ptpmcrender.fcgi?accid={pmcid}&blobtype=pdf",
+    ]
+    for pdf_url in endpoints:
+        r = _safe_get(pdf_url, timeout, retries, sleep)
+        if r is not None and _is_pdf_response(r):
+            return r.content, None
+    return None, "Europe PMC PDF endpoints did not return a PDF"
 
 
 def _try_unpaywall(
@@ -142,6 +148,46 @@ def _try_unpaywall(
     return r.content, None
 
 
+def _extract_pdf_urls(base_url: str, html: str) -> List[str]:
+    """Extract likely PDF URLs from a publisher landing page."""
+    candidates: List[str] = []
+
+    # citation_pdf_url meta tag
+    for match in re.finditer(
+        r'<meta[^>]+(?:name|property)=["\']citation_pdf_url["\'][^>]+content=["\']([^"\']+)["\']',
+        html,
+        re.IGNORECASE,
+    ):
+        candidates.append(match.group(1))
+    for match in re.finditer(
+        r'<meta[^>]+content=["\']([^"\']+\.pdf[^"\']*)["\'][^>]+(?:name|property)=["\']citation_pdf_url["\']',
+        html,
+        re.IGNORECASE,
+    ):
+        candidates.append(match.group(1))
+
+    # Any link ending in .pdf
+    for match in re.finditer(r'href=["\']([^"\']*\.pdf[^"\']*)["\']', html, re.IGNORECASE):
+        candidates.append(match.group(1))
+
+    # Any link whose text/aria-label says PDF
+    for match in re.finditer(r'href=["\']([^"\']+)["\'][^>]*>([^<]*(?:PDF|pdf)[^<]*)', html, re.IGNORECASE):
+        candidates.append(match.group(1))
+
+    # Deduplicate and resolve relative URLs
+    seen: set = set()
+    resolved: List[str] = []
+    for raw in candidates:
+        raw = raw.strip()
+        if not raw:
+            continue
+        full = urljoin(base_url, raw)
+        if full not in seen:
+            seen.add(full)
+            resolved.append(full)
+    return resolved
+
+
 def _try_doi_resolver(
     record: Dict[str, Any], timeout: int, retries: int, sleep: float
 ) -> tuple[Optional[bytes], Optional[str]]:
@@ -150,15 +196,27 @@ def _try_doi_resolver(
         return None, "No DOI for resolver"
 
     url = f"https://doi.org/{doi}"
-    headers = dict(HEADERS)
-    headers["Accept"] = "application/pdf"
+    html_headers = dict(HEADERS)
+    html_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
     for attempt in range(retries):
         try:
-            r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+            r = requests.get(url, headers=html_headers, timeout=timeout, allow_redirects=True)
             r.raise_for_status()
             if _is_pdf_response(r):
                 return r.content, None
-            return None, "DOI resolver did not return a PDF"
+
+            landing_url = r.url
+            candidates = _extract_pdf_urls(landing_url, r.text)
+            if not candidates:
+                return None, "DOI landing page did not contain a PDF link"
+
+            for pdf_url in candidates:
+                pdf_r = _safe_get(pdf_url, timeout, 2, sleep)
+                if pdf_r is not None and _is_pdf_response(pdf_r):
+                    return pdf_r.content, None
+
+            return None, "DOI landing page PDF links did not return a PDF"
         except Exception as exc:
             if attempt == retries - 1:
                 return None, f"DOI resolver failed: {exc}"
@@ -186,6 +244,7 @@ def _download_pdf(
         "error": None,
     }
 
+    attempts: List[Dict[str, str]] = []
     sources = [
         ("europepmc", lambda rec: _try_europepmc(rec, timeout, retries, sleep)),
         ("unpaywall", lambda rec: _try_unpaywall(rec, email, timeout, retries, sleep)),
@@ -193,15 +252,18 @@ def _download_pdf(
     ]
 
     for source, fn in sources:
+        result["source"] = source
         content, err = fn(record)
+        attempts.append({"source": source, "status": "success" if content is not None else "failed", "error": err or ""})
         if content is not None:
-            result["source"] = source
             result["status"] = "success"
             result["pdf_bytes"] = len(content)
+            result["attempts"] = attempts
             return result, content
         result["error"] = err
         time.sleep(sleep)
 
+    result["attempts"] = attempts
     return result, None
 
 
