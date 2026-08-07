@@ -1,10 +1,10 @@
 /*
- * Local module: LITERATURE_GROBID
+ * Local module: LITERATURE_TEXT
  *
  * Extracts plain text from downloaded PDFs using pymupdf or pdfplumber.
  */
 
-process LITERATURE_GROBID {
+process LITERATURE_TEXT {
     tag "$meta.id - $meta.species - $meta.domain"
     label 'process_low'
 

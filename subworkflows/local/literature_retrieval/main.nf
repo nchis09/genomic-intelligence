@@ -49,8 +49,8 @@ workflow LITERATURE_RETRIEVAL {
 
             if (!params.skip_literature_pdf) {
                 LITERATURE_PDF(ch_pubmed_results)
-                if (!params.skip_literature_grobid) {
-                    LITERATURE_GROBID(LITERATURE_PDF.out.pdfs)
+                if (!params.skip_literature_text) {
+                    LITERATURE_TEXT(LITERATURE_PDF.out.pdfs)
                 }
             }
         } else {
