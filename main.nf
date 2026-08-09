@@ -61,6 +61,9 @@ workflow PGIRL_GENOMIC_INTELLIGENCE {
 workflow {
 
     main:
+
+    println(new File('assets/pipeline_banner.txt').text)
+
     //
     // SUBWORKFLOW: Run initialisation tasks
     //

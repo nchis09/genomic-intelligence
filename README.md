@@ -15,6 +15,31 @@
 [![run with singularity](https://img.shields.io/badge/run%20with-singularity-1d355c.svg?labelColor=000000)](https://sylabs.io/docs/)
 [![Launch on Seqera Platform](https://img.shields.io/badge/Launch%20%F0%9F%9A%80-Seqera%20Platform-%234256e7)](https://cloud.seqera.io/launch?pipeline=https://github.com/pgirl/genomic-intelligence)
 
+#### ASCII signature
+
+````text
+        .---.                  .---.                 _
+      / .-. \  .---.  .-.  .-/ .-. \ .--. .--.  .-.(_) .--.  .---.  .---.  .---.
+     ( :   : )(  ---/(   )(   :   : ) .-.(  .-.(   )( .-. \/  _  \/  _  \/  _  \
+      \ `-' /  `---'  `-'  `-`\ `-' /`---'`-`  `-'  `-`'-' \`___.' \`---' \`---'
+       `---'                   `---'
+          .-.       .-.            .-.  .-._
+          `-'       | |            | |  | |(_)
+          .-. .--.  | |-.  .---.   | |  | | .-.  .--.  .---.  .---.  .---.  .---.
+
+          | |/  _ \ |  _ \/  _  \  | |  | | | | /  _ \/  _  \/  _  \/  _  \/  _  \
+          | || | | || | | ||  _  | | `--| `--| || | | ||  _  ||  ___/|  ___/|  ___/
+          `-'`-' `-'`-' `-' \`___.' `---'`---'`-'`-' `-' \`___.' \`---' \`---' \`---'
+
+                    .---------------------------------------.
+                   /   o===o       o===o       o===o       /
+                  /   /     \     /     \     /     \     /
+                 /   o       o---o       o---o       o   /
+                /     \     /     \     /     \     /   /
+               /       o===o       o===o       o===o   /
+              '---------------------------------------'
+````
+
 ## Introduction
 
 **pgirl/genomic-intelligence** is a Nextflow DSL2 pipeline for multi-pathogen genomic epidemic intelligence. It takes consensus FASTA sequences and sample metadata as input, performs pathogen classification using Nextclade, builds phylogenetic trees using the Nextstrain framework, and produces annotated tree visualisations with amino-acid mutation heatmaps.
@@ -106,6 +131,30 @@ conda run -n pgirl_schemaspy python bin/run_schemaspy.py --outdir results
 ```
 
 This writes `results/pipeline_info/schemaspy/index.html` and requires the SchemaSpy JAR and PostgreSQL JDBC driver in `assets/schemaspy/` (or set `SCHEMASPY_JAR` and `PGJDBC_JAR` environment variables).
+
+### Knowledge warehouse & downstream analysis
+
+The pipeline builds a PostgreSQL **knowledge warehouse** that links sample metadata, genomic features, phylogenetic trees, literature evidence, and epidemiological records. The warehouse is populated by `bin/build_knowledge_db.py` and is defined by `database/knowledge_schema.sql`.
+
+Post-run visualisation:
+
+- `bin/run_schemaspy.py` generates an interactive SchemaSpy ER report.
+- DBeaver can be connected to the live database for an interactive ER diagram.
+
+**Ongoing work:** We are extending this warehouse to support epidemiological queries for risk assessment, such as outbreak detection, transmission mapping, and mutation-phenotype associations.
+
+### Key helper scripts in `bin/`
+
+| Script | Purpose |
+| --- | --- |
+| `build_knowledge_db.py` | Build and populate the PostgreSQL knowledge warehouse. |
+| `start_shared_db.py` / `stop_shared_db.py` | Start and stop the shared PostgreSQL server. |
+| `run_schemaspy.py` | Generate a SchemaSpy HTML report of the warehouse schema. |
+| `extract_query_proteins.py` | Discover and extract query proteins for phenotype annotation. |
+| `extract_nextstrain_annotations.py` | Extract tip metadata and mutation matrices from Nextstrain JSONs. |
+| `run_evidence_qc.py` | Quality-control literature evidence and emit clean/failed sets. |
+| `fetch_literature_pdfs.py` / `convert_literature_pdfs_to_xml.py` | Download and convert PDF literature. |
+| `literature_search.py` / `fetch_pubmed_metadata.py` | Search PubMed and fetch metadata for literature evidence. |
 
 ## Credits
 
