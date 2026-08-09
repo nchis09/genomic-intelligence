@@ -97,6 +97,16 @@ For each detected species the pipeline produces:
 
 Additionally, `results/pipeline_info/pipeline_metro_map_*.html` — an auto-generated [nf-metro](https://github.com/seqeralabs/nf-metro) metro-map diagram of the run's actual Nextflow task graph (skipped with a warning if `nf-metro` is unavailable; see Prerequisites).
 
+### Schema visualization
+
+After the pipeline finishes, generate an interactive SchemaSpy report of the knowledge-warehouse database:
+
+```bash
+conda run -n pgirl_schemaspy python bin/run_schemaspy.py --outdir results
+```
+
+This writes `results/pipeline_info/schemaspy/index.html` and requires the SchemaSpy JAR and PostgreSQL JDBC driver in `assets/schemaspy/` (or set `SCHEMASPY_JAR` and `PGJDBC_JAR` environment variables).
+
 ## Credits
 
 pgirl/genomic-intelligence was originally written in collaboration with the Uganda Virus Research Institute (UVRI), Robert Koch Institute (RKI), Global Outbreak Alert and Response Network (GOARN), and the WHO Hub for Pandemic and Epidemic Intelligence.
