@@ -32,7 +32,7 @@ import psycopg2
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
-from build_knowledge_db import TemporaryPostgres
+from build_knowledge_db import TemporaryPostgres, find_executable
 
 
 def find_jar(name_pattern, env_var, default_dir, description):
@@ -55,13 +55,7 @@ def run_schemaspy(args):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     data_dir = outdir / "knowledge_warehouse" / "_shared_pg_data"
-    if not data_dir.exists():
-        print(
-            f"ERROR: knowledge warehouse data directory not found: {data_dir}\n"
-            "Run the pipeline first, or provide --db-host/--db-port to connect to an existing DB.",
-            file=sys.stderr,
-        )
-        return 1
+    dump_files = sorted((outdir / "knowledge_warehouse").glob("*_genomic_intelligence.sql"))
 
     pg = None
     started_here = False
@@ -72,7 +66,33 @@ def run_schemaspy(args):
         else:
             log_file = outdir / "knowledge_warehouse" / "_schemaspy_postgres.log"
             pg = TemporaryPostgres(data_dir, log_file=log_file, host="127.0.0.1", port=None)
-            pg.start()
+            if not data_dir.exists():
+                if not dump_files:
+                    print(
+                        f"ERROR: knowledge warehouse data directory not found: {data_dir}\n"
+                        "and no *_genomic_intelligence.sql dump to load.\n"
+                        "Run the pipeline first, or provide --db-host/--db-port to connect to an existing DB.",
+                        file=sys.stderr,
+                    )
+                    return 1
+                print(f"Initialising fresh data dir from {dump_files[0]}...", file=sys.stderr)
+                pg.init()
+                pg.start()
+                pg.create_db()
+                subprocess.run(
+                    [
+                        find_executable("psql"),
+                        "-h", pg.host,
+                        "-p", str(pg.port),
+                        "-U", pg.superuser,
+                        "-d", pg.db_name,
+                        "-f", str(dump_files[0]),
+                    ],
+                    check=True,
+                )
+                print("SQL dump loaded.", file=sys.stderr)
+            else:
+                pg.start()
             started_here = True
             host = pg.host
             port = pg.port
@@ -113,6 +133,7 @@ def run_schemaspy(args):
             "-port", str(port),
             "-u", "postgres",
             "-o", str(output_dir),
+            "-vizjs",
         ]
         print(f"Running SchemaSpy...\n  output: {output_dir}", file=sys.stderr)
         subprocess.run(cmd, check=True)
