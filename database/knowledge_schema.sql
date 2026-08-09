@@ -416,3 +416,61 @@ CREATE INDEX IF NOT EXISTS idx_epi_records_location_id ON epidemiological_record
 CREATE INDEX IF NOT EXISTS idx_pipeline_outputs_run_id ON pipeline_outputs(run_id);
 CREATE INDEX IF NOT EXISTS idx_pipeline_outputs_stage ON pipeline_outputs(stage);
 CREATE INDEX IF NOT EXISTS idx_pipeline_outputs_file_name ON pipeline_outputs(file_name);
+
+-- Layer 5: literature evidence
+
+CREATE TABLE IF NOT EXISTS literature_domains (
+    domain_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    species TEXT,
+    domain TEXT,
+    expected_fields JSONB,
+    total_papers INTEGER,
+    clean_count INTEGER,
+    failed_count INTEGER,
+    min_completeness REAL,
+    confidence_distribution JSONB,
+    field_coverage JSONB,
+    quote_presence_rate REAL,
+    duplicate_pmids INTEGER,
+    UNIQUE(run_id, species, domain)
+);
+
+CREATE TABLE IF NOT EXISTS literature_papers (
+    paper_id SERIAL PRIMARY KEY,
+    domain_id INTEGER REFERENCES literature_domains(domain_id),
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    pmid TEXT,
+    species TEXT,
+    domain TEXT,
+    title TEXT,
+    authors JSONB,
+    year TEXT,
+    doi TEXT,
+    journal TEXT,
+    publication_date TEXT,
+    keywords JSONB,
+    pmcid TEXT,
+    cited_by_count INTEGER,
+    is_oa JSONB,
+    qc_score REAL,
+    status TEXT,
+    UNIQUE(run_id, pmid, species, domain)
+);
+
+CREATE TABLE IF NOT EXISTS literature_extractions (
+    extraction_id SERIAL PRIMARY KEY,
+    paper_id INTEGER REFERENCES literature_papers(paper_id),
+    field TEXT,
+    present BOOLEAN,
+    value JSONB,
+    quote TEXT,
+    confidence TEXT,
+    UNIQUE(paper_id, field)
+);
+
+CREATE INDEX IF NOT EXISTS idx_literature_domains_run_species_domain ON literature_domains(run_id, species, domain);
+CREATE INDEX IF NOT EXISTS idx_literature_papers_pmid ON literature_papers(pmid);
+CREATE INDEX IF NOT EXISTS idx_literature_papers_domain_id ON literature_papers(domain_id);
+CREATE INDEX IF NOT EXISTS idx_literature_extractions_paper_id ON literature_extractions(paper_id);
+CREATE INDEX IF NOT EXISTS idx_literature_extractions_field ON literature_extractions(field);

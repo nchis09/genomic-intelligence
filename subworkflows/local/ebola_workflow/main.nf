@@ -37,6 +37,8 @@ workflow EBOLA_WORKFLOW {
     //
     LITERATURE_RETRIEVAL(ch_species_data)
     ch_lit_results = LITERATURE_RETRIEVAL.out.lit_results
+    ch_lit_evidence = LITERATURE_RETRIEVAL.out.lit_evidence
+    ch_lit_qc       = LITERATURE_RETRIEVAL.out.lit_qc_report
 
     //
     // SUBWORKFLOW: Phenotype annotation (UniprotR + UniProtExtractR + rbioapi)
@@ -177,12 +179,28 @@ workflow EBOLA_WORKFLOW {
             .map { meta, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, tree, query_data, hmm, assignments ->
                 [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, tree, query_data, hmm ]
             }
+
+        // Add a per-species boolean trigger so BUILD_KNOWLEDGE_DB waits for EVIDENCE_QC.
+        ch_evidence_qc_ready = (params.skip_literature_evidence || params.skip_evidence_qc)
+            ? channel.empty()
+            : ch_lit_qc
+                .map { meta, report -> [ meta.species, true ] }
+                .groupTuple(by: 0)
+                .map { species, reports -> [ species, true ] }
+
+        ch_kw_input = ch_kw_input
+            .map { it -> [ it[0].species ] + it }
+            .join(ch_evidence_qc_ready, by: 0, remainder: true)
+            .map { it ->
+                def ready = it[14] != null ? it[14] : false
+                [ it[1], it[2], it[3], it[4], it[5], it[6], it[7], it[8], it[9], it[10], it[11], it[12], it[13], ready ]
+            }
     } else {
         ch_kw_input = channel.empty()
     }
 
     emit:
-    kw_input         = ch_kw_input                             // channel: [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, tree, query_data, hmm ]
+    kw_input         = ch_kw_input                             // channel: [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, tree, query_data, hmm, evidence_qc_ready ]
     mutations        = ch_phenotype_mutations                  // channel: [ meta, tsv ]
     query_summary    = ch_phenotype_summary                    // channel: [ meta, json ]
     uniprotr_results = ch_uniprotr_results                     // channel: [ meta, dir ]
@@ -191,4 +209,5 @@ workflow EBOLA_WORKFLOW {
     epi_raw          = ch_epi_raw                              // channel: [ meta, epi_data.csv ]
     epi_search_summary = ch_epi_search_summary                 // channel: [ meta, rhdx_search_results.tsv ]
     lit_results      = ch_lit_results                          // channel: [ meta, [ literature result files ] ]
+    lit_evidence     = ch_lit_evidence                         // channel: [ meta, [ clean/*.json files ] ]
 }

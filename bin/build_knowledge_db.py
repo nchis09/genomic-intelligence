@@ -1596,6 +1596,9 @@ SUMMARY_TABLES = [
     "tree_tips",
     "epidemiological_records",
     "pipeline_outputs",
+    "literature_domains",
+    "literature_papers",
+    "literature_extractions",
 ]
 
 
@@ -1669,9 +1672,149 @@ def parse_args():
     parser.add_argument("--iqtree", help="IQ-TREE2 treefile (Newick) to add to phylogenetic_trees")
     parser.add_argument("--query-data-dir", help="Directory of EXTRACT_QUERY_PROTEINS outputs (discovery.tsv, accessions.txt, query_proteins.fasta, etc.)")
     parser.add_argument("--hmm-dir", help="Directory of HMM_ANNOTATE outputs (*_hmm_*.txt)")
+    parser.add_argument("--evidence-qc-dir", help="Directory containing evidence_qc/<species>/<domain>/ output tree")
     parser.add_argument("--db-host", help="Host of an already-running shared PostgreSQL instance (started by START_KNOWLEDGE_DB). When set, this script connects to it instead of managing its own temporary server, and skips the final dump/stop (owned by STOP_KNOWLEDGE_DB).")
     parser.add_argument("--db-port", type=int, help="Port of the shared PostgreSQL instance (required with --db-host)")
     return parser.parse_args()
+
+
+def load_literature_evidence(conn, run_id, evidence_qc_dir):
+    """Ingest clean literature evidence JSONs and per-domain QC reports."""
+    evidence_qc_dir = Path(evidence_qc_dir)
+    if not evidence_qc_dir.exists():
+        print(f"  SKIP: evidence QC directory not found: {evidence_qc_dir}", file=sys.stderr)
+        return
+    report_files = sorted(evidence_qc_dir.rglob("qc_report.json"))
+    if not report_files:
+        print(f"  SKIP: no evidence QC reports found under {evidence_qc_dir}", file=sys.stderr)
+        return
+    with conn.cursor() as cur:
+        for report_path in report_files:
+            with open(report_path, encoding="utf-8") as f:
+                report = json.load(f)
+            species = normalize_text(report.get("species"))
+            domain = normalize_text(report.get("domain"))
+            if not species or not domain:
+                continue
+            expected_fields = report.get("expected_fields")
+            summary = report.get("summary") or {}
+            confidence_distribution = summary.get("confidence_distribution")
+            field_coverage = summary.get("field_coverage")
+            quote_presence_rate = parse_float(summary.get("quote_presence_rate"))
+            duplicate_pmids = parse_int(summary.get("duplicate_pmids"))
+            total_papers = parse_int(report.get("total_papers"))
+            clean_count = parse_int(report.get("clean_count"))
+            failed_count = parse_int(report.get("failed_count"))
+            min_completeness = parse_float(report.get("min_completeness"))
+            cur.execute(
+                """
+                INSERT INTO literature_domains (
+                    run_id, species, domain, expected_fields, total_papers, clean_count, failed_count,
+                    min_completeness, confidence_distribution, field_coverage, quote_presence_rate, duplicate_pmids
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (run_id, species, domain) DO UPDATE SET
+                    expected_fields = EXCLUDED.expected_fields,
+                    total_papers = EXCLUDED.total_papers,
+                    clean_count = EXCLUDED.clean_count,
+                    failed_count = EXCLUDED.failed_count,
+                    min_completeness = EXCLUDED.min_completeness,
+                    confidence_distribution = EXCLUDED.confidence_distribution,
+                    field_coverage = EXCLUDED.field_coverage,
+                    quote_presence_rate = EXCLUDED.quote_presence_rate,
+                    duplicate_pmids = EXCLUDED.duplicate_pmids
+                RETURNING domain_id
+                """,
+                (
+                    run_id, species, domain,
+                    json.dumps(expected_fields) if expected_fields is not None else None,
+                    total_papers, clean_count, failed_count, min_completeness,
+                    json.dumps(confidence_distribution) if confidence_distribution is not None else None,
+                    json.dumps(field_coverage) if field_coverage is not None else None,
+                    quote_presence_rate, duplicate_pmids,
+                ),
+            )
+            domain_id = cur.fetchone()[0]
+            for p in (report.get("per_paper") or []):
+                if p.get("status") != "clean":
+                    continue
+                pmid = normalize_text(p.get("pmid"))
+                if not pmid:
+                    continue
+                clean_path = report_path.parent / "clean" / f"{pmid}.json"
+                if not clean_path.exists():
+                    print(f"  WARNING: clean file not found for {pmid} in {domain}", file=sys.stderr)
+                    continue
+                with open(clean_path, encoding="utf-8") as f:
+                    paper = json.load(f)
+                title = normalize_text(paper.get("title"))
+                authors = paper.get("authors")
+                year = normalize_text(paper.get("year"))
+                doi = normalize_text(paper.get("doi"))
+                journal = normalize_text(paper.get("journal"))
+                publication_date = normalize_text(paper.get("publication_date"))
+                keywords = paper.get("keywords")
+                pmcid = normalize_text(paper.get("pmcid"))
+                cited_by_count = parse_int(paper.get("cited_by_count"))
+                is_oa = paper.get("is_oa")
+                qc_score = parse_float(paper.get("qc_score"))
+                cur.execute(
+                    """
+                    INSERT INTO literature_papers (
+                        domain_id, run_id, pmid, species, domain, title, authors, year, doi, journal,
+                        publication_date, keywords, pmcid, cited_by_count, is_oa, qc_score, status
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (run_id, pmid, species, domain) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        authors = EXCLUDED.authors,
+                        year = EXCLUDED.year,
+                        doi = EXCLUDED.doi,
+                        journal = EXCLUDED.journal,
+                        publication_date = EXCLUDED.publication_date,
+                        keywords = EXCLUDED.keywords,
+                        pmcid = EXCLUDED.pmcid,
+                        cited_by_count = EXCLUDED.cited_by_count,
+                        is_oa = EXCLUDED.is_oa,
+                        qc_score = EXCLUDED.qc_score,
+                        status = EXCLUDED.status
+                    RETURNING paper_id
+                    """,
+                    (
+                        domain_id, run_id, pmid, species, domain, title,
+                        json.dumps(authors) if authors is not None else None,
+                        year, doi, journal, publication_date,
+                        json.dumps(keywords) if keywords is not None else None,
+                        pmcid, cited_by_count,
+                        json.dumps(is_oa) if is_oa is not None else None,
+                        qc_score, "clean",
+                    ),
+                )
+                paper_id = cur.fetchone()[0]
+                for extraction in paper.get("extraction", []):
+                    field = normalize_text(extraction.get("field"))
+                    if not field:
+                        continue
+                    present = bool(extraction.get("present"))
+                    value = extraction.get("value")
+                    quote = normalize_text(extraction.get("quote"))
+                    confidence = normalize_text(extraction.get("confidence"))
+                    cur.execute(
+                        """
+                        INSERT INTO literature_extractions (paper_id, field, present, value, quote, confidence)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (paper_id, field) DO UPDATE SET
+                            present = EXCLUDED.present,
+                            value = EXCLUDED.value,
+                            quote = EXCLUDED.quote,
+                            confidence = EXCLUDED.confidence
+                        """,
+                        (
+                            paper_id, field, present,
+                            json.dumps(value) if value is not None else None,
+                            quote, confidence,
+                        ),
+                    )
+    conn.commit()
+    print(f"  Loaded literature evidence from {len(report_files)} domain report(s)", file=sys.stderr)
 
 
 def main():
@@ -1779,6 +1922,10 @@ def main():
                 epi_search_summary=args.epi_search_summary,
                 species=args.species,
             )
+
+            print("Loading literature evidence...", file=sys.stderr)
+            if args.evidence_qc_dir:
+                load_literature_evidence(conn, args.meta_id, args.evidence_qc_dir)
 
             print("Writing MultiQC summary...", file=sys.stderr)
             write_mqc_summary(conn, args.meta_id, outdir, args.prefix)

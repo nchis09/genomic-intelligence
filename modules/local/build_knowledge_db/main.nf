@@ -11,7 +11,7 @@ process BUILD_KNOWLEDGE_DB {
     conda "${projectDir}/envs/pgirl_knowledge.yml"
 
     input:
-    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary), path(bioinformatics_results), path(uniprotr_results), path(extractr_results), path(rbioapi_results), path(auspice_json), path(iqtree), path(query_data_files, stageAs: 'query_data/*'), path(hmm_files, stageAs: 'hmm/*')
+    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary), path(bioinformatics_results), path(uniprotr_results), path(extractr_results), path(rbioapi_results), path(auspice_json), path(iqtree), path(query_data_files, stageAs: 'query_data/*'), path(hmm_files, stageAs: 'hmm/*'), val(evidence_qc_ready)
     val(db_host)
     val(db_port)
 
@@ -43,6 +43,7 @@ process BUILD_KNOWLEDGE_DB {
     // instead of params.outdir, which is a relative string that would otherwise
     // resolve inside this task's own work directory, not the real output tree.
     args << "--results-dir ${bioinformatics_results}"
+    if (evidence_qc_ready)                                 args << "--evidence-qc-dir ${params.outdir}/evidence_qc/${meta.species}"
     // Connect to the pipeline-lifetime shared Postgres (started by
     // START_KNOWLEDGE_DB before any species processing begins) instead of
     // spinning up a throwaway per-species instance -- lets downstream figures

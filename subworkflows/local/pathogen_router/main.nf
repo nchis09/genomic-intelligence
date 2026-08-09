@@ -110,5 +110,6 @@ workflow PATHOGEN_ROUTER {
     epi_raw          = EBOLA_WORKFLOW.out.epi_raw          // channel: [ meta, epi_data.csv ]
     epi_search_summary = EBOLA_WORKFLOW.out.epi_search_summary // channel: [ meta, rhdx_search_results.tsv ]
     lit_results      = EBOLA_WORKFLOW.out.lit_results      // channel: [ meta, [ literature result files ] ]
+    lit_evidence     = EBOLA_WORKFLOW.out.lit_evidence     // channel: [ meta, [ clean/*.json files ] ]
     unsupported      = ch_unsupported                        // path: unsupported_pathogens.tsv
 }

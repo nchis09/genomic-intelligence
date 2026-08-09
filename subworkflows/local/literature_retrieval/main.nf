@@ -14,12 +14,16 @@ include { LITERATURE_SCREEN } from '../../../modules/local/literature_screen/mai
 include { LITERATURE_PDF } from '../../../modules/local/literature_pdf/main'
 include { LITERATURE_TEXT } from '../../../modules/local/literature_text/main'
 include { LITERATURE_EVIDENCE } from '../../../modules/local/literature_evidence/main'
+include { EVIDENCE_QC } from '../../../modules/local/evidence_qc/main'
 
 workflow LITERATURE_RETRIEVAL {
     take:
     ch_species_data  // channel: [ val(meta), path(fasta), path(metadata) ]
 
     main:
+    def ch_lit_evidence = channel.empty()
+    def ch_lit_qc = channel.empty()
+
     if (!params.skip_literature_search) {
         LITERATURE_SEARCH(
             ch_species_data,
@@ -56,7 +60,15 @@ workflow LITERATURE_RETRIEVAL {
                         // Join text files with metadata JSONs by meta (species + domain)
                         // so LITERATURE_EVIDENCE can merge metadata into output JSONs
                         ch_text_with_meta = LITERATURE_TEXT.out.text.join(ch_pubmed_results, by: [0])
-                        LITERATURE_EVIDENCE(ch_text_with_meta, file("${projectDir}/database/evidence_templates.yml"))
+                        LITERATURE_EVIDENCE(ch_text_with_meta, file("${projectDir}/database/evidence_rules.yml"))
+
+                        if (!params.skip_evidence_qc) {
+                            EVIDENCE_QC(LITERATURE_EVIDENCE.out.evidence, file("${projectDir}/database/evidence_templates.yml"))
+                            ch_lit_evidence = EVIDENCE_QC.out.clean
+                            ch_lit_qc = EVIDENCE_QC.out.report_json
+                        } else {
+                            ch_lit_evidence = LITERATURE_EVIDENCE.out.evidence
+                        }
                     }
                 }
             }
@@ -71,4 +83,6 @@ workflow LITERATURE_RETRIEVAL {
     emit:
     lit_results = ch_lit_results  // channel: [ meta, [ */results.* files ] ]
     pubmed_metadata = ch_pubmed_results  // channel: [ meta, [ *.json files ] ]
+    lit_evidence = ch_lit_evidence  // channel: [ meta, [ clean/*.json files ] ]
+    lit_qc_report = ch_lit_qc  // channel: [ meta, qc_report.json ]
 }
