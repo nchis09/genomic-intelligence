@@ -1,0 +1,19 @@
+name: pgirl_agentslr
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pandas
+  - openai
+  - pyyaml
+  - pydantic
+  - requests
+  - tqdm
+  - scikit-learn
+  - numpy
+  - matplotlib
+  - seaborn
+  - lxml
+  - urllib3
+  - pyarrow
+  - huggingface_hub

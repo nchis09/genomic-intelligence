@@ -50,7 +50,7 @@ workflow PGIRL_GENOMIC_INTELLIGENCE {
         params.outdir,
     )
     emit:
-    multiqc_report = GENOMIC_INTELLIGENCE.out.multiqc_report // channel: /path/to/multiqc_report.html
+    multiqc_report = channel.empty() // channel: /path/to/multiqc_report.html
 }
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -61,6 +61,9 @@ workflow PGIRL_GENOMIC_INTELLIGENCE {
 workflow {
 
     main:
+
+    println(new File('assets/pipeline_banner.txt').text)
+
     //
     // SUBWORKFLOW: Run initialisation tasks
     //

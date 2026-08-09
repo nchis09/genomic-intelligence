@@ -1,0 +1,8 @@
+name: pgirl_hmmer
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - hmmer=3.4
+  - python=3.12
+  - wget

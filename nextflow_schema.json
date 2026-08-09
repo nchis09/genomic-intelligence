@@ -73,6 +73,65 @@
                     "type": "string",
                     "description": "Comma-separated query sample names to highlight in tree plots (auto-detected from FASTA if null).",
                     "fa_icon": "fas fa-search"
+                },
+                "skip_literature_pdf": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set to true to skip full-text PDF download.",
+                    "fa_icon": "fas fa-file-pdf"
+                },
+                "pdf_email": {
+                    "type": "string",
+                    "description": "Contact email required by the Unpaywall API.",
+                    "fa_icon": "fas fa-envelope"
+                },
+                "pdf_timeout": {
+                    "type": "integer",
+                    "default": 30,
+                    "description": "HTTP request timeout in seconds for PDF downloads.",
+                    "fa_icon": "fas fa-clock"
+                },
+                "pdf_sleep": {
+                    "type": "number",
+                    "default": 1.0,
+                    "description": "Seconds to sleep between consecutive PDF download requests.",
+                    "fa_icon": "fas fa-pause"
+                },
+                "pdf_retries": {
+                    "type": "integer",
+                    "default": 3,
+                    "description": "Number of retries per PDF resolver.",
+                    "fa_icon": "fas fa-redo"
+                },
+                "skip_literature_text": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set to true to skip PDF-to-text extraction.",
+                    "fa_icon": "fas fa-file-alt"
+                },
+                "skip_literature_evidence": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set to true to skip MedSpaCy structured evidence extraction.",
+                    "fa_icon": "fas fa-robot"
+                },
+                "pubmed_email": {
+                    "type": "string",
+                    "default": null,
+                    "description": "NCBI Entrez contact email (required for PubMed metadata fetch).",
+                    "fa_icon": "fas fa-envelope"
+                },
+                "skip_evidence_qc": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set to true to skip QC validation of extraction JSONs.",
+                    "fa_icon": "fas fa-check-circle"
+                },
+                "evidence_qc_min_completeness": {
+                    "type": "number",
+                    "default": 0.0,
+                    "description": "Minimum fraction of expected fields that must be present and valid for a paper to pass QC.",
+                    "fa_icon": "fas fa-percent"
                 }
             }
         },

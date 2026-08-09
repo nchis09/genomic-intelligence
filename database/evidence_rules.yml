@@ -1,0 +1,1006 @@
+---
+# MedSpaCy extraction rules for per-domain evidence fields.
+# Each domain defines a list of fields with:
+#   - target_rules: MedSpaCy TargetRule entries (literal + label + optional spaCy pattern)
+#   - value_regex: regex to extract numeric/string values near the matched concept
+#   - value_type: "string" (first match), "list" (all matches), "number", "boolean"
+#   - context_filters: ConText modifiers to EXCLUDE (e.g., negated, uncertain, historical)
+#   - section_boost: sections where a match gets "high" confidence (e.g., results, conclusions)
+
+seroprevalence:
+  - field: study_location
+    target_rules:
+      - {literal: "seroprevalence study", label: "STUDY"}
+      - {literal: "serological survey", label: "STUDY"}
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: host_species
+    target_rules:
+      - {literal: "bats", label: "HOST", pattern: [{LOWER: bats}]}
+      - {literal: "primates", label: "HOST"}
+      - {literal: "rodents", label: "HOST"}
+      - {literal: "fruit bats", label: "HOST"}
+      - {literal: "humans", label: "HOST", pattern: [{LOWER: humans}]}
+      - {literal: "healthcare workers", label: "HOST", pattern: [{LOWER: healthcare}, {LOWER: workers}]}
+      - {literal: "survivors", label: "HOST"}
+    value_type: list
+    context_filters: [negated]
+  - field: sample_size
+    target_rules:
+      - {literal: "samples were collected", label: "SAMPLE_SIZE"}
+      - {literal: "individuals were tested", label: "SAMPLE_SIZE"}
+      - {literal: "sera were collected", label: "SAMPLE_SIZE"}
+      - {literal: "participants", label: "SAMPLE_SIZE"}
+    value_regex: '(\\d[\\d,]*)\\s+(?:samples|individuals|sera|participants|specimens|subjects)'
+    value_type: number
+    context_filters: [negated, uncertain]
+  - field: seroprevalence_value
+    target_rules:
+      - {literal: "seroprevalence", label: "METRIC"}
+      - {literal: "seropositivity", label: "METRIC"}
+      - {literal: "antibody prevalence", label: "METRIC", pattern: [{LOWER: antibody}, {LOWER: prevalence}]}
+      - {literal: "seropositive rate", label: "METRIC", pattern: [{LOWER: seropositive}, {LOWER: rate}]}
+    value_regex: '(\\d+\.?\\d*)\\s*%'
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: assay_used
+    target_rules:
+      - {literal: "ELISA", label: "ASSAY", pattern: [{ORTH: ELISA}]}
+      - {literal: "RT-PCR", label: "ASSAY", pattern: [{ORTH: RT}, {ORTH: "-"}, {ORTH: PCR}]}
+      - {literal: "real-time PCR", label: "ASSAY", pattern: [{LOWER: real}, {ORTH: "-"}, {LOWER: time}, {ORTH: PCR}]}
+      - {literal: "Western blot", label: "ASSAY", pattern: [{ORTH: Western}, {LOWER: blot}]}
+      - {literal: "IgG ELISA", label: "ASSAY", pattern: [{ORTH: IgG}, {ORTH: ELISA}]}
+      - {literal: "IgM ELISA", label: "ASSAY", pattern: [{ORTH: IgM}, {ORTH: ELISA}]}
+      - {literal: "indirect immunofluorescence", label: "ASSAY"}
+      - {literal: "neutralization assay", label: "ASSAY", pattern: [{LOWER: neutralization}, {LOWER: assay}]}
+      - {literal: "luciferase immunoprecipitation", label: "ASSAY"}
+    value_type: list
+    context_filters: [negated]
+  - field: antigen_target
+    target_rules:
+      - {literal: "glycoprotein", label: "ANTIGEN", pattern: [{LOWER: glycoprotein}]}
+      - {literal: "nucleoprotein", label: "ANTIGEN", pattern: [{LOWER: nucleoprotein}]}
+      - {literal: "VP40", label: "ANTIGEN"}
+      - {literal: "NP antigen", label: "ANTIGEN", pattern: [{ORTH: NP}, {LOWER: antigen}]}
+      - {literal: "GP antigen", label: "ANTIGEN", pattern: [{ORTH: GP}, {LOWER: antigen}]}
+      - {literal: "recombinant antigen", label: "ANTIGEN", pattern: [{LOWER: recombinant}, {LOWER: antigen}]}
+    value_type: list
+    context_filters: [negated]
+  - field: sampling_period
+    target_rules:
+      - {literal: "samples were collected", label: "PERIOD"}
+      - {literal: "study period", label: "PERIOD", pattern: [{LOWER: study}, {LOWER: period}]}
+      - {literal: "between", label: "PERIOD"}
+    value_regex: '(?:between|from|during)\\s+(\\d{4}\\s*(?:to|[-–])\\s*\\d{4})'
+    value_type: string
+    context_filters: [negated]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+      - {literal: "elderly", label: "AGE", pattern: [{LOWER: elderly}]}
+      - {literal: "pediatric", label: "AGE", pattern: [{LOWER: pediatric}]}
+      - {literal: "age group", label: "AGE", pattern: [{LOWER: age}, {LOWER: group}]}
+      - {literal: "age range", label: "AGE", pattern: [{LOWER: age}, {LOWER: range}]}
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(patients|participants|individuals|people)\\b'
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+      - {literal: "sex distribution", label: "GENDER", pattern: [{LOWER: sex}, {LOWER: distribution}]}
+      - {literal: "gender distribution", label: "GENDER", pattern: [{LOWER: gender}, {LOWER: distribution}]}
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(patients|participants|individuals|people)\\b'
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "study was conducted", label: "LOCATION"}
+      - {literal: "located in", label: "LOCATION", pattern: [{LOWER: located}, {LOWER: in}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|samples|detected|reported)\\b'
+
+variant_phenotype:
+  - field: gene
+    target_rules:
+      - {literal: "glycoprotein gene", label: "GENE", pattern: [{LOWER: glycoprotein}, {LOWER: gene}]}
+      - {literal: "nucleoprotein gene", label: "GENE", pattern: [{LOWER: nucleoprotein}, {LOWER: gene}]}
+      - {literal: "polymerase gene", label: "GENE", pattern: [{LOWER: polymerase}, {LOWER: gene}]}
+      - {literal: "VP35", label: "GENE"}
+      - {literal: "VP40", label: "GENE"}
+      - {literal: "GP gene", label: "GENE", pattern: [{ORTH: GP}, {LOWER: gene}]}
+      - {literal: "NP gene", label: "GENE", pattern: [{ORTH: NP}, {LOWER: gene}]}
+    value_type: string
+    context_filters: [negated]
+  - field: mutation
+    target_rules:
+      - {literal: "mutation", label: "MUTATION", pattern: [{LOWER: mutation}]}
+      - {literal: "substitution", label: "MUTATION", pattern: [{LOWER: substitution}]}
+      - {literal: "amino acid change", label: "MUTATION", pattern: [{LOWER: amino}, {LOWER: acid}, {LOWER: change}]}
+      - {literal: "variant", label: "MUTATION", pattern: [{LOWER: variant}]}
+      - {literal: "point mutation", label: "MUTATION", pattern: [{LOWER: point}, {LOWER: mutation}]}
+    value_regex: '([A-Z]\\d+[A-Z]|\\d+\\w+\\s*(?:del|ins|dup))'
+    value_type: list
+    context_filters: [negated, uncertain]
+  - field: assay_type
+    target_rules:
+      - {literal: "RT-PCR", label: "ASSAY", pattern: [{ORTH: RT}, {ORTH: "-"}, {ORTH: PCR}]}
+      - {literal: "ELISA", label: "ASSAY", pattern: [{ORTH: ELISA}]}
+      - {literal: "Western blot", label: "ASSAY", pattern: [{ORTH: Western}, {LOWER: blot}]}
+      - {literal: "flow cytometry", label: "ASSAY", pattern: [{LOWER: flow}, {LOWER: cytometry}]}
+      - {literal: "immunofluorescence", label: "ASSAY"}
+      - {literal: "plaque assay", label: "ASSAY", pattern: [{LOWER: plaque}, {LOWER: assay}]}
+    value_type: string
+    context_filters: [negated]
+  - field: experimental_system
+    target_rules:
+      - {literal: "in vitro", label: "SYSTEM", pattern: [{LOWER: in}, {LOWER: vitro}]}
+      - {literal: "in vivo", label: "SYSTEM", pattern: [{LOWER: in}, {LOWER: vivo}]}
+      - {literal: "cell culture", label: "SYSTEM", pattern: [{LOWER: cell}, {LOWER: culture}]}
+      - {literal: "animal model", label: "SYSTEM", pattern: [{LOWER: animal}, {LOWER: model}]}
+      - {literal: "mouse model", label: "SYSTEM", pattern: [{LOWER: mouse}, {LOWER: model}]}
+      - {literal: "guinea pig", label: "SYSTEM", pattern: [{LOWER: guinea}, {LOWER: pig}]}
+      - {literal: "nonhuman primate", label: "SYSTEM", pattern: [{LOWER: nonhuman}, {LOWER: primate}]}
+      - {literal: "computational", label: "SYSTEM", pattern: [{LOWER: computational}]}
+    value_type: string
+    context_filters: [negated]
+  - field: phenotype_observed
+    target_rules:
+      - {literal: "phenotype", label: "PHENOTYPE", pattern: [{LOWER: phenotype}]}
+      - {literal: "virulence", label: "PHENOTYPE", pattern: [{LOWER: virulence}]}
+      - {literal: "pathogenicity", label: "PHENOTYPE", pattern: [{LOWER: pathogenicity}]}
+      - {literal: "lethality", label: "PHENOTYPE", pattern: [{LOWER: lethality}]}
+      - {literal: "replication efficiency", label: "PHENOTYPE", pattern: [{LOWER: replication}, {LOWER: efficiency}]}
+      - {literal: "cytopathic effect", label: "PHENOTYPE", pattern: [{LOWER: cytopathic}, {LOWER: effect}]}
+      - {literal: "plaque morphology", label: "PHENOTYPE", pattern: [{LOWER: plaque}, {LOWER: morphology}]}
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: species_context
+    target_rules:
+      - {literal: "Bundibugyo virus", label: "SPECIES"}
+      - {literal: "Ebola virus", label: "SPECIES"}
+      - {literal: "Sudan virus", label: "SPECIES"}
+      - {literal: "Taï Forest virus", label: "SPECIES"}
+      - {literal: "Reston virus", label: "SPECIES"}
+    value_type: string
+    context_filters: [negated]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+      - {literal: "age group", label: "AGE", pattern: [{LOWER: age}, {LOWER: group}]}
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(patients|participants|individuals|people)\\b'
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(patients|participants|individuals|people)\\b'
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "located in", label: "LOCATION", pattern: [{LOWER: located}, {LOWER: in}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|samples|detected|reported)\\b'
+
+vaccine_therapeutic:
+  - field: product_name
+    target_rules:
+      - {literal: "vaccine", label: "PRODUCT", pattern: [{LOWER: vaccine}]}
+      - {literal: "rVSV-ZEBOV", label: "PRODUCT"}
+      - {literal: "Ervebo", label: "PRODUCT"}
+      - {literal: "ZMapp", label: "PRODUCT"}
+      - {literal: "remdesivir", label: "PRODUCT", pattern: [{LOWER: remdesivir}]}
+      - {literal: "favipiravir", label: "PRODUCT", pattern: [{LOWER: favipiravir}]}
+      - {literal: "monoclonal antibody", label: "PRODUCT", pattern: [{LOWER: monoclonal}, {LOWER: antibody}]}
+      - {literal: "therapeutic", label: "PRODUCT", pattern: [{LOWER: therapeutic}]}
+      - {literal: "antiviral", label: "PRODUCT", pattern: [{LOWER: antiviral}]}
+      - {literal: "convalescent plasma", label: "PRODUCT", pattern: [{LOWER: convalescent}, {LOWER: plasma}]}
+    value_type: list
+    context_filters: [negated, uncertain]
+  - field: product_type
+    target_rules:
+      - {literal: "vaccine", label: "TYPE", pattern: [{LOWER: vaccine}]}
+      - {literal: "monoclonal antibody", label: "TYPE", pattern: [{LOWER: monoclonal}, {LOWER: antibody}]}
+      - {literal: "antiviral", label: "TYPE", pattern: [{LOWER: antiviral}]}
+      - {literal: "small molecule", label: "TYPE", pattern: [{LOWER: small}, {LOWER: molecule}]}
+      - {literal: "nucleotide analog", label: "TYPE", pattern: [{LOWER: nucleotide}, {LOWER: analog}]}
+    value_type: string
+    context_filters: [negated]
+  - field: efficacy_value
+    target_rules:
+      - {literal: "efficacy", label: "METRIC", pattern: [{LOWER: efficacy}]}
+      - {literal: "effectiveness", label: "METRIC", pattern: [{LOWER: effectiveness}]}
+      - {literal: "protective efficacy", label: "METRIC", pattern: [{LOWER: protective}, {LOWER: efficacy}]}
+      - {literal: "survival rate", label: "METRIC", pattern: [{LOWER: survival}, {LOWER: rate}]}
+    value_regex: '(\\d+\.?\\d*)\\s*%\\s*(?:efficacy|effective|protection|survival)|(?:efficacy|effective|protection|survival).*?(\\d+\.?\\d*)\\s*%|(?:efficacy|effectiveness)\\s*(?:of|was)\\s*(\\d+\.?\\d*)'
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: endpoint
+    target_rules:
+      - {literal: "primary endpoint", label: "ENDPOINT", pattern: [{LOWER: primary}, {LOWER: endpoint}]}
+      - {literal: "clinical endpoint", label: "ENDPOINT", pattern: [{LOWER: clinical}, {LOWER: endpoint}]}
+      - {literal: "survival", label: "ENDPOINT", pattern: [{LOWER: survival}]}
+      - {literal: "mortality", label: "ENDPOINT", pattern: [{LOWER: mortality}]}
+    value_type: string
+    context_filters: [negated]
+  - field: study_phase
+    target_rules:
+      - {literal: "phase I", label: "PHASE", pattern: [{LOWER: phase}, {ORTH: I}]}
+      - {literal: "phase II", label: "PHASE", pattern: [{LOWER: phase}, {ORTH: II}]}
+      - {literal: "phase III", label: "PHASE", pattern: [{LOWER: phase}, {ORTH: III}]}
+      - {literal: "phase 1", label: "PHASE", pattern: [{LOWER: phase}, {ORTH: "1"}]}
+      - {literal: "phase 2", label: "PHASE", pattern: [{LOWER: phase}, {ORTH: "2"}]}
+      - {literal: "phase 3", label: "PHASE", pattern: [{LOWER: phase}, {ORTH: "3"}]}
+      - {literal: "preclinical", label: "PHASE", pattern: [{LOWER: preclinical}]}
+      - {literal: "clinical trial", label: "PHASE", pattern: [{LOWER: clinical}, {LOWER: trial}]}
+      - {literal: "randomized controlled trial", label: "PHASE", pattern: [{LOWER: randomized}, {LOWER: controlled}, {LOWER: trial}]}
+    value_type: string
+    context_filters: [negated]
+  - field: population
+    target_rules:
+      - {literal: "participants", label: "POP", pattern: [{LOWER: participants}]}
+      - {literal: "patients", label: "POP", pattern: [{LOWER: patients}]}
+      - {literal: "healthy volunteers", label: "POP", pattern: [{LOWER: healthy}, {LOWER: volunteers}]}
+      - {literal: "healthcare workers", label: "POP", pattern: [{LOWER: healthcare}, {LOWER: workers}]}
+      - {literal: "ring vaccination", label: "POP", pattern: [{LOWER: ring}, {LOWER: vaccination}]}
+    value_type: string
+    context_filters: [negated]
+  - field: adverse_events
+    target_rules:
+      - {literal: "adverse events", label: "AE", pattern: [{LOWER: adverse}, {LOWER: events}]}
+      - {literal: "side effects", label: "AE", pattern: [{LOWER: side}, {LOWER: effects}]}
+      - {literal: "safety profile", label: "AE", pattern: [{LOWER: safety}, {LOWER: profile}]}
+      - {literal: "fever", label: "AE", pattern: [{LOWER: fever}]}
+      - {literal: "injection site", label: "AE", pattern: [{LOWER: injection}, {LOWER: site}]}
+      - {literal: "fatigue", label: "AE", pattern: [{LOWER: fatigue}]}
+      - {literal: "myalgia", label: "AE", pattern: [{LOWER: myalgia}]}
+      - {literal: "arthritis", label: "AE", pattern: [{LOWER: arthritis}]}
+    value_type: list
+    context_filters: [negated]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+      - {literal: "elderly", label: "AGE", pattern: [{LOWER: elderly}]}
+      - {literal: "age group", label: "AGE", pattern: [{LOWER: age}, {LOWER: group}]}
+    value_type: string
+    context_filters: [negated]
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "study site", label: "LOCATION", pattern: [{LOWER: study}, {LOWER: site}]}
+      - {literal: "located in", label: "LOCATION", pattern: [{LOWER: located}, {LOWER: in}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|samples|detected|reported|infection|diagnostic|evaluation)\\b'
+
+diagnostic:
+  - field: test_name
+    target_rules:
+      - {literal: "diagnostic test", label: "TEST", pattern: [{LOWER: diagnostic}, {LOWER: test}]}
+      - {literal: "assay", label: "TEST", pattern: [{LOWER: assay}]}
+      - {literal: "rapid diagnostic test", label: "TEST", pattern: [{LOWER: rapid}, {LOWER: diagnostic}, {LOWER: test}]}
+      - {literal: "RDT", label: "TEST"}
+      - {literal: "lateral flow", label: "TEST", pattern: [{LOWER: lateral}, {LOWER: flow}]}
+      - {literal: "Xpert Ebola", label: "TEST"}
+      - {literal: "RealStar", label: "TEST"}
+      - {literal: "TaqMan", label: "TEST"}
+    value_type: string
+    context_filters: [negated]
+  - field: test_type
+    target_rules:
+      - {literal: "RT-PCR", label: "TEST_TYPE", pattern: [{ORTH: RT}, {ORTH: "-"}, {ORTH: PCR}]}
+      - {literal: "real-time PCR", label: "TEST_TYPE", pattern: [{LOWER: real}, {ORTH: "-"}, {LOWER: time}, {ORTH: PCR}]}
+      - {literal: "ELISA", label: "TEST_TYPE", pattern: [{ORTH: ELISA}]}
+      - {literal: "CRISPR", label: "TEST_TYPE", pattern: [{ORTH: CRISPR}]}
+      - {literal: "next-generation sequencing", label: "TEST_TYPE", pattern: [{LOWER: next}, {ORTH: "-"}, {LOWER: generation}, {LOWER: sequencing}]}
+      - {literal: "metagenomic sequencing", label: "TEST_TYPE", pattern: [{LOWER: metagenomic}, {LOWER: sequencing}]}
+      - {literal: "rapid diagnostic test", label: "TEST_TYPE", pattern: [{LOWER: rapid}, {LOWER: diagnostic}, {LOWER: test}]}
+      - {literal: "immunohistochemistry", label: "TEST_TYPE"}
+    value_type: string
+    context_filters: [negated]
+  - field: sensitivity
+    target_rules:
+      - {literal: "sensitivity", label: "METRIC", pattern: [{LOWER: sensitivity}]}
+      - {literal: "analytical sensitivity", label: "METRIC", pattern: [{LOWER: analytical}, {LOWER: sensitivity}]}
+      - {literal: "diagnostic sensitivity", label: "METRIC", pattern: [{LOWER: diagnostic}, {LOWER: sensitivity}]}
+    value_regex: '(\\d+\.?\\d*)\\s*%'
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: specificity
+    target_rules:
+      - {literal: "specificity", label: "METRIC", pattern: [{LOWER: specificity}]}
+      - {literal: "diagnostic specificity", label: "METRIC", pattern: [{LOWER: diagnostic}, {LOWER: specificity}]}
+    value_regex: '(\\d+\.?\\d*)\\s*%'
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: limit_of_detection
+    target_rules:
+      - {literal: "limit of detection", label: "METRIC", pattern: [{LOWER: limit}, {LOWER: of}, {LOWER: detection}]}
+      - {literal: "LOD", label: "METRIC"}
+      - {literal: "detection limit", label: "METRIC", pattern: [{LOWER: detection}, {LOWER: limit}]}
+    value_regex: '(\\d+\.?\\d*)\\s*(?:copies|PFU|TCID|copies/mL|genome equivalents)'
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: sample_type
+    target_rules:
+      - {literal: "blood sample", label: "SAMPLE", pattern: [{LOWER: blood}, {LOWER: sample}]}
+      - {literal: "serum", label: "SAMPLE", pattern: [{LOWER: serum}]}
+      - {literal: "plasma", label: "SAMPLE", pattern: [{LOWER: plasma}]}
+      - {literal: "oral swab", label: "SAMPLE", pattern: [{LOWER: oral}, {LOWER: swab}]}
+      - {literal: "nasopharyngeal swab", label: "SAMPLE", pattern: [{LOWER: nasopharyngeal}, {LOWER: swab}]}
+      - {literal: "urine", label: "SAMPLE", pattern: [{LOWER: urine}]}
+      - {literal: "saliva", label: "SAMPLE", pattern: [{LOWER: saliva}]}
+      - {literal: "tissue", label: "SAMPLE", pattern: [{LOWER: tissue}]}
+      - {literal: "formalin-fixed", label: "SAMPLE"}
+    value_type: list
+    context_filters: [negated]
+  - field: primer_probe
+    target_rules:
+      - {literal: "primer", label: "PRIMER", pattern: [{LOWER: primer}]}
+      - {literal: "probe", label: "PRIMER", pattern: [{LOWER: probe}]}
+      - {literal: "forward primer", label: "PRIMER", pattern: [{LOWER: forward}, {LOWER: primer}]}
+      - {literal: "reverse primer", label: "PRIMER", pattern: [{LOWER: reverse}, {LOWER: primer}]}
+      - {literal: "TaqMan probe", label: "PRIMER", pattern: [{ORTH: TaqMan}, {LOWER: probe}]}
+    value_type: string
+    context_filters: [negated]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+      - {literal: "age group", label: "AGE", pattern: [{LOWER: age}, {LOWER: group}]}
+    value_type: string
+    context_filters: [negated]
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "study site", label: "LOCATION", pattern: [{LOWER: study}, {LOWER: site}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|samples|detected|reported|transmission|infection)\\b'
+
+transmission:
+  - field: r0
+    target_rules:
+      - {literal: "reproduction number", label: "METRIC", pattern: [{LOWER: reproduction}, {LOWER: number}]}
+      - {literal: "R0", label: "METRIC"}
+      - {literal: "basic reproduction number", label: "METRIC", pattern: [{LOWER: basic}, {LOWER: reproduction}, {LOWER: number}]}
+      - {literal: "effective reproduction number", label: "METRIC", pattern: [{LOWER: effective}, {LOWER: reproduction}, {LOWER: number}]}
+    value_regex: 'R[0t]\\s*=\\s*(\\d+\.?\\d*)|(\\d+\.?\\d*)\\s*\(\\d+\.?\\d*[-–]\\d+\.?\\d*\)'
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: serial_interval
+    target_rules:
+      - {literal: "serial interval", label: "METRIC", pattern: [{LOWER: serial}, {LOWER: interval}]}
+    value_regex: '(\\d+\.?\\d*)\\s*(?:to|[-–])\\s*(\\d+\.?\\d*)\\s*days'
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: generation_time
+    target_rules:
+      - {literal: "generation time", label: "METRIC", pattern: [{LOWER: generation}, {LOWER: time}]}
+    value_regex: '(\\d+\.?\\d*)\\s*(?:to|[-–])\\s*(\\d+\.?\\d*)\\s*days'
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: transmission_route
+    target_rules:
+      - {literal: "person-to-person", label: "ROUTE", pattern: [{LOWER: person}, {ORTH: "-"}, {LOWER: to}, {ORTH: "-"}, {LOWER: person}]}
+      - {literal: "direct contact", label: "ROUTE", pattern: [{LOWER: direct}, {LOWER: contact}]}
+      - {literal: "airborne", label: "ROUTE", pattern: [{LOWER: airborne}]}
+      - {literal: "fomite", label: "ROUTE", pattern: [{LOWER: fomite}]}
+      - {literal: "bodily fluids", label: "ROUTE", pattern: [{LOWER: bodily}, {LOWER: fluids}]}
+      - {literal: "sexual transmission", label: "ROUTE", pattern: [{LOWER: sexual}, {LOWER: transmission}]}
+      - {literal: "nosocomial", label: "ROUTE", pattern: [{LOWER: nosocomial}]}
+      - {literal: "vertical transmission", label: "ROUTE", pattern: [{LOWER: vertical}, {LOWER: transmission}]}
+    value_type: list
+    context_filters: [negated, uncertain]
+  - field: superspreading_event
+    target_rules:
+      - {literal: "superspreading", label: "EVENT", pattern: [{LOWER: superspreading}]}
+      - {literal: "super-spreading", label: "EVENT", pattern: [{LOWER: super}, {ORTH: "-"}, {LOWER: spreading}]}
+      - {literal: "amplification event", label: "EVENT", pattern: [{LOWER: amplification}, {LOWER: event}]}
+    value_type: boolean
+    context_filters: [negated, uncertain]
+  - field: risk_factors
+    target_rules:
+      - {literal: "risk factor", label: "RISK", pattern: [{LOWER: risk}, {LOWER: factor}]}
+      - {literal: "funeral", label: "RISK", pattern: [{LOWER: funeral}]}
+      - {literal: "caregiver", label: "RISK", pattern: [{LOWER: caregiver}]}
+      - {literal: "healthcare worker", label: "RISK", pattern: [{LOWER: healthcare}, {LOWER: worker}]}
+    value_type: list
+    context_filters: [negated, uncertain]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+      - {literal: "age group", label: "AGE", pattern: [{LOWER: age}, {LOWER: group}]}
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(patients|participants|individuals|people|cases|subjects|population|study)\\b'
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(patients|participants|individuals|people|cases|subjects|population|study)\\b'
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "sampled in", label: "LOCATION", pattern: [{LOWER: sampled}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak|sampled)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|samples|detected|reported|transmission|infection)\\b'
+
+clinical:
+  - field: case_fatality_rate
+    target_rules:
+      - {literal: "case fatality rate", label: "METRIC", pattern: [{LOWER: case}, {LOWER: fatality}, {LOWER: rate}]}
+      - {literal: "CFR", label: "METRIC"}
+      - {literal: "mortality rate", label: "METRIC", pattern: [{LOWER: mortality}, {LOWER: rate}]}
+      - {literal: "fatality rate", label: "METRIC", pattern: [{LOWER: fatality}, {LOWER: rate}]}
+      - {literal: "death rate", label: "METRIC", pattern: [{LOWER: death}, {LOWER: rate}]}
+    value_regex: '(\\d+\.?\\d*)\\s*%'
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: hospitalization_rate
+    target_rules:
+      - {literal: "hospitalization rate", label: "METRIC", pattern: [{LOWER: hospitalization}, {LOWER: rate}]}
+      - {literal: "admission rate", label: "METRIC", pattern: [{LOWER: admission}, {LOWER: rate}]}
+      - {literal: "hospitalized", label: "METRIC", pattern: [{LOWER: hospitalized}]}
+      - {literal: "hospitalisation rate", label: "METRIC", pattern: [{LOWER: hospitalisation}, {LOWER: rate}]}
+    value_regex: '(?:hospitalization|hospitalisation|admission|hospitalized|hospitalised)\\w*\\s*(?:rate|was|of)?\\s*(\\d+\.?\\d*)\\s*%|(\\d+\.?\\d*)\\s*%\\s*(?:of\\s*(?:cases|patients))?\\s*(?:were|was)\\s*(?:hospitalized|hospitalised|admitted)'
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: symptoms
+    target_rules:
+      - {literal: "fever", label: "SYMPTOM", pattern: [{LOWER: fever}]}
+      - {literal: "hemorrhage", label: "SYMPTOM", pattern: [{LOWER: hemorrhage}]}
+      - {literal: "bleeding", label: "SYMPTOM", pattern: [{LOWER: bleeding}]}
+      - {literal: "vomiting", label: "SYMPTOM", pattern: [{LOWER: vomiting}]}
+      - {literal: "diarrhea", label: "SYMPTOM", pattern: [{LOWER: diarrhea}]}
+      - {literal: "headache", label: "SYMPTOM", pattern: [{LOWER: headache}]}
+      - {literal: "fatigue", label: "SYMPTOM", pattern: [{LOWER: fatigue}]}
+      - {literal: "muscle pain", label: "SYMPTOM", pattern: [{LOWER: muscle}, {LOWER: pain}]}
+      - {literal: "sore throat", label: "SYMPTOM", pattern: [{LOWER: sore}, {LOWER: throat}]}
+      - {literal: "rash", label: "SYMPTOM", pattern: [{LOWER: rash}]}
+      - {literal: "abdominal pain", label: "SYMPTOM", pattern: [{LOWER: abdominal}, {LOWER: pain}]}
+      - {literal: "conjunctivitis", label: "SYMPTOM", pattern: [{LOWER: conjunctivitis}]}
+      - {literal: "hiccups", label: "SYMPTOM", pattern: [{LOWER: hiccups}]}
+      - {literal: "internal bleeding", label: "SYMPTOM", pattern: [{LOWER: internal}, {LOWER: bleeding}]}
+      - {literal: "ocular pain", label: "SYMPTOM", pattern: [{LOWER: ocular}, {LOWER: pain}]}
+    value_type: list
+    context_filters: [negated]
+  - field: risk_factors
+    target_rules:
+      - {literal: "risk factor", label: "RISK", pattern: [{LOWER: risk}, {LOWER: factor}]}
+      - {literal: "pregnancy", label: "RISK", pattern: [{LOWER: pregnancy}]}
+      - {literal: "immunocompromised", label: "RISK", pattern: [{LOWER: immunocompromised}]}
+      - {literal: "comorbidity", label: "RISK", pattern: [{LOWER: comorbidity}]}
+      - {literal: "delayed treatment", label: "RISK", pattern: [{LOWER: delayed}, {LOWER: treatment}]}
+      - {literal: "late presentation", label: "RISK", pattern: [{LOWER: late}, {LOWER: presentation}]}
+      - {literal: "high viral load", label: "RISK", pattern: [{LOWER: high}, {LOWER: viral}, {LOWER: load}]}
+    value_type: list
+    context_filters: [negated, uncertain]
+  - field: pregnancy
+    target_rules:
+      - {literal: "pregnancy", label: "PREGNANCY", pattern: [{LOWER: pregnancy}]}
+      - {literal: "pregnant women", label: "PREGNANCY", pattern: [{LOWER: pregnant}, {LOWER: women}]}
+      - {literal: "maternal mortality", label: "PREGNANCY", pattern: [{LOWER: maternal}, {LOWER: mortality}]}
+      - {literal: "obstetric", label: "PREGNANCY", pattern: [{LOWER: obstetric}]}
+    value_type: boolean
+    context_filters: [negated]
+  - field: severity_score
+    target_rules:
+      - {literal: "severity score", label: "SCORE", pattern: [{LOWER: severity}, {LOWER: score}]}
+      - {literal: "severity classification", label: "SCORE", pattern: [{LOWER: severity}, {LOWER: classification}]}
+      - {literal: "disease severity", label: "SCORE", pattern: [{LOWER: disease}, {LOWER: severity}]}
+      - {literal: "critical", label: "SCORE", pattern: [{LOWER: critical}]}
+      - {literal: "severe disease", label: "SCORE", pattern: [{LOWER: severe}, {LOWER: disease}]}
+      - {literal: "mild disease", label: "SCORE", pattern: [{LOWER: mild}, {LOWER: disease}]}
+      - {literal: "moderate disease", label: "SCORE", pattern: [{LOWER: moderate}, {LOWER: disease}]}
+    value_regex: '\\b(mild|moderate|severe|critical)\\s+(?:disease|illness|case|infection|condition)\\b|\\b(disease|illness|case|infection)\\s+(?:was|is)?\\s*(mild|moderate|severe|critical)\\b'
+    allowed_values: ["mild", "moderate", "severe", "critical"]
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: treatment_setting
+    target_rules:
+      - {literal: "Ebola treatment center", label: "SETTING", pattern: [{LOWER: ebola}, {LOWER: treatment}, {LOWER: center}]}
+      - {literal: "ETC", label: "SETTING"}
+      - {literal: "hospital", label: "SETTING", pattern: [{LOWER: hospital}]}
+      - {literal: "community care", label: "SETTING", pattern: [{LOWER: community}, {LOWER: care}]}
+      - {literal: "home care", label: "SETTING", pattern: [{LOWER: home}, {LOWER: care}]}
+      - {literal: "isolation ward", label: "SETTING", pattern: [{LOWER: isolation}, {LOWER: ward}]}
+    value_type: string
+    context_filters: [negated]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+      - {literal: "elderly", label: "AGE", pattern: [{LOWER: elderly}]}
+      - {literal: "age group", label: "AGE", pattern: [{LOWER: age}, {LOWER: group}]}
+      - {literal: "pediatric", label: "AGE", pattern: [{LOWER: pediatric}]}
+    value_type: string
+    context_filters: [negated]
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+      - {literal: "study site", label: "LOCATION", pattern: [{LOWER: study}, {LOWER: site}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|clinical|hospital|treatment|infection)\\b'
+
+reservoir:
+  - field: host_species
+    target_rules:
+      - {literal: "fruit bat", label: "HOST", pattern: [{LOWER: fruit}, {LOWER: bat}]}
+      - {literal: "bat", label: "HOST", pattern: [{LOWER: bat}]}
+      - {literal: "rodent", label: "HOST", pattern: [{LOWER: rodent}]}
+      - {literal: "primate", label: "HOST", pattern: [{LOWER: primate}]}
+      - {literal: "shrew", label: "HOST", pattern: [{LOWER: shrew}]}
+      - {literal: "artibeus", label: "HOST"}
+      - {literal: "epomops", label: "HOST"}
+      - {literal: "hypsignathus", label: "HOST"}
+      - {literal: "myonycteris", label: "HOST"}
+      - {literal: "rousettus", label: "HOST"}
+    value_type: list
+    context_filters: [negated]
+  - field: country
+    target_rules:
+      - {literal: "detected in", label: "COUNTRY", pattern: [{LOWER: detected}, {LOWER: in}]}
+      - {literal: "found in", label: "COUNTRY", pattern: [{LOWER: found}, {LOWER: in}]}
+      - {literal: "sampled in", label: "COUNTRY", pattern: [{LOWER: sampled}, {LOWER: in}]}
+      - {literal: "Gabon", label: "COUNTRY"}
+      - {literal: "Republic of Congo", label: "COUNTRY"}
+      - {literal: "Democratic Republic of Congo", label: "COUNTRY"}
+      - {literal: "Uganda", label: "COUNTRY"}
+      - {literal: "Guinea", label: "COUNTRY"}
+      - {literal: "Liberia", label: "COUNTRY"}
+      - {literal: "Sierra Leone", label: "COUNTRY"}
+      - {literal: "Ivory Coast", label: "COUNTRY"}
+      - {literal: "Cameroon", label: "COUNTRY"}
+      - {literal: "Ghana", label: "COUNTRY"}
+    value_type: string
+    context_filters: [negated]
+  - field: sample_type
+    target_rules:
+      - {literal: "blood", label: "SAMPLE", pattern: [{LOWER: blood}]}
+      - {literal: "liver", label: "SAMPLE", pattern: [{LOWER: liver}]}
+      - {literal: "spleen", label: "SAMPLE", pattern: [{LOWER: spleen}]}
+      - {literal: "kidney", label: "SAMPLE", pattern: [{LOWER: kidney}]}
+      - {literal: "oral swab", label: "SAMPLE", pattern: [{LOWER: oral}, {LOWER: swab}]}
+      - {literal: "rectal swab", label: "SAMPLE", pattern: [{LOWER: rectal}, {LOWER: swab}]}
+      - {literal: "tissue", label: "SAMPLE", pattern: [{LOWER: tissue}]}
+      - {literal: "serum", label: "SAMPLE", pattern: [{LOWER: serum}]}
+    value_type: list
+    context_filters: [negated]
+  - field: detection_method
+    target_rules:
+      - {literal: "RT-PCR", label: "METHOD", pattern: [{ORTH: RT}, {ORTH: "-"}, {ORTH: PCR}]}
+      - {literal: "ELISA", label: "METHOD", pattern: [{ORTH: ELISA}]}
+      - {literal: "immunohistochemistry", label: "METHOD"}
+      - {literal: "virus isolation", label: "METHOD", pattern: [{LOWER: virus}, {LOWER: isolation}]}
+      - {literal: "cell culture", label: "METHOD", pattern: [{LOWER: cell}, {LOWER: culture}]}
+      - {literal: "next-generation sequencing", label: "METHOD", pattern: [{LOWER: next}, {ORTH: "-"}, {LOWER: generation}, {LOWER: sequencing}]}
+    value_type: string
+    context_filters: [negated]
+  - field: prevalence
+    target_rules:
+      - {literal: "prevalence", label: "METRIC", pattern: [{LOWER: prevalence}]}
+      - {literal: "seroprevalence", label: "METRIC", pattern: [{LOWER: seroprevalence}]}
+      - {literal: "infection rate", label: "METRIC", pattern: [{LOWER: infection}, {LOWER: rate}]}
+    value_regex: '(\\d+\.?\\d*)\\s*%'
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: spillover_context
+    target_rules:
+      - {literal: "spillover", label: "EVENT", pattern: [{LOWER: spillover}]}
+      - {literal: "index case", label: "EVENT", pattern: [{LOWER: index}, {LOWER: case}]}
+      - {literal: "patient zero", label: "EVENT", pattern: [{LOWER: patient}, {LOWER: zero}]}
+      - {literal: "zoonotic", label: "EVENT", pattern: [{LOWER: zoonotic}]}
+      - {literal: "animal-to-human", label: "EVENT", pattern: [{LOWER: animal}, {ORTH: "-"}, {LOWER: to}, {ORTH: "-"}, {LOWER: human}]}
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+    value_type: string
+    context_filters: [negated]
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "sampled in", label: "LOCATION", pattern: [{LOWER: sampled}, {LOWER: in}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak|sampled)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|samples|detected|reported|intervention|implemented|program)\\b'
+
+intervention:
+  - field: intervention_name
+    target_rules:
+      - {literal: "intervention", label: "INTERVENTION", pattern: [{LOWER: intervention}]}
+      - {literal: "contact tracing", label: "INTERVENTION", pattern: [{LOWER: contact}, {LOWER: tracing}]}
+      - {literal: "quarantine", label: "INTERVENTION", pattern: [{LOWER: quarantine}]}
+      - {literal: "isolation", label: "INTERVENTION", pattern: [{LOWER: isolation}]}
+      - {literal: "social distancing", label: "INTERVENTION", pattern: [{LOWER: social}, {LOWER: distancing}]}
+      - {literal: "hand hygiene", label: "INTERVENTION", pattern: [{LOWER: hand}, {LOWER: hygiene}]}
+      - {literal: "PPE", label: "INTERVENTION"}
+      - {literal: "personal protective equipment", label: "INTERVENTION", pattern: [{LOWER: personal}, {LOWER: protective}, {LOWER: equipment}]}
+      - {literal: "safe burial", label: "INTERVENTION", pattern: [{LOWER: safe}, {LOWER: burial}]}
+      - {literal: "ring vaccination", label: "INTERVENTION", pattern: [{LOWER: ring}, {LOWER: vaccination}]}
+      - {literal: "travel restriction", label: "INTERVENTION", pattern: [{LOWER: travel}, {LOWER: restriction}]}
+      - {literal: "school closure", label: "INTERVENTION", pattern: [{LOWER: school}, {LOWER: closure}]}
+      - {literal: "border closure", label: "INTERVENTION", pattern: [{LOWER: border}, {LOWER: closure}]}
+    value_type: list
+    context_filters: [negated]
+  - field: intervention_type
+    target_rules:
+      - {literal: "pharmaceutical", label: "TYPE", pattern: [{LOWER: pharmaceutical}]}
+      - {literal: "non-pharmaceutical", label: "TYPE", pattern: [{LOWER: non}, {ORTH: "-"}, {LOWER: pharmaceutical}]}
+      - {literal: "behavioral", label: "TYPE", pattern: [{LOWER: behavioral}]}
+      - {literal: "infection prevention", label: "TYPE", pattern: [{LOWER: infection}, {LOWER: prevention}]}
+      - {literal: "control measure", label: "TYPE", pattern: [{LOWER: control}, {LOWER: measure}]}
+      - {literal: "public health", label: "TYPE", pattern: [{LOWER: public}, {LOWER: health}]}
+    value_type: string
+    context_filters: [negated]
+  - field: effectiveness
+    target_rules:
+      - {literal: "effectiveness", label: "METRIC", pattern: [{LOWER: effectiveness}]}
+      - {literal: "impact", label: "METRIC", pattern: [{LOWER: impact}]}
+      - {literal: "reduction in", label: "METRIC", pattern: [{LOWER: reduction}, {LOWER: in}]}
+      - {literal: "decreased transmission", label: "METRIC", pattern: [{LOWER: decreased}, {LOWER: transmission}]}
+    value_regex: '(\\d+\.?\\d*)\\s*%|(?:high|low|partial|complete|moderate|minimal|significant|not)\\s+(?:effectiveness|efficacy|impact|reduction)'
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: coverage
+    target_rules:
+      - {literal: "coverage", label: "METRIC", pattern: [{LOWER: coverage}]}
+      - {literal: "vaccination coverage", label: "METRIC", pattern: [{LOWER: vaccination}, {LOWER: coverage}]}
+      - {literal: "adherence", label: "METRIC", pattern: [{LOWER: adherence}]}
+      - {literal: "compliance", label: "METRIC", pattern: [{LOWER: compliance}]}
+    value_regex: '(\\d+\.?\\d*)\\s*%|(?:high|low|partial|complete|moderate|minimal|full|wide|broad|limited|poor|good|significant)\\s+(?:coverage|adherence|compliance)'
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: duration
+    target_rules:
+      - {literal: "duration", label: "PERIOD", pattern: [{LOWER: duration}]}
+      - {literal: "time period", label: "PERIOD", pattern: [{LOWER: time}, {LOWER: period}]}
+      - {literal: "followed for", label: "PERIOD", pattern: [{LOWER: followed}, {LOWER: for}]}
+    value_regex: '(\\d+)\\s*(?:days?|weeks?|months?|years?)'
+    value_type: string
+    context_filters: [negated]
+  - field: target_population
+    target_rules:
+      - {literal: "target population", label: "POP", pattern: [{LOWER: target}, {LOWER: population}]}
+      - {literal: "healthcare workers", label: "POP", pattern: [{LOWER: healthcare}, {LOWER: workers}]}
+      - {literal: "community", label: "POP", pattern: [{LOWER: community}]}
+      - {literal: "household contacts", label: "POP", pattern: [{LOWER: household}, {LOWER: contacts}]}
+      - {literal: "general population", label: "POP", pattern: [{LOWER: general}, {LOWER: population}]}
+    value_type: string
+    context_filters: [negated]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+    value_type: string
+    context_filters: [negated]
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "implemented in", label: "LOCATION", pattern: [{LOWER: implemented}, {LOWER: in}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak|implemented)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|policy|implemented|program|intervention|infection)\\b'
+
+epidemiological_context:
+  - field: outbreak_name
+    target_rules:
+      - {literal: "outbreak", label: "OUTBREAK", pattern: [{LOWER: outbreak}]}
+      - {literal: "epidemic", label: "OUTBREAK", pattern: [{LOWER: epidemic}]}
+      - {literal: "2014-2016 outbreak", label: "OUTBREAK"}
+      - {literal: "West African outbreak", label: "OUTBREAK", pattern: [{LOWER: west}, {LOWER: african}, {LOWER: outbreak}]}
+      - {literal: "Sudan outbreak", label: "OUTBREAK", pattern: [{LOWER: sudan}, {LOWER: outbreak}]}
+      - {literal: "Bundibugyo outbreak", label: "OUTBREAK", pattern: [{LOWER: bundibugyo}, {LOWER: outbreak}]}
+    value_type: string
+    context_filters: [negated]
+  - field: attack_rate
+    target_rules:
+      - {literal: "attack rate", label: "METRIC", pattern: [{LOWER: attack}, {LOWER: rate}]}
+      - {literal: "secondary attack rate", label: "METRIC", pattern: [{LOWER: secondary}, {LOWER: attack}, {LOWER: rate}]}
+    value_regex: '(\\d+\.?\\d*)\\s*%'
+    value_type: string
+    context_filters: [negated, uncertain]
+    section_boost: [results, conclusions]
+  - field: epidemic_curve
+    target_rules:
+      - {literal: "epidemic curve", label: "CURVE", pattern: [{LOWER: epidemic}, {LOWER: curve}]}
+      - {literal: "epi curve", label: "CURVE", pattern: [{LOWER: epi}, {LOWER: curve}]}
+      - {literal: "peak", label: "CURVE", pattern: [{LOWER: peak}]}
+      - {literal: "wave", label: "CURVE", pattern: [{LOWER: wave}]}
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: seasonality
+    target_rules:
+      - {literal: "seasonal", label: "SEASON", pattern: [{LOWER: seasonal}]}
+      - {literal: "seasonality", label: "SEASON", pattern: [{LOWER: seasonality}]}
+      - {literal: "dry season", label: "SEASON", pattern: [{LOWER: dry}, {LOWER: season}]}
+      - {literal: "rainy season", label: "SEASON", pattern: [{LOWER: rainy}, {LOWER: season}]}
+      - {literal: "wet season", label: "SEASON", pattern: [{LOWER: wet}, {LOWER: season}]}
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: geographic_scope
+    target_rules:
+      - {literal: "national", label: "SCOPE", pattern: [{LOWER: national}]}
+      - {literal: "regional", label: "SCOPE", pattern: [{LOWER: regional}]}
+      - {literal: "subnational", label: "SCOPE", pattern: [{LOWER: subnational}]}
+      - {literal: "multi-country", label: "SCOPE", pattern: [{LOWER: multi}, {ORTH: "-"}, {LOWER: country}]}
+      - {literal: "cross-border", label: "SCOPE", pattern: [{LOWER: cross}, {ORTH: "-"}, {LOWER: border}]}
+    value_type: string
+    context_filters: [negated]
+  - field: time_period
+    target_rules:
+      - {literal: "time period", label: "PERIOD", pattern: [{LOWER: time}, {LOWER: period}]}
+      - {literal: "between", label: "PERIOD", pattern: [{LOWER: between}]}
+      - {literal: "from", label: "PERIOD", pattern: [{LOWER: from}]}
+    value_regex: '(\\d{4})\\s*(?:to|[-–])\\s*(\\d{4})'
+    value_type: string
+    context_filters: [negated]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+    value_type: string
+    context_filters: [negated]
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "sampled in", label: "LOCATION", pattern: [{LOWER: sampled}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak|sampled)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|samples|detected|reported|reservoir|host|spillover)\\b'
+
+genomic_surveillance:
+  - field: lineage
+    target_rules:
+      - {literal: "lineage", label: "LINEAGE", pattern: [{LOWER: lineage}]}
+      - {literal: "genotype", label: "LINEAGE", pattern: [{LOWER: genotype}]}
+      - {literal: "Ebola virus lineage", label: "LINEAGE"}
+    value_type: string
+    context_filters: [negated]
+  - field: clade
+    target_rules:
+      - {literal: "clade", label: "CLADE", pattern: [{LOWER: clade}]}
+      - {literal: "Sudan ebolavirus clade", label: "CLADE"}
+    value_type: string
+    context_filters: [negated]
+  - field: sequencing_platform
+    target_rules:
+      - {literal: "Illumina", label: "PLATFORM"}
+      - {literal: "Oxford Nanopore", label: "PLATFORM", pattern: [{ORTH: Oxford}, {ORTH: Nanopore}]}
+      - {literal: "MinION", label: "PLATFORM"}
+      - {literal: "Next-generation sequencing", label: "PLATFORM", pattern: [{LOWER: next}, {ORTH: "-"}, {LOWER: generation}, {LOWER: sequencing}]}
+      - {literal: "metagenomic sequencing", label: "PLATFORM", pattern: [{LOWER: metagenomic}, {LOWER: sequencing}]}
+      - {literal: "Sanger sequencing", label: "PLATFORM", pattern: [{ORTH: Sanger}, {LOWER: sequencing}]}
+    value_type: string
+    context_filters: [negated]
+  - field: sample_size
+    target_rules:
+      - {literal: "genomes were generated", label: "COUNT"}
+      - {literal: "sequences were obtained", label: "COUNT"}
+      - {literal: "genomes sequenced", label: "COUNT", pattern: [{LOWER: genomes}, {LOWER: sequenced}]}
+      - {literal: "whole genome sequences", label: "COUNT", pattern: [{LOWER: whole}, {LOWER: genome}, {LOWER: sequences}]}
+    value_regex: '(\\d[\\d,]*)\\s+(?:genomes|sequences|samples)'
+    value_type: number
+    context_filters: [negated]
+  - field: reference_panel
+    target_rules:
+      - {literal: "reference genome", label: "REF", pattern: [{LOWER: reference}, {LOWER: genome}]}
+      - {literal: "reference panel", label: "REF", pattern: [{LOWER: reference}, {LOWER: panel}]}
+      - {literal: "reference sequence", label: "REF", pattern: [{LOWER: reference}, {LOWER: sequence}]}
+      - {literal: "Mayinga", label: "REF"}
+      - {literal: "Kikwit", label: "REF"}
+    value_type: string
+    context_filters: [negated]
+  - field: phylogenetic_method
+    target_rules:
+      - {literal: "maximum likelihood", label: "METHOD", pattern: [{LOWER: maximum}, {LOWER: likelihood}]}
+      - {literal: "Bayesian", label: "METHOD", pattern: [{ORTH: Bayesian}]}
+      - {literal: "BEAST", label: "METHOD"}
+      - {literal: "IQ-TREE", label: "METHOD"}
+      - {literal: "RAxML", label: "METHOD"}
+      - {literal: "phylogenetic tree", label: "METHOD", pattern: [{LOWER: phylogenetic}, {LOWER: tree}]}
+      - {literal: "time-calibrated", label: "METHOD", pattern: [{LOWER: time}, {ORTH: "-"}, {LOWER: calibrated}]}
+    value_type: string
+    context_filters: [negated]
+  - field: quality_indicators
+    target_rules:
+      - {literal: "coverage depth", label: "QUALITY", pattern: [{LOWER: coverage}, {LOWER: depth}]}
+      - {literal: "genome coverage", label: "QUALITY", pattern: [{LOWER: genome}, {LOWER: coverage}]}
+      - {literal: "consensus genome", label: "QUALITY", pattern: [{LOWER: consensus}, {LOWER: genome}]}
+      - {literal: "mean depth", label: "QUALITY", pattern: [{LOWER: mean}, {LOWER: depth}]}
+    value_type: list
+    context_filters: [negated]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+    value_type: string
+    context_filters: [negated]
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "sampled in", label: "LOCATION", pattern: [{LOWER: sampled}, {LOWER: in}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak|sampled)\\s+(?:in|at|across|throughout)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|samples|detected|reported|epidemic|surveillance|genomic|sequenced)\\b'
+
+policy:
+  - field: assessment_type
+    target_rules:
+      - {literal: "risk assessment", label: "ASSESSMENT", pattern: [{LOWER: risk}, {LOWER: assessment}]}
+      - {literal: "guideline", label: "ASSESSMENT", pattern: [{LOWER: guideline}]}
+      - {literal: "recommendation", label: "ASSESSMENT", pattern: [{LOWER: recommendation}]}
+      - {literal: "policy", label: "ASSESSMENT", pattern: [{LOWER: policy}]}
+      - {literal: "guidance", label: "ASSESSMENT", pattern: [{LOWER: guidance}]}
+      - {literal: "advisory", label: "ASSESSMENT", pattern: [{LOWER: advisory}]}
+    value_type: string
+    context_filters: [negated]
+  - field: issuing_body
+    target_rules:
+      - {literal: "WHO", label: "BODY"}
+      - {literal: "World Health Organization", label: "BODY", pattern: [{ORTH: World}, {ORTH: Health}, {ORTH: Organization}]}
+      - {literal: "CDC", label: "BODY"}
+      - {literal: "Centers for Disease Control", label: "BODY", pattern: [{ORTH: Centers}, {LOWER: for}, {LOWER: disease}, {LOWER: control}]}
+      - {literal: "MSF", label: "BODY"}
+      - {literal: "Doctors Without Borders", label: "BODY"}
+      - {literal: "ministry of health", label: "BODY", pattern: [{LOWER: ministry}, {LOWER: of}, {LOWER: health}]}
+      - {literal: "UN", label: "BODY"}
+    value_type: string
+    context_filters: [negated]
+  - field: travel_advisory
+    target_rules:
+      - {literal: "travel advisory", label: "TRAVEL", pattern: [{LOWER: travel}, {LOWER: advisory}]}
+      - {literal: "travel restriction", label: "TRAVEL", pattern: [{LOWER: travel}, {LOWER: restriction}]}
+      - {literal: "flight restriction", label: "TRAVEL", pattern: [{LOWER: flight}, {LOWER: restriction}]}
+      - {literal: "border closure", label: "TRAVEL", pattern: [{LOWER: border}, {LOWER: closure}]}
+      - {literal: "screening at airports", label: "TRAVEL"}
+    value_type: string
+    context_filters: [negated]
+  - field: forecast
+    target_rules:
+      - {literal: "forecast", label: "FORECAST", pattern: [{LOWER: forecast}]}
+      - {literal: "projection", label: "FORECAST", pattern: [{LOWER: projection}]}
+      - {literal: "predicted", label: "FORECAST", pattern: [{LOWER: predicted}]}
+      - {literal: "estimated cases", label: "FORECAST", pattern: [{LOWER: estimated}, {LOWER: cases}]}
+      - {literal: "model", label: "FORECAST", pattern: [{LOWER: model}]}
+    value_type: string
+    context_filters: [negated, uncertain]
+  - field: recommendation
+    target_rules:
+      - {literal: "recommend", label: "REC", pattern: [{LOWER: recommend}]}
+      - {literal: "should", label: "REC", pattern: [{LOWER: should}]}
+      - {literal: "must", label: "REC", pattern: [{LOWER: must}]}
+      - {literal: "advised", label: "REC", pattern: [{LOWER: advised}]}
+      - {literal: "recommended that", label: "REC", pattern: [{LOWER: recommended}, {LOWER: that}]}
+    value_type: string
+    context_filters: [negated]
+  - field: target_audience
+    target_rules:
+      - {literal: "healthcare workers", label: "AUDIENCE", pattern: [{LOWER: healthcare}, {LOWER: workers}]}
+      - {literal: "governments", label: "AUDIENCE", pattern: [{LOWER: governments}]}
+      - {literal: "policy makers", label: "AUDIENCE", pattern: [{LOWER: policy}, {LOWER: makers}]}
+      - {literal: "public", label: "AUDIENCE", pattern: [{LOWER: public}]}
+      - {literal: "travelers", label: "AUDIENCE", pattern: [{LOWER: travelers}]}
+      - {literal: "clinicians", label: "AUDIENCE", pattern: [{LOWER: clinicians}]}
+    value_type: string
+    context_filters: [negated]
+  - field: age_group
+    target_rules:
+      - {literal: "children", label: "AGE", pattern: [{LOWER: children}]}
+      - {literal: "adults", label: "AGE", pattern: [{LOWER: adults}]}
+    value_type: string
+    context_filters: [negated]
+  - field: gender
+    target_rules:
+      - {literal: "male", label: "GENDER", pattern: [{LOWER: male}]}
+      - {literal: "female", label: "GENDER", pattern: [{LOWER: female}]}
+    value_type: string
+    context_filters: [negated]
+  - field: geographic_location
+    target_rules:
+      - {literal: "conducted in", label: "LOCATION", pattern: [{LOWER: conducted}, {LOWER: in}]}
+      - {literal: "applicable to", label: "LOCATION", pattern: [{LOWER: applicable}, {LOWER: to}]}
+      - {literal: "reported in", label: "LOCATION", pattern: [{LOWER: reported}, {LOWER: in}]}
+      - {literal: "outbreak in", label: "LOCATION", pattern: [{LOWER: outbreak}, {LOWER: in}]}
+    value_regex: '(?:conducted|located|reported|identified|outbreak|applicable)\\s+(?:in|at|across|throughout|to)\\s+([A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+)*(?:,\\s*[A-Za-z\\s]+)?)'
+    value_type: string
+    context_filters: [negated]
+    context_regex: '\\b(outbreak|cases|patients|study|survey|policy|guideline|recommendation|travel|infection)\\b'

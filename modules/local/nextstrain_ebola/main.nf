@@ -19,14 +19,14 @@ process NEXTSTRAIN_EBOLA {
     tuple val(meta), path(fasta), path(metadata)
 
     output:
-    tuple val(meta), path("${meta.species}/auspice/*.json")   , emit: auspice
-    tuple val(meta), path("${meta.species}/results/")         , emit: results_dir
+    tuple val(meta), path("${(meta.species ?: meta.id).replaceAll(/^.*_/, '')}/auspice/*.json")   , emit: auspice
+    tuple val(meta), path("${(meta.species ?: meta.id).replaceAll(/^.*_/, '')}/results/")         , emit: results_dir
 
     when:
     task.ext.when == null || task.ext.when
 
     script:
-    def species        = meta.species ?: meta.id.replaceAll(/^.*_/, '')
+    def species        = (meta.species ?: meta.id).replaceAll(/^.*_/, '')
     def builds_list    = task.ext.builds ?: "${species}/all-outbreaks"
     def nextstrain_dir = "${projectDir}/data/nextstrain_ebola"
     def configfile     = task.ext.configfile ?: ''

@@ -1,0 +1,9 @@
+name: pgirl_pdf
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - requests
+  - pip
+  - pip:
+      - pyeuropepmc
