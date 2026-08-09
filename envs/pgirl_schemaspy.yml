@@ -1,0 +1,10 @@
+name: pgirl_schemaspy
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python >=3.10
+  - openjdk
+  - postgresql
+  - psycopg2
+  - graphviz

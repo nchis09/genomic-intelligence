@@ -1,0 +1,11 @@
+name: pgirl_literature
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python>=3.11
+  - pip
+  - requests
+  - pyyaml
+  - pip:
+      - python-dotenv

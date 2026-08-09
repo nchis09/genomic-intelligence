@@ -3,13 +3,11 @@
     IMPORT MODULES / SUBWORKFLOWS / FUNCTIONS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 */
-include { MULTIQC                } from '../modules/nf-core/multiqc/main'
 include { CLASSIFICATION         } from '../subworkflows/local/classification/main'
-include { PHYLOGENETICS          } from '../subworkflows/local/phylogenetics/main'
-include { paramsSummaryMap       } from 'plugin/nf-schema'
-include { paramsSummaryMultiqc   } from '../subworkflows/nf-core/utils_nfcore_pipeline'
-include { softwareVersionsToYAML } from '../subworkflows/nf-core/utils_nfcore_pipeline'
-include { methodsDescriptionText } from '../subworkflows/local/utils_nfcore_genomic-intelligence_pipeline'
+include { PATHOGEN_ROUTER        } from '../subworkflows/local/pathogen_router/main'
+include { KNOWLEDGE_WAREHOUSE    } from '../subworkflows/local/knowledge_warehouse/main'
+include { START_KNOWLEDGE_DB     } from '../modules/local/start_knowledge_db/main'
+include { STOP_KNOWLEDGE_DB      } from '../modules/local/stop_knowledge_db/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -28,8 +26,14 @@ workflow GENOMIC_INTELLIGENCE {
 
     main:
 
-    def ch_versions = channel.empty()
-    def ch_multiqc_files = channel.empty()
+
+    //
+    // Shared PostgreSQL connection details. They are set once the DB is
+    // started (after per-species analysis outputs are ready) or default to
+    // configured values if the knowledge warehouse is skipped.
+    //
+    def db_host
+    def db_port
 
     //
     // SUBWORKFLOW: Nextclade classification + species assignment
@@ -42,73 +46,78 @@ workflow GENOMIC_INTELLIGENCE {
     CLASSIFICATION(ch_samplesheet, ch_datasets)
 
     //
-    // SUBWORKFLOW: Phylogenetics (Nextstrain Ebola + annotation + plotting)
+    // SUBWORKFLOW: Pathogen router (dispatches each species group to its workflow)
     //
-    // CLASSIFICATION auto-detected species → route to correct Nextstrain workflow
-    // Currently only ebola is supported; future pathogens will branch here
-    PHYLOGENETICS(CLASSIFICATION.out.species_groups)
+    // CLASSIFICATION auto-detected pathogen/species → route to the matching
+    // pathogen-specific workflow (currently only Ebola is registered). Each
+    // pathogen workflow runs the per-species analysis modules (bioinformatics,
+    // phenotype annotation, epidemiological data) it needs. The shared DB is
+    // then built in the main workflow (see below). Groups whose
+    // pathogen has no registered workflow are skipped with a warning; see
+    // PATHOGEN_ROUTER.out.unsupported for the summary file.
+    //
+    // All Nextclade JSON outputs (one per sample x dataset run) and the
+    // species_assignments.tsv (sample -> winning dataset) are broadcast to
+    // every species group below (collect()/single-path outputs behave as
+    // value channels) for use by each pathogen workflow's own bioinformatics
+    // analysis stage.
+    ch_nextclade_json_all = CLASSIFICATION.out.json
+        .map { _meta, json -> json }
+        .collect()
 
-    //
-    // Collate and save software versions
-    //
-    def topic_versions = channel.topic("versions")
-        .distinct()
-        .branch { entry ->
-            versions_file: entry instanceof Path
-            versions_tuple: true
-        }
-
-    def topic_versions_string = topic_versions.versions_tuple
-        .map { process, tool, version ->
-            [ process[process.lastIndexOf(':')+1..-1], "  ${tool}: ${version}" ]
-        }
-        .groupTuple(by:0)
-        .map { process, tool_versions ->
-            tool_versions.unique().sort()
-            "${process}:\n${tool_versions.join('\n')}"
-        }
-
-    def ch_collated_versions = softwareVersionsToYAML(ch_versions.mix(topic_versions.versions_file))
-        .mix(topic_versions_string)
-        .collectFile(
-            storeDir: "${outdir}/pipeline_info",
-            name:  'genomic-intelligence_software_'  + 'mqc_'  + 'versions.yml',
-            sort: true,
-            newLine: true
-        )
-
-    //
-    // MODULE: MultiQC
-    //
-    ch_multiqc_files = ch_multiqc_files.mix(ch_collated_versions)
-    def ch_summary_params = paramsSummaryMap(workflow, parameters_schema: "nextflow_schema.json")
-    def ch_workflow_summary = channel.value(paramsSummaryMultiqc(ch_summary_params))
-    ch_multiqc_files = ch_multiqc_files.mix(ch_workflow_summary.collectFile(name: 'workflow_summary_mqc.yaml'))
-    def ch_multiqc_custom_methods_description = multiqc_methods_description
-        ? file(multiqc_methods_description, checkIfExists: true)
-        : file("${projectDir}/assets/methods_description_template.yml", checkIfExists: true)
-    def ch_methods_description = channel.value(methodsDescriptionText(ch_multiqc_custom_methods_description))
-    ch_multiqc_files = ch_multiqc_files.mix(ch_methods_description.collectFile(name: 'methods_description_mqc.yaml', sort: true))
-    MULTIQC(
-        ch_multiqc_files.flatten().collect().map { files ->
-            [
-                [id: 'genomic-intelligence'],
-                files,
-                multiqc_config
-                    ? file(multiqc_config, checkIfExists: true)
-                    : file("${projectDir}/assets/multiqc_config.yml", checkIfExists: true),
-                multiqc_logo ? file(multiqc_logo, checkIfExists: true) : [],
-                [],
-                [],
-            ]
-        }
+    PATHOGEN_ROUTER(
+        CLASSIFICATION.out.species_groups,
+        ch_nextclade_json_all,
+        CLASSIFICATION.out.assignments
     )
 
+    //
+    // Shared knowledge-warehouse: start the DB once the pathogen analyses
+    // have produced per-species data, ingest the data, and stop the DB once
+    // ingestion is complete.
+    //
+    def ch_knowledge_db = channel.empty()
+    def ch_knowledge_db_summary = channel.empty()
+
+    if (!params.skip_knowledge_warehouse) {
+        START_KNOWLEDGE_DB(
+            channel.value(params.kw_db_host),
+            channel.value(params.kw_db_port),
+            PATHOGEN_ROUTER.out.kw_input.collect()
+        )
+        db_host = START_KNOWLEDGE_DB.out.ready.map { params.kw_db_host }
+        db_port = START_KNOWLEDGE_DB.out.ready.map { params.kw_db_port }
+
+        KNOWLEDGE_WAREHOUSE(
+            PATHOGEN_ROUTER.out.kw_input.combine(db_host).combine(db_port)
+        )
+        ch_knowledge_db = KNOWLEDGE_WAREHOUSE.out.knowledge_db
+        ch_knowledge_db_summary = KNOWLEDGE_WAREHOUSE.out.mqc_summary
+
+        def ch_db_done = KNOWLEDGE_WAREHOUSE.out.knowledge_db.collect()
+        STOP_KNOWLEDGE_DB(db_host, db_port, ch_db_done)
+    } else {
+        db_host = channel.value(params.kw_db_host)
+        db_port = channel.value(params.kw_db_port)
+    }
+
+    //
+    // No downstream reporting or figures: the pipeline stops at the knowledge warehouse.
+    //
+
     emit:
-    multiqc_report = MULTIQC.out.report.map { _meta, report -> [report] }.toList()
-    figures        = PHYLOGENETICS.out.figures
-    auspice        = PHYLOGENETICS.out.auspice
-    versions       = ch_versions
+    unsupported    = PATHOGEN_ROUTER.out.unsupported
+    phenotype_mutations = PATHOGEN_ROUTER.out.mutations
+    phenotype_summary   = PATHOGEN_ROUTER.out.query_summary
+    uniprotr_results    = PATHOGEN_ROUTER.out.uniprotr_results
+    extractr_results    = PATHOGEN_ROUTER.out.extractr_results
+    rbioapi_results     = PATHOGEN_ROUTER.out.rbioapi_results
+    epi_raw             = PATHOGEN_ROUTER.out.epi_raw
+    epi_search_summary  = PATHOGEN_ROUTER.out.epi_search_summary
+    lit_results         = PATHOGEN_ROUTER.out.lit_results
+    lit_evidence        = PATHOGEN_ROUTER.out.lit_evidence
+    knowledge_db        = ch_knowledge_db
+    knowledge_db_summary = ch_knowledge_db_summary
 }
 
 /*

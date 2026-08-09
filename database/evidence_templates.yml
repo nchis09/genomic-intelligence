@@ -1,0 +1,451 @@
+---
+# Per-domain evidence extraction templates for AgentSLR.
+# Each item defines a field to attempt from the full-text .txt of a paper.
+# The LLM also attempts to report numerator, denominator, ci_95_lower/upper,
+# p_value, unit, group, and n whenever they are present in the text.
+
+counts:
+  # count fields that appear in multiple domains
+  n:
+    question: "What is the total sample size or number of observations?"
+    type: number
+    optional: true
+    example: 482
+
+seroprevalence:
+  - field: study_location
+    question: "Where was the seroprevalence study conducted?"
+    type: string
+    optional: true
+  - field: host_species
+    question: "Which species or population was sampled?"
+    type: string
+    optional: true
+  - field: sample_size
+    question: "How many individuals were tested?"
+    type: number
+    optional: true
+  - field: seroprevalence_value
+    question: "What seroprevalence estimate is reported?"
+    type: string
+    optional: true
+  - field: assay_used
+    question: "Which assay was used?"
+    type: string
+    optional: true
+  - field: antigen_target
+    question: "Which antigen was targeted?"
+    type: string
+    optional: true
+  - field: sampling_period
+    question: "When were samples collected?"
+    type: string
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+variant_phenotype:
+  - field: gene
+    question: "Which gene or protein is the variant in?"
+    type: string
+    optional: true
+  - field: mutation
+    question: "What is the mutation or variant name?"
+    type: string
+    optional: true
+  - field: assay_type
+    question: "What kind of assay was used?"
+    type: string
+    optional: true
+  - field: experimental_system
+    question: "Was the work in vitro, in vivo, or computational?"
+    type: string
+    optional: true
+  - field: phenotype_observed
+    question: "What phenotypic effect was observed?"
+    type: string
+    optional: true
+  - field: species_context
+    question: "Which Ebola virus species is the variant in?"
+    type: string
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+vaccine_therapeutic:
+  - field: product_name
+    question: "What vaccine or therapeutic is named?"
+    type: string
+    optional: true
+  - field: product_type
+    question: "Is it a vaccine, monoclonal antibody, antiviral, or other?"
+    type: string
+    optional: true
+  - field: efficacy_value
+    question: "What efficacy or effectiveness is reported?"
+    type: string
+    optional: true
+  - field: endpoint
+    question: "What was the primary endpoint?"
+    type: string
+    optional: true
+  - field: study_phase
+    question: "Clinical or preclinical phase?"
+    type: string
+    optional: true
+  - field: population
+    question: "Which population or species was studied?"
+    type: string
+    optional: true
+  - field: adverse_events
+    question: "Are adverse events reported?"
+    type: string
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+diagnostic:
+  - field: test_name
+    question: "What diagnostic test is described?"
+    type: string
+    optional: true
+  - field: test_type
+    question: "Is it RT-PCR, RDT, CRISPR, sequencing, or other?"
+    type: string
+    optional: true
+  - field: sensitivity
+    question: "What sensitivity is reported?"
+    type: string
+    optional: true
+  - field: specificity
+    question: "What specificity is reported?"
+    type: string
+    optional: true
+  - field: limit_of_detection
+    question: "What is the limit of detection?"
+    type: string
+    optional: true
+  - field: sample_type
+    question: "What sample types were tested?"
+    type: string
+    optional: true
+  - field: primer_probe
+    question: "Are primer/probe sequences reported?"
+    type: string
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+transmission:
+  - field: r0
+    question: "What reproduction number is reported?"
+    type: string
+    optional: true
+  - field: serial_interval
+    question: "What is the reported serial interval?"
+    type: string
+    optional: true
+  - field: generation_time
+    question: "What is the reported generation time?"
+    type: string
+    optional: true
+  - field: transmission_route
+    question: "What transmission routes are described?"
+    type: string
+    optional: true
+  - field: superspreading_event
+    question: "Is a superspreading event mentioned?"
+    type: boolean
+    optional: true
+  - field: risk_factors
+    question: "What risk factors for transmission are listed?"
+    type: list
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+clinical:
+  - field: case_fatality_rate
+    question: "What CFR is reported?"
+    type: string
+    optional: true
+  - field: hospitalization_rate
+    question: "What hospitalization or admission rate is reported?"
+    type: string
+    optional: true
+  - field: symptoms
+    question: "What symptoms are reported?"
+    type: list
+    optional: true
+  - field: risk_factors
+    question: "What risk factors for severe disease are reported?"
+    type: list
+    optional: true
+  - field: pregnancy
+    question: "Does the paper discuss pregnancy outcomes?"
+    type: boolean
+    optional: true
+  - field: severity_score
+    question: "Is a severity score or classification reported?"
+    type: string
+    optional: true
+  - field: treatment_setting
+    question: "Where were patients treated?"
+    type: string
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+reservoir:
+  - field: host_species
+    question: "Which reservoir or host species is reported?"
+    type: string
+    optional: true
+  - field: country
+    question: "In which country or region?"
+    type: string
+    optional: true
+  - field: sample_type
+    question: "What samples were tested?"
+    type: string
+    optional: true
+  - field: detection_method
+    question: "How was the virus or antibody detected?"
+    type: string
+    optional: true
+  - field: prevalence
+    question: "What prevalence or seroprevalence in the host?"
+    type: string
+    optional: true
+  - field: spillover_context
+    question: "Is a spillover event described?"
+    type: string
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+intervention:
+  - field: intervention_name
+    question: "What intervention or control measure is named?"
+    type: string
+    optional: true
+  - field: intervention_type
+    question: "What type of intervention?"
+    type: string
+    optional: true
+  - field: effectiveness
+    question: "What effectiveness or impact is reported?"
+    type: string
+    optional: true
+  - field: coverage
+    question: "What coverage is reported?"
+    type: string
+    optional: true
+  - field: duration
+    question: "Over what time period?"
+    type: string
+    optional: true
+  - field: target_population
+    question: "Who or what was targeted?"
+    type: string
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+epidemiological_context:
+  - field: outbreak_name
+    question: "Which outbreak or epidemic is described?"
+    type: string
+    optional: true
+  - field: attack_rate
+    question: "What attack rate is reported?"
+    type: string
+    optional: true
+  - field: epidemic_curve
+    question: "Is a description of the curve or peaks provided?"
+    type: string
+    optional: true
+  - field: seasonality
+    question: "Is seasonality mentioned?"
+    type: string
+    optional: true
+  - field: geographic_scope
+    question: "What geographic area is covered?"
+    type: string
+    optional: true
+  - field: time_period
+    question: "What time period?"
+    type: string
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+genomic_surveillance:
+  - field: lineage
+    question: "Which lineage or clade is reported?"
+    type: string
+    optional: true
+  - field: clade
+    question: "Which clade?"
+    type: string
+    optional: true
+  - field: sequencing_platform
+    question: "What sequencing method was used?"
+    type: string
+    optional: true
+  - field: sample_size
+    question: "How many genomes were generated?"
+    type: number
+    optional: true
+  - field: reference_panel
+    question: "What reference panel or dataset is used?"
+    type: string
+    optional: true
+  - field: phylogenetic_method
+    question: "What method was used?"
+    type: string
+    optional: true
+  - field: quality_indicators
+    question: "What quality or representativeness indicators are listed?"
+    type: list
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true
+
+policy:
+  - field: assessment_type
+    question: "What kind of risk assessment or policy?"
+    type: string
+    optional: true
+  - field: issuing_body
+    question: "Which organisation issued it?"
+    type: string
+    optional: true
+  - field: travel_advisory
+    question: "Is a travel advisory mentioned?"
+    type: string
+    optional: true
+  - field: forecast
+    question: "What forecast or projection is made?"
+    type: string
+    optional: true
+  - field: recommendation
+    question: "What key recommendation is stated?"
+    type: string
+    optional: true
+  - field: target_audience
+    question: "Who is the guidance for?"
+    type: string
+    optional: true
+  - field: age_group
+    question: "What age groups are reported (e.g., children, adults, elderly, <5, 5-14, 15-44, 45+)?"
+    type: string
+    optional: true
+  - field: gender
+    question: "What gender or sex breakdowns are reported (e.g., male, female, mixed)?"
+    type: string
+    optional: true
+  - field: geographic_location
+    question: "In which specific country, region, or location was the study conducted?"
+    type: string
+    optional: true

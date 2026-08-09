@@ -1,0 +1,6 @@
+name: pgirl_nf_metro
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - bioconda::nf-metro

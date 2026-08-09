@@ -1,0 +1,292 @@
+---
+# Europe PMC literature search configuration
+# The species key is injected from the pipeline's `meta.species` (e.g. bdbv, ebov, sudv, tafv, restv).
+# Each domain produces a separate Europe PMC query with the species synonyms AND the domain terms.
+# After retrieval, results are filtered locally to require at least one high-specificity
+# domain term and at least one species-specific term, and to exclude papers about other species.
+
+species_synonyms:
+  bdbv:
+    exact:
+      - "Bundibugyo ebolavirus"
+      - "BDBV"
+    broad:
+      - "Bundibugyo virus"
+  ebov:
+    exact:
+      - "Zaire ebolavirus"
+      - "Ebola virus"
+      - "EBOV"
+      - "ZEBOV"
+    broad:
+      - "Ebolavirus"
+  sudv:
+    exact:
+      - "Sudan ebolavirus"
+      - "SUDV"
+    broad:
+      - "Sudan virus"
+  tafv:
+    exact:
+      - "Tai Forest ebolavirus"
+      - "Tai Forest virus"
+      - "TAFV"
+    broad:
+      - "Cote d'Ivoire ebolavirus"
+  restv:
+    exact:
+      - "Reston ebolavirus"
+      - "Reston virus"
+      - "RESTV"
+    broad:
+      - "Reston ebolavirus"
+
+# Terms applied to every species search in addition to species-specific synonyms.
+# Keep this minimal; "orthoebolavirus" is the only shared, higher-order term.
+shared_terms:
+  - "orthoebolavirus"
+
+# Terms that should NOT appear in a relevant paper for the given species.
+# Excluding the other ebolavirus species and Marburg keeps results species-specific.
+# "Ebola virus" is intentionally NOT excluded for non-EBOV species because it is used
+# as a generic disease name; the species-specific exact terms are enough to resolve matches.
+excluded_terms:
+  bdbv:
+    - "Zaire ebolavirus"
+    - "EBOV"
+    - "Sudan ebolavirus"
+    - "SUDV"
+    - "Reston ebolavirus"
+    - "RESTV"
+    - "Tai Forest ebolavirus"
+    - "TAFV"
+    - "Marburg"
+    - "MARV"
+  ebov:
+    - "Bundibugyo ebolavirus"
+    - "BDBV"
+    - "Sudan ebolavirus"
+    - "SUDV"
+    - "Reston ebolavirus"
+    - "RESTV"
+    - "Tai Forest ebolavirus"
+    - "TAFV"
+    - "Marburg"
+    - "MARV"
+  sudv:
+    - "Zaire ebolavirus"
+    - "EBOV"
+    - "Bundibugyo ebolavirus"
+    - "BDBV"
+    - "Reston ebolavirus"
+    - "RESTV"
+    - "Tai Forest ebolavirus"
+    - "TAFV"
+    - "Marburg"
+    - "MARV"
+  tafv:
+    - "Zaire ebolavirus"
+    - "EBOV"
+    - "Bundibugyo ebolavirus"
+    - "BDBV"
+    - "Sudan ebolavirus"
+    - "SUDV"
+    - "Reston ebolavirus"
+    - "RESTV"
+    - "Marburg"
+    - "MARV"
+  restv:
+    - "Zaire ebolavirus"
+    - "EBOV"
+    - "Bundibugyo ebolavirus"
+    - "BDBV"
+    - "Sudan ebolavirus"
+    - "SUDV"
+    - "Tai Forest ebolavirus"
+    - "TAFV"
+    - "Marburg"
+    - "MARV"
+
+# Optional per-domain exclusion terms. A paper containing any of these terms is
+# dropped from that domain's results even if it matches a required/related term,
+# because these terms reliably indicate the paper is off-target for what the
+# domain's evidence_templates.yml fields ask for (e.g. animal-model-only studies
+# for the human "clinical" domain). These are NOT applied to the Europe PMC
+# query itself, only to local post-filtering in bin/literature_search.py.
+domain_excluded_terms:
+  clinical:
+    - "macaque"
+    - "macaques"
+    - "cynomolgus"
+    - "guinea pig"
+    - "guinea pigs"
+    - "non-human primate"
+    - "non-human primates"
+    - "nonhuman primate"
+    - "nonhuman primates"
+    - "mouse model"
+    - "mouse models"
+    - "murine model"
+    - "murine models"
+    - "IFNAR"
+    - "ferret model"
+    - "ferret models"
+  diagnostic:
+    - "post-traumatic stress"
+    - "posttraumatic stress"
+    - "anxiety"
+    - "stigma"
+
+# One OpenAlex query is generated per domain per species.
+# `required` terms are high-specificity and are used for local post-filtering:
+# a paper must contain at least one required domain term and at least one
+# species-specific (exact or broad) term to be kept. `related` terms boost the
+# relevance score but are not mandatory.
+domains:
+  seroprevalence:
+    name: "Seroprevalence and immunity"
+    required:
+      - "seroprevalence"
+      - "serosurvey"
+      - "antibody prevalence"
+    related:
+      - "seropositivity"
+
+  variant_phenotype:
+    name: "Phenotypic and functional impact of variants"
+    required:
+      - "mutation"
+      - "variant"
+      - "immune escape"
+      - "virulence"
+      - "antiviral resistance"
+    related:
+      - "genomic"
+      - "transmissibility"
+      - "GP"
+      - "NP"
+      - "VP24"
+      - "VP35"
+      - "VP40"
+
+  vaccine_therapeutic:
+    name: "Vaccine and therapeutic effectiveness"
+    required:
+      - "vaccine"
+      - "monoclonal antibody"
+      - "therapeutic"
+      - "antiviral"
+    related:
+      - "vaccination"
+      - "ring vaccination"
+      - "vaccine effectiveness"
+      - "vaccine efficacy"
+
+  diagnostic:
+    name: "Diagnostic test performance and primer mismatches"
+    required:
+      - "RT-PCR"
+      - "primer"
+      - "probe"
+      - "sensitivity"
+      - "specificity"
+      - "rapid diagnostic test"
+      - "RDT"
+      - "CRISPR"
+      - "diagnostic test"
+      - "diagnostic assay"
+      - "diagnostic accuracy"
+      - "point-of-care test"
+      - "limit of detection"
+    related:
+      - "mismatch"
+
+  transmission:
+    name: "Transmission dynamics"
+    required:
+      - "transmission"
+      - "R0"
+      - "serial interval"
+      - "generation time"
+      - "superspreading"
+      - "superspreader"
+      - "transmission route"
+    related: []
+
+  clinical:
+    name: "Clinical severity and risk groups"
+    required:
+      - "case fatality rate"
+      - "CFR"
+      - "hospitalization"
+      - "symptom"
+      - "clinical characteristics"
+      - "clinical presentation"
+      - "clinical outcome"
+      - "clinical severity"
+      - "clinical features"
+      - "disease severity"
+    related:
+      - "risk factor"
+
+  reservoir:
+    name: "Reservoir and spillover (One Health)"
+    required:
+      - "reservoir"
+      - "spillover"
+      - "bushmeat"
+      - "animal host"
+      - "zoonotic"
+      - "zoonosis"
+      - "bat"
+    related:
+      - "One Health"
+
+  intervention:
+    name: "Intervention and control measures"
+    required:
+      - "intervention"
+      - "contact tracing"
+      - "quarantine"
+      - "isolation"
+      - "infection prevention and control"
+      - "IPC"
+    related:
+      - "infection control"
+
+  epidemiological_context:
+    name: "Epidemiological context"
+    required:
+      - "outbreak"
+      - "attack rate"
+      - "epidemic"
+      - "seasonality"
+    related:
+      - "spatial"
+      - "temporal"
+      - "geographic"
+
+  genomic_surveillance:
+    name: "Genomic surveillance quality indicators"
+    required:
+      - "genomic surveillance"
+      - "lineage"
+      - "clade"
+      - "phylogenetic"
+      - "nextstrain"
+      - "sequencing"
+      - "reference panel"
+    related:
+      - "genomic"
+
+  policy:
+    name: "Policy and risk assessment"
+    required:
+      - "risk assessment"
+      - "travel advisory"
+      - "quarantine policy"
+      - "forecast"
+    related:
+      - "WHO"
+      - "CDC"
+      - "modeling"

@@ -8,3 +8,6 @@ testing*
 *.pyc
 null/
 .lineage/
+tools/
+database/hmmdb/
+.nf-metro-env/

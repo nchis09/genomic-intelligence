@@ -1,0 +1,10 @@
+name: pgirl_knowledge
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - postgresql
+  - psycopg2
+  - pyyaml
+  - pandas

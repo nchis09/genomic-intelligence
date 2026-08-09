@@ -1,0 +1,11 @@
+{
+  "fasta": "input/input_FASTA.fasta",
+  "metadata": "input/metadata.tsv",
+  "outdir": "results",
+  "nextclade_datasets": [
+    "nextstrain/orthoebolavirus/bdbv",
+    "nextstrain/orthoebolavirus/ebov",
+    "nextstrain/orthoebolavirus/sudv"
+  ],
+  "query_samples": null
+}

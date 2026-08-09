@@ -1,0 +1,10 @@
+name: pgirl_evidence
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pyyaml
+  - pandas
+  - pip
+  - pip:
+      - medspacy

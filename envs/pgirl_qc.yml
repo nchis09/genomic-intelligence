@@ -1,0 +1,8 @@
+name: pgirl_qc
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pandas
+  - pyyaml
+  - pandera>=0.20

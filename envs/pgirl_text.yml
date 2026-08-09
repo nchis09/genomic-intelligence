@@ -1,0 +1,8 @@
+name: pgirl_text
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pymupdf
+  - pdfplumber
+  - requests

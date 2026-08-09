@@ -1,0 +1,10 @@
+name: pgirl_asreview
+channels:
+  - conda-forge
+dependencies:
+  - r-base>=4.2
+  - r-jsonlite
+  - r-dplyr
+  - r-yaml
+  - python>=3.10
+  - pip
