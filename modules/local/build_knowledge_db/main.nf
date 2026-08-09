@@ -11,7 +11,7 @@ process BUILD_KNOWLEDGE_DB {
     conda "${projectDir}/envs/pgirl_knowledge.yml"
 
     input:
-    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary), path(bioinformatics_results), path(uniprotr_results), path(extractr_results), path(rbioapi_results), path(auspice_json), path(iqtree), path(query_data_files, stageAs: 'query_data/*'), path(hmm_files, stageAs: 'hmm/*'), val(evidence_qc_ready)
+    tuple val(meta), path(species_assignments), path(metadata_tsv), path(epi_raw_dir), path(epi_search_summary), path(bioinformatics_results), path(uniprotr_results), path(extractr_results), path(rbioapi_results), path(auspice_json), path(iqtree), path(query_data_files, stageAs: 'query_data/*'), path(hmm_files, stageAs: 'hmm/*'), val(evidence_qc_ready), path(schema_file, stageAs: 'knowledge_schema.sql'), path(views_file, stageAs: 'knowledge_views.sql')
     val(db_host)
     val(db_port)
 
@@ -22,6 +22,8 @@ process BUILD_KNOWLEDGE_DB {
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
     def args   = ["--outdir knowledge_warehouse", "--meta-id ${meta.id}", "--prefix ${prefix}"]
+    args << "--schema-path ${schema_file}"
+    args << "--views-path ${views_file}"
     if (meta.species) args << "--species ${meta.species}"
     if (!species_assignments.name.startsWith('NO_FILE')) args << "--species-assignments ${species_assignments}"
     if (!metadata_tsv.name.startsWith('NO_FILE'))          args << "--metadata-tsv ${metadata_tsv}"

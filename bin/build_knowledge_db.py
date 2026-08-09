@@ -193,6 +193,19 @@ def load_schema(conn, schema_path):
     conn.commit()
 
 
+def load_views(conn, views_path):
+    if not views_path.exists():
+        print(f"  SKIP: views file not found: {views_path}", file=sys.stderr)
+        return
+    with open(views_path) as f:
+        sql = f.read()
+    if not sql.strip():
+        return
+    with conn.cursor() as cur:
+        cur.execute(sql)
+    conn.commit()
+
+
 def create_run(conn, run_id):
     with conn.cursor() as cur:
         cur.execute(
@@ -1673,6 +1686,8 @@ def parse_args():
     parser.add_argument("--query-data-dir", help="Directory of EXTRACT_QUERY_PROTEINS outputs (discovery.tsv, accessions.txt, query_proteins.fasta, etc.)")
     parser.add_argument("--hmm-dir", help="Directory of HMM_ANNOTATE outputs (*_hmm_*.txt)")
     parser.add_argument("--evidence-qc-dir", help="Directory containing evidence_qc/<species>/<domain>/ output tree")
+    parser.add_argument("--schema-path", type=Path, default=Path(__file__).parent.parent / "database" / "knowledge_schema.sql", help="SQL schema file to load")
+    parser.add_argument("--views-path", type=Path, default=Path(__file__).parent.parent / "database" / "knowledge_views.sql", help="Analytical views SQL file to load")
     parser.add_argument("--db-host", help="Host of an already-running shared PostgreSQL instance (started by START_KNOWLEDGE_DB). When set, this script connects to it instead of managing its own temporary server, and skips the final dump/stop (owned by STOP_KNOWLEDGE_DB).")
     parser.add_argument("--db-port", type=int, help="Port of the shared PostgreSQL instance (required with --db-host)")
     return parser.parse_args()
@@ -1841,11 +1856,14 @@ def main():
             pg.create_db()
 
         with pg.connect() as conn:
-            schema_path = Path(__file__).parent.parent / "database" / "knowledge_schema.sql"
+            schema_path = Path(args.schema_path)
+            views_path = Path(args.views_path)
 
             def _load_schema_and_run():
                 print("Loading schema...", file=sys.stderr)
                 load_schema(conn, schema_path)
+                print("Loading analytical views...", file=sys.stderr)
+                load_views(conn, views_path)
                 print("Creating run record...", file=sys.stderr)
                 create_run(conn, args.meta_id)
 

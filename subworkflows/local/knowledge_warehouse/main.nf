@@ -25,14 +25,18 @@ include { BUILD_KNOWLEDGE_DB } from '../../../modules/local/build_knowledge_db/m
 
 workflow KNOWLEDGE_WAREHOUSE {
     take:
-    ch_warehousable // channel: [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm, db_host, db_port ]
+    ch_warehousable // channel: [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm, evidence_qc_ready, db_host, db_port ]
 
     main:
-    ch_build_input = ch_warehousable.map { meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm_files, evidence_qc_ready, _host, _port ->
-        [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm_files, evidence_qc_ready ]
+    ch_schema = Channel.fromPath("${projectDir}/database/knowledge_schema.sql").first()
+    ch_views  = Channel.fromPath("${projectDir}/database/knowledge_views.sql").first()
+    ch_warehousable = ch_warehousable.combine(ch_schema).combine(ch_views)
+
+    ch_build_input = ch_warehousable.map { meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm_files, evidence_qc_ready, _host, _port, schema, views ->
+        [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm_files, evidence_qc_ready, schema, views ]
     }
-    ch_db_host = ch_warehousable.map { meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm_files, evidence_qc_ready, host, _port -> host }
-    ch_db_port = ch_warehousable.map { meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm_files, evidence_qc_ready, _host, port -> port }
+    ch_db_host = ch_warehousable.map { meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm_files, evidence_qc_ready, host, port, schema, views -> host }
+    ch_db_port = ch_warehousable.map { meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice_json, iqtree, query_data, hmm_files, evidence_qc_ready, _host, port, schema, views -> port }
 
     BUILD_KNOWLEDGE_DB(ch_build_input, ch_db_host, ch_db_port)
 

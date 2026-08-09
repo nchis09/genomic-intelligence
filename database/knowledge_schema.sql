@@ -474,3 +474,64 @@ CREATE INDEX IF NOT EXISTS idx_literature_papers_pmid ON literature_papers(pmid)
 CREATE INDEX IF NOT EXISTS idx_literature_papers_domain_id ON literature_papers(domain_id);
 CREATE INDEX IF NOT EXISTS idx_literature_extractions_paper_id ON literature_extractions(paper_id);
 CREATE INDEX IF NOT EXISTS idx_literature_extractions_field ON literature_extractions(field);
+
+-- Additional indexes for cross-table public-health analytics and BI tools
+
+-- Run-level and lookup indexes
+CREATE INDEX IF NOT EXISTS idx_literature_papers_run_id ON literature_papers(run_id);
+CREATE INDEX IF NOT EXISTS idx_literature_papers_status ON literature_papers(status);
+CREATE INDEX IF NOT EXISTS idx_literature_papers_qc_score ON literature_papers(qc_score);
+CREATE INDEX IF NOT EXISTS idx_literature_papers_year ON literature_papers(year);
+CREATE INDEX IF NOT EXISTS idx_epi_datasets_run_id ON epidemiological_datasets(run_id);
+CREATE INDEX IF NOT EXISTS idx_outbreaks_run_id ON outbreaks(run_id);
+CREATE INDEX IF NOT EXISTS idx_phylogenetic_trees_run_id ON phylogenetic_trees(run_id);
+CREATE INDEX IF NOT EXISTS idx_phylogenetic_trees_species ON phylogenetic_trees(species);
+CREATE INDEX IF NOT EXISTS idx_reference_genomes_pathogen_species ON reference_genomes(pathogen, species);
+
+-- Foreign-key joins
+CREATE INDEX IF NOT EXISTS idx_genes_ref_id ON genes(ref_id);
+CREATE INDEX IF NOT EXISTS idx_genes_gene_name ON genes(gene_name);
+CREATE INDEX IF NOT EXISTS idx_mutations_gene_id ON mutations(gene_id);
+CREATE INDEX IF NOT EXISTS idx_tree_tips_tree_id ON tree_tips(tree_id);
+CREATE INDEX IF NOT EXISTS idx_protein_functions_protein_id ON protein_functions(protein_id);
+CREATE INDEX IF NOT EXISTS idx_protein_domains_protein_id ON protein_domains(protein_id);
+CREATE INDEX IF NOT EXISTS idx_go_terms_protein_id ON go_terms(protein_id);
+CREATE INDEX IF NOT EXISTS idx_biological_pathways_protein_id ON biological_pathways(protein_id);
+CREATE INDEX IF NOT EXISTS idx_protein_interactions_a ON protein_interactions(protein_a_id);
+CREATE INDEX IF NOT EXISTS idx_protein_interactions_b ON protein_interactions(protein_b_id);
+CREATE INDEX IF NOT EXISTS idx_mutation_phenotypes_mutation_id ON mutation_phenotypes(mutation_id);
+CREATE INDEX IF NOT EXISTS idx_structural_features_protein_id ON structural_features(protein_id);
+CREATE INDEX IF NOT EXISTS idx_surveillance_records_sample_id ON surveillance_records(sample_id);
+CREATE INDEX IF NOT EXISTS idx_surveillance_records_location_id ON surveillance_records(location_id);
+CREATE INDEX IF NOT EXISTS idx_surveillance_records_record_date ON surveillance_records(record_date);
+CREATE INDEX IF NOT EXISTS idx_transmission_events_sample_id ON transmission_events(sample_id);
+CREATE INDEX IF NOT EXISTS idx_transmission_events_related_sample_id ON transmission_events(related_sample_id);
+CREATE INDEX IF NOT EXISTS idx_transmission_events_location_id ON transmission_events(location_id);
+
+-- M:N relationship reverse-lookup indexes
+CREATE INDEX IF NOT EXISTS idx_sample_mutation_mutation_id ON sample_mutation(mutation_id);
+CREATE INDEX IF NOT EXISTS idx_protein_mutation_mutation_id ON protein_mutation(mutation_id);
+CREATE INDEX IF NOT EXISTS idx_protein_annotation_annotation ON protein_annotation(annotation_id, annotation_table);
+CREATE INDEX IF NOT EXISTS idx_protein_annotation_table ON protein_annotation(annotation_table);
+CREATE INDEX IF NOT EXISTS idx_sample_outbreak_outbreak_id ON sample_outbreak(outbreak_id);
+CREATE INDEX IF NOT EXISTS idx_sample_geo_location_location_id ON sample_geo_location(location_id);
+CREATE INDEX IF NOT EXISTS idx_mutation_phenotype_evidence_source_id ON mutation_phenotype_evidence(source_id);
+
+-- Composite analytical indexes
+CREATE INDEX IF NOT EXISTS idx_literature_papers_run_species_status ON literature_papers(run_id, species, domain, status);
+CREATE INDEX IF NOT EXISTS idx_literature_papers_status_qc_score ON literature_papers(status, qc_score);
+CREATE INDEX IF NOT EXISTS idx_samples_run_species_pathogen ON samples(run_id, species, pathogen);
+CREATE INDEX IF NOT EXISTS idx_epi_records_dataset_date_country ON epidemiological_records(dataset_id, record_date, country);
+CREATE INDEX IF NOT EXISTS idx_tree_tips_country_date ON tree_tips(country, tip_date);
+CREATE INDEX IF NOT EXISTS idx_geo_admin2 ON geographic_locations(admin2);
+CREATE INDEX IF NOT EXISTS idx_geo_locality ON geographic_locations(locality);
+
+-- GIN indexes for JSONB-valued columns
+CREATE INDEX IF NOT EXISTS idx_literature_extractions_value_gin ON literature_extractions USING GIN (value);
+CREATE INDEX IF NOT EXISTS idx_literature_papers_authors_gin ON literature_papers USING GIN (authors);
+CREATE INDEX IF NOT EXISTS idx_literature_papers_keywords_gin ON literature_papers USING GIN (keywords);
+CREATE INDEX IF NOT EXISTS idx_literature_papers_is_oa_gin ON literature_papers USING GIN (is_oa);
+CREATE INDEX IF NOT EXISTS idx_literature_domains_expected_fields_gin ON literature_domains USING GIN (expected_fields);
+CREATE INDEX IF NOT EXISTS idx_literature_domains_field_coverage_gin ON literature_domains USING GIN (field_coverage);
+CREATE INDEX IF NOT EXISTS idx_literature_domains_confidence_distribution_gin ON literature_domains USING GIN (confidence_distribution);
+CREATE INDEX IF NOT EXISTS idx_epi_records_raw_data_gin ON epidemiological_records USING GIN (raw_data);
