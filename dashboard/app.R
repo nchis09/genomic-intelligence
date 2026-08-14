@@ -95,6 +95,7 @@ brand_css <- "
     padding: 8px 4px !important;
     text-align: center;
     white-space: normal !important;
+    cursor: pointer;
   }
   .brand-image {
     margin-right: 0 !important;
@@ -168,14 +169,18 @@ ui <- bs4DashPage(
   ),
   sidebar = bs4DashSidebar(
     status = "primary",
-    div(
-      style = "padding: 10px;",
-      textInput("outdir", "Pipeline --outdir", value = "../results")
-    ),
     sidebarMenuOutput("sidebarmenu")
   ),
   body = bs4DashBody(
-    tags$head(tags$style(HTML(brand_css))),
+    tags$head(
+      tags$style(HTML(brand_css)),
+      tags$script(HTML(
+        "$(document).on('click', '.brand-link', function(e) {
+           e.preventDefault();
+           Shiny.setInputValue('brand_home_click', 'click', {priority: 'event'});
+         });"
+      ))
+    ),
     uiOutput("body_ui")
   ),
   footer = bs4DashFooter(
@@ -190,7 +195,7 @@ ui <- bs4DashPage(
 # -----------------------------------------------------------------------------
 server <- function(input, output, session) {
 
-  outdir_r <- reactive({ input$outdir })
+  outdir_r <- reactive({ "../../results" })
   species_rv <- reactive({ list_species(outdir_r()) })
 
   # -- Sidebar: Intelligence Overview + Biological Threat (species submenu,
@@ -244,7 +249,7 @@ server <- function(input, output, session) {
             style = "text-align: center; padding: 40px 0; color: #888;",
             icon("dna", class = "fa-3x"),
             h4("No species found", style = "margin-top: 16px;"),
-            p("No species were found under the configured --outdir. Run the pipeline, or check the path.")
+            p("No species were found in the pipeline output. Run the pipeline, or check that results/ exists.")
           )
         )
       ))
@@ -300,6 +305,15 @@ server <- function(input, output, session) {
 
   observeEvent(input$overview_generate_brief, {
     updateTabItems(session, "sidebarmenu", selected = roadmap_tab_name("intelligence_brief"))
+  })
+
+  observeEvent(input$brand_home_click, {
+    updateTabItems(session, "sidebarmenu", selected = "home")
+  })
+
+  observeEvent(input$overview_live_tile_click, {
+    sp <- current_species()
+    if (!is.null(sp)) updateTabItems(session, "sidebarmenu", selected = paste0("pi_", sp))
   })
 
   observeEvent(input$overview_nav_click, {

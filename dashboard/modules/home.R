@@ -48,12 +48,9 @@ overview_ui <- function() {
                      icon = icon("file-lines"), class = "btn-outline-secondary btn-block")
       )
     ),
-    h5("Roadmap", style = "margin-top: 28px; color: #6c757d;"),
-    p(
-      style = "color: #adb5bd; font-size: 0.8rem; margin-top: -6px;",
-      "These intelligence objectives don't have a wired data source yet."
-    ),
+    h5("Intelligence Objectives", style = "margin-top: 28px; color: #6c757d; font-weight: bold;"),
     fluidRow(
+      column(width = 2, style = "margin-bottom: 10px;", live_tile_ui()),
       lapply(ROADMAP_OBJECTIVES, function(obj) {
         column(width = 2, style = "margin-bottom: 10px;", roadmap_tile_ui(obj))
       })
@@ -82,7 +79,7 @@ overview_header_ui <- function(species) {
 # facts are surfaced here yet.
 overview_body_ui <- function(has_species) {
   if (!has_species) {
-    return(p("No Biological Threat data found under the configured --outdir yet."))
+    return(p("No Biological Threat data found in the pipeline output yet."))
   }
   tags$ul(tags$li("In planning."))
 }

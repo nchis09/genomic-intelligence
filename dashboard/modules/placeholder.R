@@ -94,6 +94,26 @@ intelligence_brief_roadmap_ui <- function(objective) {
   )
 }
 
+# The one "Live" tile in the Intelligence Overview's roadmap strip --
+# Biological Threat, the only objective with a wired data source today.
+# Styled distinctly (institutional blue, "Live" badge) from the "Planned"
+# tiles. Clicking it jumps to the current species' Biological Threat tab
+# (handled server-side via observeEvent(input$overview_live_tile_click, ...)
+# in app.R, mirroring the "Explore Evidence" button).
+live_tile_ui <- function() {
+  div(
+    style = paste(
+      "cursor: pointer; border: 1px solid #4A6C8C; border-radius: 6px;",
+      "padding: 10px 12px; text-align: center; color: #4A6C8C;",
+      "background: #fff; height: 100%;"
+    ),
+    onclick = "Shiny.setInputValue('overview_live_tile_click', 'click', {priority: 'event'});",
+    icon("dna"),
+    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Biological Threat"),
+    span(class = "badge badge-primary", style = "font-size: 0.65rem; margin-top: 2px;", "Live")
+  )
+}
+
 # Placeholder skeleton shown inside the preview/edit modal -- editable, but
 # not backed by real data yet.
 intelligence_brief_preview_modal <- function() {

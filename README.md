@@ -16,11 +16,11 @@
 [![Launch on Seqera Platform](https://img.shields.io/badge/Launch%20%F0%9F%9A%80-Seqera%20Platform-%234256e7)](https://cloud.seqera.io/launch?pipeline=https://github.com/pgirl/genomic-intelligence)
 
 ````text
-  ____  ___  _
- / ___||_ _|| |
-| |  _  | | | |
-| |_| | | | | |___
- \____||___||_____|
+  ____  ___  _____
+ / ___||_ _||  ___|
+| |  _  | | | |_
+| |_| | | | |  _|
+ \____||___||_|
 
 
   o===o       o===o       o===o       o===o
