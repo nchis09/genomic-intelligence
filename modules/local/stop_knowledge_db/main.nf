@@ -9,6 +9,7 @@
 
 process STOP_KNOWLEDGE_DB {
     label 'process_single'
+    cache false
 
     conda "${projectDir}/envs/pgirl_knowledge.yml"
 
@@ -21,7 +22,7 @@ process STOP_KNOWLEDGE_DB {
     path("*_genomic_intelligence.sql"), emit: dump
 
     script:
-    def data_dir = "${params.outdir}/knowledge_warehouse/_shared_pg_data"
+    def data_dir = "${params.kw_data_dir}"
     """
     export PATH="\${CONDA_PREFIX:+\$CONDA_PREFIX/bin:}\$PATH"
     python3 ${projectDir}/bin/stop_shared_db.py \\

@@ -165,7 +165,11 @@ process SPECIES_ASSIGN {
     sample_assignments = {}  # { sample: (pathogen, species, score) }
     for sample, (score, best_tsv) in sample_best.items():
         if best_tsv and best_tsv in tsv_to_species:
-            pathogen, species = tsv_to_species[best_tsv]
+            pathogen, _ = tsv_to_species[best_tsv]
+            # Use the short leaf name so downstream processes and DB keys agree
+            leaf = [l for l in leaf_to_info if best_tsv.lower().find(l.lower()) != -1]
+            leaf = leaf[0] if leaf else "unknown"
+            species = leaf
             sample_assignments[sample] = (pathogen, species, score)
         else:
             sample_assignments[sample] = ("unknown", "unknown", score)

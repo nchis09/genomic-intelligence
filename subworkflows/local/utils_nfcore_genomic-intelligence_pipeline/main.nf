@@ -282,7 +282,7 @@ def renderNfMetroDiagram(outdir) {
               exit 0
             fi
           fi
-          if "\$NF_METRO_BIN" render '${metro_mmd}' --from-nextflow -o '${metro_html}' --title 'pgirl/genomic-intelligence' --section-x-gap 40 --section-y-gap 40; then
+          if "\$NF_METRO_BIN" render '${metro_mmd}' --from-nextflow -o '${metro_html}' --title 'pgirl/genomic-intelligence' --section-x-gap 80 --section-y-gap 120 --track-gap 3 --y-spacing 80; then
             echo "nf-metro: pipeline metro-map diagram written to ${metro_html}"
           else
             echo "nf-metro: render failed"

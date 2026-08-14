@@ -96,6 +96,33 @@ workflow {
         params.monochrome_logs,
         PGIRL_GENOMIC_INTELLIGENCE.out.multiqc_report
     )
+
+    // Safety-net stop/dump for the shared knowledge-warehouse PostgreSQL
+    // instance in case the pipeline failed or was interrupted before the
+    // in-DAG EXPORT_KNOWLEDGE_DB -> STOP_KNOWLEDGE_DB steps (see
+    // subworkflows/local/knowledge_warehouse/main.nf) could run. On a normal
+    // successful completion the server is already stopped by then, so this
+    // checks pg_ctl status first and exits quietly instead of logging a
+    // false-failure warning.
+    workflow.onComplete = {
+        if (params.skip_knowledge_warehouse) {
+            return
+        }
+        def data_dir = file("${params.kw_data_dir}")
+        if (!data_dir.exists()) {
+            return
+        }
+        def dump_dir = file("${params.outdir}/knowledge_warehouse")
+        dump_dir.mkdirs()
+        def cmd = "set -e; for d in ${projectDir}/work/conda/env-*/; do if [ -f \"\${d}bin/pg_ctl\" ]; then export PATH=\"\${d}bin:\$PATH\"; if ! pg_ctl -D \"${data_dir}\" status >/dev/null 2>&1; then exit 0; fi; pg_dump -h ${params.kw_db_host} -p ${params.kw_db_port} -U postgres -f \"${dump_dir}/run_genomic_intelligence.sql\" genomic_intelligence; pg_ctl -D \"${data_dir}\" -m fast stop || true; break; fi; done"
+        def proc = ["/bin/bash", "-c", cmd.toString()].execute()
+        proc.waitFor()
+        if (proc.exitValue() != 0) {
+            log.warn "Knowledge warehouse safety-net stop hook failed: ${proc.err.text}"
+        } else {
+            log.info "Knowledge warehouse safety-net check complete."
+        }
+    }
 }
 
 /*

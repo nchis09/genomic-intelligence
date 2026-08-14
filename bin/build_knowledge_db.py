@@ -54,18 +54,17 @@ def run_cmd(cmd, check=True, env=None, **kwargs):
 
 
 def find_executable(name):
+    # Prefer the active conda environment so we don't accidentally pick a
+    # system or Homebrew psql/pg_ctl that is incompatible with the server
+    # we just started from the pipeline's own conda packages.
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidate = os.path.join(conda_prefix, "bin", name)
+        if os.path.isfile(candidate):
+            return candidate
     exe = shutil.which(name)
     if exe:
         return exe
-    conda_prefix = os.environ.get("CONDA_PREFIX")
-    if conda_prefix:
-        candidates = [
-            os.path.join(conda_prefix, "bin", name),
-            os.path.join(conda_prefix, "libexec", name),
-        ]
-        for c in candidates:
-            if os.path.isfile(c):
-                return c
     raise FileNotFoundError(f"Required PostgreSQL binary not found: {name}")
 
 
@@ -107,15 +106,23 @@ class TemporaryPostgres:
         ], check=True)
 
     def start(self):
-        """Start the server. No-op if it's already accepting connections
-        (safe to call from multiple concurrent tasks against a shared
-        data dir, though only one should ever actually win the race)."""
-        if self.is_running():
-            return
+        """Start the server. If the port is occupied by a different
+        (stale) postgres, kill it. If it's our own postgres, just reuse it."""
         pg_ctl = find_executable("pg_ctl")
+        if self.is_running():
+            status = run_cmd([
+                pg_ctl, "status", "-D", str(self.data_dir)
+            ], check=False, capture_output=True, text=True)
+            if status.returncode == 0 and "is running" in status.stdout:
+                return
+            # Something else is holding the port; kill it.
+            self._kill_stale_listener()
+            # Make sure our own data dir is not registered as running.
+            run_cmd([pg_ctl, "stop", "-D", str(self.data_dir), "-m", "fast"], check=False)
         options = f"-p {self.port} -h {self.host} -k /tmp"
         run_cmd([
             pg_ctl,
+            "-w",  # wait for the server to start (or fail)
             "start",
             "-D", str(self.data_dir),
             "-l", str(self.log_file),
@@ -123,11 +130,32 @@ class TemporaryPostgres:
         ], check=True)
         self._wait_for_server()
 
+    def _kill_stale_listener(self):
+        """Kill any process currently listening on our TCP port."""
+        try:
+            result = run_cmd(["lsof", "-ti", f"TCP:{self.port}"],
+                             check=False, capture_output=True, text=True)
+        except FileNotFoundError:
+            return
+        pids = [p for p in result.stdout.strip().splitlines() if p.isdigit()]
+        for pid in pids:
+            run_cmd(["kill", "-9", pid], check=False)
+
     def _wait_for_server(self, timeout=60):
+        """Wait for the server to accept SQL connections, not just a TCP socket."""
+        psql = find_executable("psql")
+        env = {"PGUSER": self.superuser}
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.is_running():
-                return
+                try:
+                    run_cmd([
+                        psql, "-h", self.host, "-p", str(self.port), "-U", self.superuser,
+                        "-d", "template1", "-tAc", "SELECT 1",
+                    ], check=True, env=env, capture_output=True, text=True, timeout=5)
+                    return
+                except subprocess.SubprocessError:
+                    pass
             time.sleep(0.5)
         raise RuntimeError("PostgreSQL server did not become ready within timeout")
 
@@ -139,12 +167,20 @@ class TemporaryPostgres:
         """Create the warehouse database if it doesn't already exist."""
         env = {"PGUSER": self.superuser}
         psql = find_executable("psql")
-        check = run_cmd([
-            psql, "-h", self.host, "-p", str(self.port), "-U", self.superuser,
-            "-tAc", f"SELECT 1 FROM pg_database WHERE datname = '{self.db_name}'",
-        ], check=True, env=env, capture_output=True, text=True)
-        if check.stdout.strip() == "1":
-            return
+        for _ in range(20):
+            try:
+                check = run_cmd([
+                    psql, "-h", self.host, "-p", str(self.port), "-U", self.superuser,
+                    "-d", "template1",
+                    "-tAc", f"SELECT 1 FROM pg_database WHERE datname = '{self.db_name}'",
+                ], check=True, env=env, capture_output=True, text=True)
+                if check.stdout.strip() == "1":
+                    return
+                break
+            except subprocess.CalledProcessError:
+                time.sleep(0.5)
+        else:
+            raise RuntimeError("PostgreSQL server did not accept SQL before create_db")
         createdb = find_executable("createdb")
         run_cmd([
             createdb,
@@ -535,7 +571,7 @@ def load_reference_genomes_and_genes(conn, run_id, results_dir):
 # Samples
 # ---------------------------------------------------------------------------
 
-def load_samples(conn, run_id, results_dir, species_assignments=None, metadata_tsv=None):
+def load_samples(conn, run_id, results_dir, species_assignments=None, metadata_tsv=None, species=None, species_screening_only=False):
     results_dir = Path(results_dir)
     if species_assignments:
         species_assignments = Path(species_assignments)
@@ -555,16 +591,20 @@ def load_samples(conn, run_id, results_dir, species_assignments=None, metadata_t
                 continue
             cur.execute(
                 """
-                INSERT INTO samples (run_id, sample_name, pathogen, species, qc_score, best_dataset_file)
+                INSERT INTO samples (run_id, sample_name, pathogen, species, is_query, best_dataset_file)
                 VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (run_id, sample_name) DO NOTHING
+                ON CONFLICT (run_id, sample_name) DO UPDATE
+                SET pathogen = EXCLUDED.pathogen,
+                    species = EXCLUDED.species,
+                    is_query = EXCLUDED.is_query,
+                    best_dataset_file = EXCLUDED.best_dataset_file
                 """,
                 (
                     run_id,
                     sample,
                     normalize_text(row.get("pathogen")),
                     normalize_text(row.get("species")),
-                    parse_float(row.get("qc_score")),
+                    True,
                     normalize_text(row.get("best_dataset_file")),
                 ),
             )
@@ -572,22 +612,22 @@ def load_samples(conn, run_id, results_dir, species_assignments=None, metadata_t
     print(f"  Loaded {len(rows)} samples from species assignments", file=sys.stderr)
 
     # Update from input/per-species metadata
-    if metadata_tsv:
-        _update_samples_from_metadata(conn, run_id, metadata_tsv)
-    else:
-        # Look for metadata.tsv sibling of results or under classification
-        candidates = [
-            results_dir.parent / "input" / "metadata.tsv",
-            results_dir / "input" / "metadata.tsv",
-        ]
-        for cand in candidates:
-            if cand.exists():
-                _update_samples_from_metadata(conn, run_id, cand)
-                break
+    if not species_screening_only:
+        if metadata_tsv:
+            _update_samples_from_metadata(conn, run_id, metadata_tsv)
+        else:
+            # Look for metadata.tsv sibling of results or under classification
+            candidates = [
+                results_dir.parent / "input" / "metadata.tsv",
+                results_dir / "input" / "metadata.tsv",
+            ]
+            for cand in candidates:
+                if cand.exists():
+                    _update_samples_from_metadata(conn, run_id, cand)
+                    break
 
-    # Update from metadata_extended.tsv and Nextclade outputs
-    _update_samples_from_metadata_extended(conn, run_id, results_dir)
-    _update_samples_from_nextclade(conn, run_id, results_dir)
+        _update_samples_from_metadata_extended(conn, run_id, results_dir)
+    _update_samples_from_nextclade(conn, run_id, results_dir, species=species)
 
 
 def _update_samples_from_metadata(conn, run_id, metadata_path):
@@ -681,49 +721,274 @@ def _infer_species_from_path(path):
     return None
 
 
-def _update_samples_from_nextclade(conn, run_id, results_dir):
-    files = sorted((results_dir / "nextclade" / "results").glob("*.tsv")) if (results_dir / "nextclade" / "results").exists() else []
-    if not files:
-        files = sorted(results_dir.rglob("*.tsv"))
+def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
+    results_dir = Path(results_dir)
+    species_assignments = results_dir / "classification" / "species_assignments.tsv"
+    if not species_assignments.exists():
+        print(f"  SKIP: species assignments not found: {species_assignments}", file=sys.stderr)
+        return
+
+    assignments = read_tsv_or_csv(species_assignments)
+    nextclade_dir = results_dir / "nextclade" / "results"
+    if not nextclade_dir.exists():
+        print(f"  SKIP: nextclade results directory not found: {nextclade_dir}", file=sys.stderr)
+        return
+
+    species_filter = normalize_text(species)
     processed = 0
+    processed_species = set()
     with conn.cursor() as cur:
-        for path in files:
-            if path.name.endswith(("_tip_metadata.tsv", "_node_metadata.tsv", "_mutation_matrix.tsv", "_mutation_legend.tsv", "_protein_burden.tsv")):
+        cur.execute("SELECT sample_id, sample_name FROM samples WHERE run_id = %s", (run_id,))
+        sample_id_by_name = {normalize_text(r[1]): r[0] for r in cur.fetchall()}
+        for assignment in assignments:
+            sample_name = normalize_text(assignment.get("sample"))
+            row_species = normalize_text(assignment.get("species"))
+            best_dataset_file = normalize_text(assignment.get("best_dataset_file"))
+            if not sample_name or not row_species or not best_dataset_file:
                 continue
-            file_species = _infer_species_from_path(path)
-            rows = read_tsv_or_csv(path)
-            for row in rows:
-                sample = normalize_text(row.get("seqName"))
-                if not sample:
-                    continue
-                where_clause = "run_id = %s AND sample_name = %s"
-                params = [run_id, sample]
-                if file_species:
-                    where_clause += " AND (species = %s OR species IS NULL)"
-                    params.append(file_species)
+            if species_filter and row_species != species_filter:
+                continue
+
+            tsv_path = nextclade_dir / best_dataset_file
+            if not tsv_path.exists():
+                print(f"  WARNING: best-match Nextclade TSV not found: {tsv_path}", file=sys.stderr)
+                continue
+
+            rows = read_tsv_or_csv(tsv_path)
+            row = None
+            for r in rows:
+                if normalize_text(r.get("seqName")) == sample_name:
+                    row = r
+                    break
+            if not row:
+                print(f"  WARNING: sample {sample_name} not found in {tsv_path}", file=sys.stderr)
+                continue
+
+            pathogen = normalize_text(assignment.get("pathogen")) or "orthoebolavirus"
+            clade = normalize_text(row.get("clade"))
+            outbreak = normalize_text(row.get("outbreak"))
+            nextclade_qc = normalize_text(row.get("qc.overallStatus"))
+            coverage = parse_float(row.get("coverage"))
+            alignment_score = parse_float(row.get("alignmentScore"))
+            divergence = parse_float(row.get("divergence"))
+            qc_score = parse_float(row.get("qc.overallScore"))
+            nuc_substitutions = parse_int(row.get("totalSubstitutions"))
+            aa_substitutions = parse_int(row.get("totalAminoacidSubstitutions"))
+
+            # Nextclade Ebola outputs are missing 'divergence' and 'coverage';
+            # derive them from the same TSV row.
+            alignment_start = parse_int(row.get("alignmentStart")) or 1
+            alignment_end = parse_int(row.get("alignmentEnd"))
+            genome_length = parse_int(row.get("genomeLength"))
+            if alignment_end and alignment_start:
+                alignment_length = alignment_end - alignment_start + 1
+            else:
+                alignment_length = genome_length or None
+
+            if divergence is None and nuc_substitutions is not None and alignment_length and alignment_length > 0:
+                divergence = nuc_substitutions / alignment_length
+
+            if coverage is None and alignment_length and alignment_length > 0:
+                total_missing = parse_int(row.get("totalMissing")) or 0
+                total_nonacgtn = parse_int(row.get("totalNonACGTNs")) or 0
+                coverage = (alignment_length - total_missing - total_nonacgtn) / alignment_length
+
+            # Update the sample with Nextclade data and raw row JSON
+            cur.execute(
+                """
+                UPDATE samples
+                SET clade = COALESCE(%s, clade),
+                    outbreak = COALESCE(%s, outbreak),
+                    nextclade_qc = COALESCE(%s, nextclade_qc),
+                    qc_score = COALESCE(%s, qc_score),
+                    genome_coverage = COALESCE(%s, genome_coverage),
+                    nuc_substitution_count = COALESCE(%s, nuc_substitution_count),
+                    aa_mutation_count = COALESCE(%s, aa_mutation_count),
+                    alignment_score = COALESCE(%s, alignment_score),
+                    divergence = COALESCE(%s, divergence),
+                    nextclade_json = %s::jsonb
+                WHERE run_id = %s AND sample_name = %s
+                """,
+                (
+                    clade,
+                    outbreak,
+                    nextclade_qc,
+                    qc_score,
+                    coverage,
+                    nuc_substitutions,
+                    aa_substitutions,
+                    alignment_score,
+                    divergence,
+                    json.dumps(row),
+                    run_id,
+                    sample_name,
+                ),
+            )
+
+            # Get sample_id for linking
+            cur.execute(
+                "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name = %s",
+                (run_id, sample_name),
+            )
+            sample_id = cur.fetchone()
+            if not sample_id:
+                continue
+            sample_id = sample_id[0]
+
+            # Upsert clade and link
+            if clade:
                 cur.execute(
-                    f"""
-                    UPDATE samples
-                    SET clade = COALESCE(%s, clade),
-                        outbreak = COALESCE(%s, outbreak),
-                        nextclade_qc = COALESCE(%s, nextclade_qc),
-                        genome_coverage = COALESCE(%s, genome_coverage),
-                        nuc_substitution_count = COALESCE(%s, nuc_substitution_count),
-                        aa_mutation_count = COALESCE(%s, aa_mutation_count)
-                    WHERE {where_clause}
+                    """
+                    INSERT INTO clades (run_id, pathogen, species, clade_name)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (run_id, species, clade_name) DO UPDATE
+                    SET pathogen = EXCLUDED.pathogen
+                    RETURNING clade_id
                     """,
-                    [
-                        normalize_text(row.get("clade")),
-                        normalize_text(row.get("outbreak")),
-                        normalize_text(row.get("qc.overallStatus")),
-                        parse_float(row.get("coverage")),
-                        parse_int(row.get("totalSubstitutions")),
-                        parse_int(row.get("totalAminoacidSubstitutions")),
-                    ] + params,
+                    (run_id, pathogen, species, clade),
                 )
-                processed += 1
+                clade_id = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    INSERT INTO sample_clade (sample_id, clade_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (sample_id, clade_id),
+                )
+
+            # Upsert outbreak and link
+            if outbreak:
+                cur.execute(
+                    """
+                    INSERT INTO outbreaks (run_id, pathogen, species, name)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    RETURNING outbreak_id
+                    """,
+                    (run_id, pathogen, species, outbreak),
+                )
+                outbreak_id = cur.fetchone()
+                if not outbreak_id:
+                    cur.execute(
+                        "SELECT outbreak_id FROM outbreaks WHERE run_id = %s AND species = %s AND name = %s",
+                        (run_id, species, outbreak),
+                    )
+                    outbreak_id = cur.fetchone()
+                if outbreak_id:
+                    cur.execute(
+                        """
+                        INSERT INTO sample_outbreak (sample_id, outbreak_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (sample_id, outbreak_id[0]),
+                    )
+
+            # Upsert the Nextclade screening tree and all its tips once per species
+            newick_path = tsv_path.with_suffix(".nwk")
+            aligned_path = tsv_path.with_suffix(".aligned.fasta")
+
+            if row_species not in processed_species:
+                processed_species.add(row_species)
+
+                # Wipe any previous Nextclade tree/tips for this run/species to avoid duplicates
+                cur.execute(
+                    """
+                    DELETE FROM tree_tips
+                    WHERE tree_id IN (
+                        SELECT tree_id FROM phylogenetic_trees
+                        WHERE run_id = %s AND species = %s AND tree_method = %s
+                    )
+                    """,
+                    (run_id, row_species, "nextclade"),
+                )
+                cur.execute(
+                    """
+                    DELETE FROM phylogenetic_trees
+                    WHERE run_id = %s AND species = %s AND tree_method = %s
+                    """,
+                    (run_id, row_species, "nextclade"),
+                )
+
+                # Prefer the full .auspice.json tree (it has all reference tips and cleaned names).
+                # Use the .nwk only as a fallback because its labels are raw and may not match tree_tips.
+                newick = None
+                tree_source = None
+                auspice_path = tsv_path.with_suffix(".auspice.json")
+                auspice_tree = None
+                if auspice_path.exists():
+                    newick, auspice_tree = _newick_from_auspice(auspice_path)
+                    tree_source = str(auspice_path)
+                if not newick and newick_path.exists():
+                    newick = newick_path.read_text().strip() or None
+                    tree_source = str(newick_path)
+
+                tree_id = None
+                if newick:
+                    cur.execute(
+                        """
+                        INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_method, tree_source, newick)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING tree_id
+                        """,
+                        (run_id, pathogen, row_species, "nextclade", tree_source, newick),
+                    )
+                    tree_id = cur.fetchone()[0]
+
+                if auspice_tree and tree_id:
+                    for tip in _collect_tips(auspice_tree):
+                        raw_name = tip.get("name")
+                        label = _clean_newick_name(raw_name)
+                        if not label:
+                            continue
+                        node_attrs = tip.get("node_attrs", {})
+                        tip_sample_id = sample_id_by_name.get(normalize_text(raw_name))
+                        is_query = bool(tip_sample_id)
+                        tip_clade = normalize_text(_get_node_value(node_attrs, "clade"))
+                        tip_outbreak = normalize_text(_get_node_value(node_attrs, "outbreak"))
+                        tip_div = parse_float(_get_node_value(node_attrs, "div"))
+                        tip_cov = parse_float(_get_node_value(node_attrs, "genome_coverage"))
+                        tip_qc = normalize_text(_get_node_value(node_attrs, "nextclade_qc"))
+                        tip_nuc = parse_int(_get_node_value(node_attrs, "nuc_mutation_count"))
+                        tip_aa = parse_int(_get_node_value(node_attrs, "aa_mutation_count"))
+
+                        # For the query tip, use the values from the Nextclade TSV row
+                        if is_query and tip_sample_id == sample_id:
+                            tip_clade = clade if clade is not None else tip_clade
+                            tip_outbreak = outbreak if outbreak is not None else tip_outbreak
+                            tip_div = divergence if divergence is not None else tip_div
+                            tip_cov = coverage if coverage is not None else tip_cov
+                            tip_qc = nextclade_qc if nextclade_qc is not None else tip_qc
+                            tip_nuc = nuc_substitutions if nuc_substitutions is not None else tip_nuc
+                            tip_aa = aa_substitutions if aa_substitutions is not None else tip_aa
+
+                        cur.execute(
+                            """
+                            INSERT INTO tree_tips (tree_id, sample_id, label, is_query, clade, outbreak, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (tree_id, tip_sample_id, label, is_query, tip_clade, tip_outbreak, tip_div, tip_cov, tip_qc, tip_nuc, tip_aa),
+                        )
+                elif tree_id:
+                    # No Auspice tree available: at least record the query tip
+                    cur.execute(
+                        """
+                        INSERT INTO tree_tips (tree_id, sample_id, label, is_query, clade, outbreak, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (tree_id, sample_id, _clean_newick_name(sample_name), True, clade, outbreak, divergence, coverage, nextclade_qc, nuc_substitutions, aa_substitutions),
+                    )
+
+            # Register the TSV, NWK, and aligned FASTA in pipeline_outputs
+            for p in (tsv_path, newick_path, aligned_path):
+                if p.exists():
+                    _insert_pipeline_output(cur, run_id, "nextclade", "nextclade_screening", p)
+
+            processed += 1
+
     conn.commit()
-    print(f"  Updated {processed} samples from Nextclade outputs", file=sys.stderr)
+    print(f"  Updated {processed} samples from best-match Nextclade outputs", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -735,6 +1000,36 @@ def _get_node_value(node_attrs, key):
     if isinstance(val, dict):
         return val.get("value")
     return val
+
+
+def _clean_newick_name(name):
+    name = (name or "").strip()
+    # Newick metacharacters and spaces (unquoted names cannot contain these)
+    name = re.sub(r"[,;\(\):\[\] ]", "_", name)
+    if not name:
+        name = "unnamed"
+    return name
+
+
+def _newick_from_auspice_node(node, parent_div=0.0):
+    attrs = node.get("node_attrs", {}) if isinstance(node, dict) else {}
+    div = parse_float(_get_node_value(attrs, "div")) or 0.0
+    length = max(div - parent_div, 0.0)
+    name = _clean_newick_name(node.get("name")) if isinstance(node, dict) else "unnamed"
+    children = node.get("children") if isinstance(node, dict) else None
+    if children:
+        subtrees = [_newick_from_auspice_node(child, parent_div=div) for child in children]
+        return f'({",".join(subtrees)}){name}:{length}'
+    return f'{name}:{length}'
+
+
+def _newick_from_auspice(path):
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    tree = data.get("tree") if isinstance(data, dict) else None
+    if not tree:
+        return None, None
+    return f'({_newick_from_auspice_node(tree)});', tree
 
 
 def _collect_tips(tree, tips=None):
@@ -749,14 +1044,17 @@ def _collect_tips(tree, tips=None):
     return tips
 
 
-def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=None):
+def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=None, species=None):
     results_dir = Path(results_dir)
+    species_filter = normalize_text(species)
     # Auspice JSON files under nextstrain_ebola/<species>/auspice/
     auspice_files = []
     if auspice_json and Path(auspice_json).exists():
         auspice_files = [Path(auspice_json)]
     else:
         auspice_files = sorted(results_dir.rglob("*all-outbreaks.json"))
+    if species_filter:
+        auspice_files = [p for p in auspice_files if species_filter in [x.lower() for x in p.parts]]
     if not auspice_files:
         print("  SKIP: no Auspice JSON files found", file=sys.stderr)
         return
@@ -769,6 +1067,8 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
                     species = part.lower()
                     break
             newick_candidates = sorted(results_dir.rglob("tree.nwk"))
+            if species_filter:
+                newick_candidates = [p for p in newick_candidates if species_filter in [x.lower() for x in p.parts]]
             newick = newick_candidates[0].read_text().strip() if newick_candidates else None
             tree_source = str(newick_candidates[0]) if newick_candidates else str(path)
             cur.execute(
@@ -782,6 +1082,8 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
             tree_id = cur.fetchone()[0]
             # Load tip metadata if present
             tip_candidates = sorted(results_dir.rglob("*_tip_metadata.tsv"))
+            if species_filter:
+                tip_candidates = [p for p in tip_candidates if species_filter in [x.lower() for x in p.parts]]
             tip_path = tip_candidates[0] if tip_candidates else None
             if tip_path and tip_path.exists():
                 for row in read_tsv_or_csv(tip_path):
@@ -1672,7 +1974,8 @@ def parse_args():
     parser.add_argument("--outdir", required=True, help="Output directory for warehouse files")
     parser.add_argument("--meta-id", required=True, help="Run / group identifier")
     parser.add_argument("--prefix", default="query", help="File prefix for output artifacts")
-    parser.add_argument("--results-dir", help="Root results directory (used to discover all stage outputs)")
+    parser.add_argument("--results-dir", help="Root results directory (used to discover classification, nextclade, etc.)")
+    parser.add_argument("--bioinfo-dir", help="Staged bioinformatics results directory (used to register Nextstrain outputs in pipeline_outputs)")
     parser.add_argument("--species-assignments", help="species_assignments.tsv")
     parser.add_argument("--metadata-tsv", help="Per-species or input metadata TSV")
     parser.add_argument("--epi-raw-dir", help="Directory containing epidemiological CSVs")
@@ -1690,6 +1993,7 @@ def parse_args():
     parser.add_argument("--views-path", type=Path, default=Path(__file__).parent.parent / "database" / "knowledge_views.sql", help="Analytical views SQL file to load")
     parser.add_argument("--db-host", help="Host of an already-running shared PostgreSQL instance (started by START_KNOWLEDGE_DB). When set, this script connects to it instead of managing its own temporary server, and skips the final dump/stop (owned by STOP_KNOWLEDGE_DB).")
     parser.add_argument("--db-port", type=int, help="Port of the shared PostgreSQL instance (required with --db-host)")
+    parser.add_argument("--species-screening-only", action="store_true", help="For the Nextclade species-assignment stage: only load species_assignments and the three Nextclade files per species (TSV, NWK, aligned FASTA)")
     return parser.parse_args()
 
 
@@ -1880,70 +2184,75 @@ def main():
                 # Fallback to sibling results of outdir
                 results_dir = outdir.parent / "results"
             results_dir = Path(results_dir).resolve()
+            bioinfo_dir = Path(args.bioinfo_dir).resolve() if args.bioinfo_dir else results_dir
 
             print("Registering pipeline outputs...", file=sys.stderr)
-            register_pipeline_outputs(conn, args.meta_id, results_dir, stage="bioinformatics")
+            register_pipeline_outputs(conn, args.meta_id, bioinfo_dir, stage="bioinformatics")
 
-            print("Registering phenotype annotation outputs...", file=sys.stderr)
-            if args.uniprotr_dir:
-                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.uniprotr_dir)
-            if args.extractr_dir:
-                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.extractr_dir)
-            if args.rbioapi_dir:
-                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.rbioapi_dir)
-            if args.query_data_dir:
-                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.query_data_dir)
-            if args.hmm_dir:
-                register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.hmm_dir)
+            if not args.species_screening_only:
+                print("Registering phenotype annotation outputs...", file=sys.stderr)
+                if args.uniprotr_dir:
+                    register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.uniprotr_dir)
+                if args.extractr_dir:
+                    register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.extractr_dir)
+                if args.rbioapi_dir:
+                    register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.rbioapi_dir)
+                if args.query_data_dir:
+                    register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.query_data_dir)
+                if args.hmm_dir:
+                    register_dir_outputs(conn, args.meta_id, "phenotype_annotation", args.hmm_dir)
 
-            print("Registering epidemiological data outputs...", file=sys.stderr)
-            if args.epi_raw_dir:
-                register_dir_outputs(conn, args.meta_id, "epidemiological_data", args.epi_raw_dir)
+                print("Registering epidemiological data outputs...", file=sys.stderr)
+                if args.epi_raw_dir:
+                    register_dir_outputs(conn, args.meta_id, "epidemiological_data", args.epi_raw_dir)
 
-            print("Registering auspice tree output...", file=sys.stderr)
-            if args.auspice_json:
-                register_file_output(conn, args.meta_id, "bioinformatics", args.auspice_json)
-            if args.iqtree:
-                register_file_output(conn, args.meta_id, "bioinformatics", args.iqtree)
+                print("Registering auspice tree output...", file=sys.stderr)
+                if args.auspice_json:
+                    register_file_output(conn, args.meta_id, "bioinformatics", args.auspice_json)
+                if args.iqtree:
+                    register_file_output(conn, args.meta_id, "bioinformatics", args.iqtree)
 
-            print("Loading reference genomes...", file=sys.stderr)
-            load_reference_genomes_and_genes(conn, args.meta_id, results_dir)
+                print("Loading reference genomes...", file=sys.stderr)
+                load_reference_genomes_and_genes(conn, args.meta_id, results_dir)
 
             print("Loading samples...", file=sys.stderr)
             load_samples(
                 conn, args.meta_id, results_dir,
                 species_assignments=args.species_assignments,
                 metadata_tsv=args.metadata_tsv,
-            )
-
-            print("Loading phylogenetic trees and tips...", file=sys.stderr)
-            load_trees_and_tips(conn, args.meta_id, results_dir, auspice_json=args.auspice_json, iqtree=args.iqtree)
-
-            print("Loading mutations...", file=sys.stderr)
-            load_mutations(conn, args.meta_id, results_dir)
-
-            print("Loading phenotype annotations...", file=sys.stderr)
-            load_phenotype_annotations(
-                conn, args.meta_id,
-                uniprotr_dir=args.uniprotr_dir,
-                extractr_dir=args.extractr_dir,
-                rbioapi_dir=args.rbioapi_dir,
-            )
-
-            print("Loading HMMER/Pfam annotations...", file=sys.stderr)
-            load_hmm_annotations(conn, args.meta_id, hmm_dir=args.hmm_dir, species=args.species)
-
-            print("Loading epidemiological data...", file=sys.stderr)
-            load_epi_data(
-                conn, args.meta_id,
-                epi_raw_dir=args.epi_raw_dir,
-                epi_search_summary=args.epi_search_summary,
                 species=args.species,
+                species_screening_only=args.species_screening_only,
             )
 
-            print("Loading literature evidence...", file=sys.stderr)
-            if args.evidence_qc_dir:
-                load_literature_evidence(conn, args.meta_id, args.evidence_qc_dir)
+            if not args.species_screening_only:
+                print("Loading phylogenetic trees and tips...", file=sys.stderr)
+                load_trees_and_tips(conn, args.meta_id, results_dir, auspice_json=args.auspice_json, iqtree=args.iqtree, species=args.species)
+
+                print("Loading mutations...", file=sys.stderr)
+                load_mutations(conn, args.meta_id, results_dir)
+
+                print("Loading phenotype annotations...", file=sys.stderr)
+                load_phenotype_annotations(
+                    conn, args.meta_id,
+                    uniprotr_dir=args.uniprotr_dir,
+                    extractr_dir=args.extractr_dir,
+                    rbioapi_dir=args.rbioapi_dir,
+                )
+
+                print("Loading HMMER/Pfam annotations...", file=sys.stderr)
+                load_hmm_annotations(conn, args.meta_id, hmm_dir=args.hmm_dir, species=args.species)
+
+                print("Loading epidemiological data...", file=sys.stderr)
+                load_epi_data(
+                    conn, args.meta_id,
+                    epi_raw_dir=args.epi_raw_dir,
+                    epi_search_summary=args.epi_search_summary,
+                    species=args.species,
+                )
+
+                print("Loading literature evidence...", file=sys.stderr)
+                if args.evidence_qc_dir:
+                    load_literature_evidence(conn, args.meta_id, args.evidence_qc_dir)
 
             print("Writing MultiQC summary...", file=sys.stderr)
             write_mqc_summary(conn, args.meta_id, outdir, args.prefix)

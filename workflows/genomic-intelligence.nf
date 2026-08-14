@@ -6,8 +6,7 @@
 include { CLASSIFICATION         } from '../subworkflows/local/classification/main'
 include { PATHOGEN_ROUTER        } from '../subworkflows/local/pathogen_router/main'
 include { KNOWLEDGE_WAREHOUSE    } from '../subworkflows/local/knowledge_warehouse/main'
-include { START_KNOWLEDGE_DB     } from '../modules/local/start_knowledge_db/main'
-include { STOP_KNOWLEDGE_DB      } from '../modules/local/stop_knowledge_db/main'
+include { PATHOGEN_IDENTIFICATION_WF } from '../subworkflows/local/pathogen_identification/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -39,7 +38,7 @@ workflow GENOMIC_INTELLIGENCE {
     // SUBWORKFLOW: Nextclade classification + species assignment
     //
     // Nextclade datasets to screen against (configurable via params)
-    ch_datasets = channel.fromList(params.nextclade_datasets)
+    ch_datasets = nextflow.Channel.fromList(params.nextclade_datasets)
 
     // Pass full samplesheet — CLASSIFICATION extracts fasta internally,
     // runs Nextclade, assigns species, and emits per-species groups
@@ -72,37 +71,43 @@ workflow GENOMIC_INTELLIGENCE {
     )
 
     //
-    // Shared knowledge-warehouse: start the DB once the pathogen analyses
-    // have produced per-species data, ingest the data, and stop the DB once
-    // ingestion is complete.
+    // Shared knowledge-warehouse: the subworkflow starts the shared PostgreSQL
+    // instance internally, ingests per-species data, exports the whole
+    // warehouse to a portable DuckDB file, then stops the server -- all
+    // before this main workflow finishes, so PATHOGEN_IDENTIFICATION reads
+    // that file instead of needing a live DB connection for the rest of the
+    // run. A workflow.onComplete safety net (see main.nf) only acts if the
+    // server is somehow still running (e.g. the pipeline failed midway).
     //
-    def ch_knowledge_db = channel.empty()
-    def ch_knowledge_db_summary = channel.empty()
+    def ch_knowledge_db = nextflow.Channel.empty()
+    def ch_knowledge_db_summary = nextflow.Channel.empty()
+    def ch_duckdb_dump = nextflow.Channel.empty()
+    def ch_pathogen_id_tsv = nextflow.Channel.empty()
+
+    db_host = nextflow.Channel.value(params.kw_db_host)
+    db_port = nextflow.Channel.value(params.kw_db_port)
 
     if (!params.skip_knowledge_warehouse) {
-        START_KNOWLEDGE_DB(
-            channel.value(params.kw_db_host),
-            channel.value(params.kw_db_port),
-            PATHOGEN_ROUTER.out.kw_input.collect()
-        )
-        db_host = START_KNOWLEDGE_DB.out.ready.map { params.kw_db_host }
-        db_port = START_KNOWLEDGE_DB.out.ready.map { params.kw_db_port }
-
         KNOWLEDGE_WAREHOUSE(
             PATHOGEN_ROUTER.out.kw_input.combine(db_host).combine(db_port)
         )
         ch_knowledge_db = KNOWLEDGE_WAREHOUSE.out.knowledge_db
         ch_knowledge_db_summary = KNOWLEDGE_WAREHOUSE.out.mqc_summary
+        ch_duckdb_dump = KNOWLEDGE_WAREHOUSE.out.duckdb_dump
 
-        def ch_db_done = KNOWLEDGE_WAREHOUSE.out.knowledge_db.collect()
-        STOP_KNOWLEDGE_DB(db_host, db_port, ch_db_done)
-    } else {
-        db_host = channel.value(params.kw_db_host)
-        db_port = channel.value(params.kw_db_port)
+        if (!params.skip_pathogen_identification) {
+            ch_knowledge_db
+                .combine(ch_duckdb_dump)
+                .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
+                .set { ch_pathogen_id }
+            PATHOGEN_IDENTIFICATION_WF(ch_pathogen_id)
+            ch_pathogen_id_tsv = PATHOGEN_IDENTIFICATION_WF.out.tsv
+        }
     }
 
     //
-    // No downstream reporting or figures: the pipeline stops at the knowledge warehouse.
+    // Downstream reporting: per-species pathogen identification (species
+    // identification analysis) after the knowledge warehouse.
     //
 
     emit:
@@ -118,6 +123,7 @@ workflow GENOMIC_INTELLIGENCE {
     lit_evidence        = PATHOGEN_ROUTER.out.lit_evidence
     knowledge_db        = ch_knowledge_db
     knowledge_db_summary = ch_knowledge_db_summary
+    identification_tsv   = ch_pathogen_id_tsv
 }
 
 /*

@@ -2,6 +2,7 @@
 work/
 data/
 results/
+check_output/
 .DS_Store
 testing/
 testing*

@@ -1,0 +1,20 @@
+name: pgirl_pathogen_id
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base>=4.3
+  - r-optparse
+  - r-dbi
+  - r-duckdb
+  - r-dplyr
+  - r-dbplyr
+  - r-stringr
+  - r-tibble
+  - r-tidyr
+  - r-readr
+  - r-jsonlite
+  - r-ape
+  - r-betapart
+  - r-vegan
+  - bioconductor-biostrings

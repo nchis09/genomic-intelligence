@@ -301,8 +301,42 @@ def rewrite_mermaid(mmd_text: str, pathogen_raw: str, pathogen_display: str) -> 
         rep_block[0] = set_label(rep_block[0], "Reporting")
         gi_block[rep_idx : rep_idx + len(rep_block)] = rep_block
 
+    # Flatten Pathogen Characterization's subworkflow subgraph
+    # (PATHOGEN_CHARACTERIZATION_WF) into Knowledge Warehouse.
+    #
+    # NOTE: A standalone "Pathogen Characterization" section reproducibly
+    # triggers the identical nf-metro CurveInvariantError at the *same*
+    # coordinates (182.0,610.0) in every configuration tested: top-level
+    # sibling of Knowledge Warehouse, nested inside it, last child of
+    # GENOMIC_INTELLIGENCE, PATHOGEN_CHARACTERIZATION_WF's own *native*
+    # Nextflow-generated subgraph (not fabricated via text surgery), and
+    # even after fully decoupling it from the live DB so its only input is
+    # a plain file-based DuckDB-export combine (see
+    # subworkflows/local/pathogen_characterization/main.nf) -- a
+    # structurally different edge than every earlier test. This rules out
+    # DAG structure/ordering/edge-count/edge-type as the cause -- it is a
+    # defect in nf-metro's own fold/entry-port layout engine (confirmed
+    # present in the latest installed version, nf_metro==1.1.0) for this
+    # specific section shape. Flattening its single child node into
+    # Knowledge Warehouse is the only configuration that renders
+    # successfully.
+    pc_match = find_subgraph_by_label(gi_block, "PATHOGEN_CHARACTERIZATION_WF")
+    kw_match = find_subgraph_by_label(gi_block, "KNOWLEDGE_WAREHOUSE")
+    if pc_match and kw_match:
+        pc_idx, pc_block = pc_match
+        pc_inner = [line for line in pc_block[1:-1]]
+        del gi_block[pc_idx : pc_idx + len(pc_block)]
+        kw_idx, kw_block = find_subgraph_by_label(gi_block, "KNOWLEDGE_WAREHOUSE")
+        for j in range(len(kw_block) - 1, -1, -1):
+            if re.match(r'^\s*end\s*$', kw_block[j]):
+                kw_block[j:j] = pc_inner
+                break
+        gi_block[kw_idx : kw_idx + len(kw_block)] = kw_block
+
     new_lines = lines[:gi_start] + gi_block + lines[gi_end:]
-    return "\n".join(new_lines) + "\n"
+    new_text = "\n".join(new_lines) + "\n"
+    new_text = new_text.replace('["KNOWLEDGE_WAREHOUSE"]', '["Knowledge Warehouse"]')
+    return new_text
 
 
 def strip_hidden_nodes(mmd_text: str, labels: set[str]) -> str:
