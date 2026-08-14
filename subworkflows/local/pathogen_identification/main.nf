@@ -12,7 +12,8 @@
  *                          export of the knowledge warehouse -- see
  *                          EXPORT_KNOWLEDGE_DB) rather than a live
  *                          db_host/db_port connection.
- * Output: tsv - channel: path(*.tsv)
+ * Output: tsv     - channel: path(*.tsv)
+ *          mqc_tsv - channel: path(*_mqc.tsv), MultiQC custom-content tables
  */
 
 include { PATHOGEN_IDENTIFICATION } from '../../../modules/local/pathogen_identification/main'
@@ -25,5 +26,6 @@ workflow PATHOGEN_IDENTIFICATION_WF {
     PATHOGEN_IDENTIFICATION(ch_pathogen_id)
 
     emit:
-    tsv = PATHOGEN_IDENTIFICATION.out.tsv
+    tsv     = PATHOGEN_IDENTIFICATION.out.tsv
+    mqc_tsv = PATHOGEN_IDENTIFICATION.out.mqc_tsv
 }

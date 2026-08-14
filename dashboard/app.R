@@ -47,11 +47,11 @@ list_species <- function(outdir) {
 # have a lot of built-in whitespace/lettering next to the mark, so they need
 # a taller box than the others to read at the same visual size).
 INSTITUTION_LOGOS <- c(
-  "GOARN.png"   = 40,
-  "MRC.jpeg"    = 40,
-  "RKI.png"     = 40,
-  "UVRI.jpg"    = 56,
-  "WHO_Hub.png" = 80
+  "GOARN.png"   = 20,
+  "MRC.jpeg"    = 20,
+  "RKI.png"     = 20,
+  "UVRI.jpg"    = 28,
+  "WHO_Hub.png" = 40
 )
 
 gif_theme <- create_theme(
@@ -112,7 +112,14 @@ brand_css <- "
      fixed footer (which is taller than the AdminLTE default: caption +
      logo row). */
   .content-wrapper {
+    padding-top: 16px !important;
     padding-bottom: 100px !important;
+  }
+  /* Only force the light-gray background in light mode -- leave dark mode's
+     own (dark) content-wrapper background alone, otherwise dark-mode text
+     (e.g. the 'Genomic Intelligence' heading, switched to white by bs4Dash)
+     becomes invisible against this forced-light background. */
+  body:not(.dark-mode) .content-wrapper {
     background-color: #f4f6f8 !important;
   }
   .badge-secondary { background-color: #adb5bd; color: #fff; }

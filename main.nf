@@ -50,7 +50,7 @@ workflow PGIRL_GENOMIC_INTELLIGENCE {
         params.outdir,
     )
     emit:
-    multiqc_report = channel.empty() // channel: /path/to/multiqc_report.html
+    multiqc_report = GENOMIC_INTELLIGENCE.out.multiqc_report.map { meta, html -> html } // channel: /path/to/multiqc_report.html
 }
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

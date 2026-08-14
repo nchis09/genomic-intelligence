@@ -27,7 +27,7 @@ read_gif_intro_text <- function(config_path = "../assets/multiqc_config.yml") {
 # they don't depend on species/outdir.
 overview_ui <- function() {
   tagList(
-    h2("Genomic Intelligence", style = "margin-bottom: 12px;"),
+    h2("Genomic Intelligence", style = "margin-bottom: 12px; font-weight: bold;"),
     bs4Dash::bs4Card(
       width = 12,
       status = "secondary",

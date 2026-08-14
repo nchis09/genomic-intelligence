@@ -12,3 +12,4 @@ null/
 tools/
 database/hmmdb/
 .nf-metro-env/
+*.Rhistory

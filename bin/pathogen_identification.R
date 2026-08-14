@@ -34,6 +34,34 @@ write_tsv <- function(df, filename, subdir = NULL) {
   write.table(df, file.path(out_path, filename), sep = "\t", row.names = FALSE, quote = FALSE, na = "")
 }
 
+# Writes a MultiQC custom-content table: same tab-separated data as write_tsv(),
+# prefixed with a '# id:'/'# plot_type:' comment-header block so MultiQC picks
+# it up automatically. Using the same `id` across all species' files lets
+# MultiQC merge per-species rows into a single combined section (see
+# bin/build_knowledge_db.py::write_mqc_summary for the established convention).
+write_mqc_tsv <- function(df, filename, id, section_name, description, subdir = NULL) {
+  if (!is.data.frame(df)) df <- as.data.frame(df)
+  if (nrow(df) == 0) df <- df[0, , drop = FALSE]
+  out_path <- outdir
+  if (!is.null(subdir)) {
+    out_path <- file.path(outdir, subdir)
+    dir.create(out_path, showWarnings = FALSE, recursive = TRUE)
+  }
+  full_path <- file.path(out_path, filename)
+  con_out <- file(full_path, open = "w")
+  writeLines(c(
+    paste0("# id: '", id, "'"),
+    paste0("# section_name: '", section_name, "'"),
+    paste0("# description: '", description, "'"),
+    "# plot_type: 'table'",
+    "# pconfig:",
+    paste0("#     id: '", id, "_table'"),
+    paste0("#     namespace: '", section_name, "'")
+  ), con_out)
+  write.table(df, con_out, sep = "\t", row.names = FALSE, quote = FALSE, na = "")
+  close(con_out)
+}
+
 safe_div <- function(x, y) ifelse(y == 0 | is.na(y), NA_real_, as.numeric(x) / as.numeric(y))
 
 percentile <- function(x, ref) {
@@ -1397,5 +1425,24 @@ write_tsv(outputs$species, "00_species_assignment.tsv", subdir = "species_identi
 write_tsv(outputs$seq_sim, "02_sequence_similarity.tsv", subdir = "species_identification")
 write_tsv(outputs$msa, "03_msa_profile.tsv", subdir = "species_identification")
 write_tsv(outputs$phylo, "04_phylogenetic_placement.tsv", subdir = "species_identification")
+
+log_info("Writing MultiQC custom-content tables")
+run_prefix <- opts$`run-id`
+write_mqc_tsv(outputs$species, paste0(run_prefix, "_00_species_assignment_mqc.tsv"),
+              id = "species_assignment_summary", section_name = "Species Assignment",
+              description = "Per-sample species/taxon assignment, coverage, QC status, and nearest reference.",
+              subdir = "species_identification/mqc")
+write_mqc_tsv(outputs$seq_sim, paste0(run_prefix, "_02_sequence_similarity_mqc.tsv"),
+              id = "sequence_similarity_summary", section_name = "Sequence Similarity",
+              description = "Per-sample pairwise nucleotide identity and alignment stats vs. reference sequences.",
+              subdir = "species_identification/mqc")
+write_mqc_tsv(outputs$msa, paste0(run_prefix, "_03_msa_profile_mqc.tsv"),
+              id = "msa_profile_summary", section_name = "MSA Profile",
+              description = "Per-sample multiple-sequence-alignment statistics.",
+              subdir = "species_identification/mqc")
+write_mqc_tsv(outputs$phylo, paste0(run_prefix, "_04_phylogenetic_placement_mqc.tsv"),
+              id = "phylogenetic_placement_summary", section_name = "Phylogenetic Placement",
+              description = "Per-sample nearest tree neighbors and distance to assigned clade.",
+              subdir = "species_identification/mqc")
 
 log_info("Done. Outputs in ", outdir)

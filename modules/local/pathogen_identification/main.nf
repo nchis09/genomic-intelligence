@@ -21,6 +21,7 @@ process PATHOGEN_IDENTIFICATION {
 
     output:
     path "species_identification/*.tsv", emit: tsv
+    path "species_identification/mqc/*_mqc.tsv", emit: mqc_tsv
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"

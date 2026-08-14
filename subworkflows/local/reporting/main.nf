@@ -21,7 +21,9 @@ workflow REPORTING {
     def ch_multiqc_config = multiqc_config
         ? file(multiqc_config, checkIfExists: true)
         : file("${projectDir}/assets/multiqc_config.yml", checkIfExists: true)
-    def ch_multiqc_logo = multiqc_logo ? file(multiqc_logo, checkIfExists: true) : []
+    def ch_multiqc_logo = multiqc_logo
+        ? file(multiqc_logo, checkIfExists: true)
+        : file("${projectDir}/assets/logo.png", checkIfExists: true)
 
     MULTIQC(
         ch_multiqc_files.flatten().collect().map { files ->

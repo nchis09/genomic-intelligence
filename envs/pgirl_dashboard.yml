@@ -1,0 +1,13 @@
+name: pgirl_dashboard
+channels:
+  - conda-forge
+dependencies:
+  - r-base>=4.3
+  - r-shiny
+  - r-bs4dash
+  - r-fresh
+  - r-dt
+  - r-readr
+  - r-dplyr
+  - r-ggplot2
+  - r-yaml
