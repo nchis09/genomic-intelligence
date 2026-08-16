@@ -128,6 +128,8 @@ Results are published under `--outdir` (default `results/`), mostly one subdirec
 
 Additionally, `results/pipeline_info/pipeline_metro_map_*.html` — an auto-generated [nf-metro](https://github.com/seqeralabs/nf-metro) metro-map diagram of the run's actual Nextflow task graph (skipped with a warning if `nf-metro` is unavailable; see Prerequisites).
 
+For a high-level conceptual overview of the pipeline's architecture (rather than the literal per-run task graph), see [`docs/architecture_overview.html`](docs/architecture_overview.html).
+
 ### Schema visualization
 
 After the pipeline finishes, generate an interactive SchemaSpy report of the knowledge-warehouse database:

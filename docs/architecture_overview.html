@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Genomic Intelligence Framework -- Conceptual Architecture</title>
+</head>
+<body>
+  <h1>Genomic Intelligence Framework -- Conceptual Architecture</h1>
+  <p>High-level conceptual architecture overview (hand-authored, not derived from the live Nextflow DAG). For the accurate, per-run technical diagram, see the auto-generated <code>pipeline_metro_map_*.html</code> under <code>results/pipeline_info/</code>.</p>
+  <pre class="mermaid">
+%%{init: {&#x27;flowchart&#x27;: {&#x27;htmlLabels&#x27;: true, &#x27;curve&#x27;: &#x27;basis&#x27;}}}%%
+flowchart TD
+    A[&quot;Input / QC&lt;br/&gt;&lt;small&gt;Nextclade species/dataset assignment&lt;/small&gt;&quot;]
+    B[&quot;Pathogen Identification&lt;br/&gt;&lt;small&gt;Species ID, lineage/clade, sequence similarity,&lt;br/&gt;closest references, phylogenetic placement&lt;/small&gt;&quot;]
+    C[&quot;Pathogen-Specific Genomic Analysis&lt;br/&gt;&lt;small&gt;e.g. Ebola Workflow -- Nextstrain build, tree, alignment&lt;/small&gt;&quot;]
+    D[&quot;Epidemiological Context&lt;br/&gt;&lt;small&gt;HDX epidemiology download&lt;/small&gt;&quot;]
+    E[&quot;Literature &amp;amp; Functional Evidence&lt;br/&gt;&lt;small&gt;Literature retrieval, phenotype annotation&lt;/small&gt;&quot;]
+    F[&quot;Knowledge Warehouse&lt;br/&gt;&lt;small&gt;PostgreSQL ingestion + DuckDB export&lt;/small&gt;&quot;]
+    G[&quot;Genomic Intelligence&lt;br/&gt;&lt;small&gt;Cross-domain synthesis&lt;/small&gt;&quot;]
+    H[&quot;Dashboard&quot;]
+    I[&quot;Intelligence Brief&quot;]
+
+    A --&gt; B
+    B --&gt; C
+    C --&gt; D
+    C --&gt; E
+    C -. &quot;genomic outputs&quot; .--&gt; F
+    D --&gt; F
+    E --&gt; F
+    F ==&gt; G
+    G ==&gt; H
+    G ==&gt; I
+
+    classDef stage fill:#ffffff,stroke:#2c5aa0,stroke-width:2px,color:#1a1a2e;
+    classDef intelligence fill:#2c5aa0,stroke:#1a3d66,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef output fill:#2c5aa0,stroke:#1a3d66,stroke-width:2px,color:#ffffff;
+    class A,B,C,D,E,F stage;
+    class G intelligence;
+    class H,I output;
+  </pre>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' });
+  </script>
+</body>
+</html>

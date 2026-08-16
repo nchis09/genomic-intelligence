@@ -4,8 +4,14 @@ Post-process the Nextflow-generated Mermaid DAG into a hierarchical nf-metro
 visualisation.
 
 Goals:
+- Keep the nf-metro output faithful to the real Nextflow DAG and data
+  dependencies; do not force conceptual ordering into the technical DAG.
 - Rename top-level stages to plain, unnumbered labels (Classification,
   <Pathogen> Workflow, Reporting).
+- Optionally generate a separate conceptual Genomic Intelligence architecture
+  diagram showing Input/QC -> Pathogen Identification -> Pathogen-Specific
+  Genomic Analysis -> evidence integration -> Genomic Intelligence ->
+  Dashboard + Intelligence Brief.
 - Discover which pathogen workflow subgraph actually ran generically, by the
   `*_WORKFLOW` naming convention (e.g. EBOLA_WORKFLOW, future MPOX_WORKFLOW)
   -- nothing pathogen-specific is hardcoded here. The pathogen itself is
@@ -54,6 +60,7 @@ PATHOGEN_DISPLAY_NAMES = {
 CHILD_RENAMES = {
     "BIOINFORMATICS_AND_EPIDEMIOLOGICAL": "Bioinformatics + Epidemiology",
     "BIOINFORMATICS_ANALYSIS": "Bioinformatics Analysis",
+    "LITERATURE_RETRIEVAL": "Literature Retrieval",
     "PHENOTYPE_ANNOTATION": "Phenotype Annotation",
     "EPIDEMIOLOGICAL_DATA": "Epidemiological Data",
     "KNOWLEDGE_WAREHOUSE": "Knowledge Warehouse",
@@ -246,6 +253,21 @@ def flatten_router_block(router_block: list[str], pathogen_raw: str, pathogen_di
         epi_idx = next(idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "EPIDEMIOLOGICAL_DATA")
         child_blocks.insert(epi_idx + 1, pa_entry)
 
+    # Cosmetic-only reorder (same rationale as above): move LITERATURE_RETRIEVAL
+    # to render last among the flattened children. Left in its raw call-order
+    # slot (2nd of 3, between BIOINFORMATICS_AND_EPIDEMIOLOGICAL and
+    # PHENOTYPE_ANNOTATION), its line lands on the same vertical channel as
+    # the workflow's own exit edge to the top-level KNOWLEDGE_WAREHOUSE
+    # sibling, producing a collinear-overlap CurveInvariantError
+    # ("line 'ebola_workflow_knowledge_warehouse' ... and line
+    # 'ebola_workflow_literature_retrieval' ... coincide on the V channel").
+    # Moving it to the last slot changes its vertical position enough for
+    # nf-metro to route both edges as distinct lines instead.
+    lit_idx = next((idx for idx, (lbl, _) in enumerate(child_blocks) if lbl == "LITERATURE_RETRIEVAL"), None)
+    if lit_idx is not None and lit_idx != len(child_blocks) - 1:
+        lit_entry = child_blocks.pop(lit_idx)
+        child_blocks.append(lit_entry)
+
     new_lines = [router_block[0], base_indent + "direction TB"]
     # Keep ROUTE_PATHOGEN and any other loose lines before the workflow block.
     for line in inner_lines[:wf_start]:
@@ -301,26 +323,33 @@ def rewrite_mermaid(mmd_text: str, pathogen_raw: str, pathogen_display: str) -> 
         rep_block[0] = set_label(rep_block[0], "Reporting")
         gi_block[rep_idx : rep_idx + len(rep_block)] = rep_block
 
-    # Flatten Pathogen Characterization's subworkflow subgraph
-    # (PATHOGEN_CHARACTERIZATION_WF) into Knowledge Warehouse.
+    # Flatten Pathogen Identification's subworkflow subgraph
+    # (PATHOGEN_IDENTIFICATION_WF, formerly PATHOGEN_CHARACTERIZATION_WF)
+    # into Knowledge Warehouse.
     #
-    # NOTE: A standalone "Pathogen Characterization" section reproducibly
-    # triggers the identical nf-metro CurveInvariantError at the *same*
-    # coordinates (182.0,610.0) in every configuration tested: top-level
+    # NOTE: A standalone "Pathogen Characterization"/"Pathogen Identification"
+    # section reproducibly triggers the identical nf-metro CurveInvariantError
+    # at the *same* coordinates (182.0,610.0) in every configuration tested,
+    # including as recently as re-tested after the LITERATURE_RETRIEVAL
+    # reorder fix (see CHILD_RENAMES/flatten_router_block above) -- top-level
     # sibling of Knowledge Warehouse, nested inside it, last child of
-    # GENOMIC_INTELLIGENCE, PATHOGEN_CHARACTERIZATION_WF's own *native*
+    # GENOMIC_INTELLIGENCE, this subworkflow's own *native*
     # Nextflow-generated subgraph (not fabricated via text surgery), and
     # even after fully decoupling it from the live DB so its only input is
     # a plain file-based DuckDB-export combine (see
-    # subworkflows/local/pathogen_characterization/main.nf) -- a
+    # subworkflows/local/pathogen_identification/main.nf) -- a
     # structurally different edge than every earlier test. This rules out
     # DAG structure/ordering/edge-count/edge-type as the cause -- it is a
     # defect in nf-metro's own fold/entry-port layout engine (confirmed
     # present in the latest installed version, nf_metro==1.1.0) for this
     # specific section shape. Flattening its single child node into
     # Knowledge Warehouse is the only configuration that renders
-    # successfully.
-    pc_match = find_subgraph_by_label(gi_block, "PATHOGEN_CHARACTERIZATION_WF")
+    # successfully. Do not attempt to un-flatten this again without first
+    # re-verifying against a fresh raw DAG via the fast local render loop
+    # (see docs/architecture_overview.mmd for the intended conceptual
+    # positioning instead -- a separate, hand-authored diagram not subject
+    # to this constraint).
+    pc_match = find_subgraph_by_label(gi_block, "PATHOGEN_IDENTIFICATION_WF")
     kw_match = find_subgraph_by_label(gi_block, "KNOWLEDGE_WAREHOUSE")
     if pc_match and kw_match:
         pc_idx, pc_block = pc_match
@@ -390,6 +419,53 @@ def simple_rewrite(mmd_text: str, pathogen_display: str) -> str:
     return mmd_text
 
 
+def write_conceptual_architecture(output: Path) -> None:
+    """
+    Write a separate conceptual architecture diagram.
+
+    This diagram is intentionally not passed through nf-metro. It represents
+    the framework's conceptual information flow rather than the literal
+    Nextflow execution DAG.
+    """
+    conceptual = """flowchart LR
+
+    A["Input / QC"]
+    B["Pathogen Identification"]
+    C["Pathogen-Specific<br/>Genomic Analysis"]
+    D["Epidemiological<br/>Context"]
+    E["Literature &<br/>Functional Evidence"]
+    F["Knowledge Warehouse"]
+    G["Genomic Intelligence"]
+    H["Dashboard"]
+    I["Intelligence Brief"]
+
+    A --> B
+    B --> C
+
+    C --> D
+    C --> E
+    C --> F
+
+    D --> F
+    E --> F
+
+    F --> G
+
+    G --> H
+    G --> I
+
+    classDef stage fill:#ffffff,stroke:#4A6C8C,stroke-width:2px,color:#1F2937;
+    classDef intelligence fill:#4A6C8C,stroke:#4A6C8C,stroke-width:2px,color:#ffffff;
+
+    class A,B,C,D,E,F stage;
+    class G,H,I intelligence;
+"""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(conceptual)
+    print(f"Wrote conceptual architecture to {output}")
+
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Post-process Nextflow Mermaid DAG for hierarchical nf-metro layout"
@@ -398,7 +474,16 @@ def main():
     parser.add_argument(
         "--assignments", required=True, type=Path, help="species_assignments.tsv"
     )
-    parser.add_argument("--output", required=True, type=Path, help="Output .mmd file")
+    parser.add_argument(
+        "--output", required=True, type=Path,
+        help="Output technical nf-metro .mmd file"
+    )
+    parser.add_argument(
+        "--conceptual-output",
+        type=Path,
+        default=None,
+        help="Optional path for a separate conceptual Genomic Intelligence architecture .mmd file",
+    )
     args = parser.parse_args()
 
     if not args.input.exists():
@@ -412,6 +497,9 @@ def main():
     new_mmd = strip_hidden_nodes(new_mmd, HIDDEN_NODE_LABELS)
     args.output.write_text(new_mmd)
     print(f"Wrote hierarchical metro DAG to {args.output}")
+
+    if args.conceptual_output:
+        write_conceptual_architecture(args.conceptual_output)
 
 
 if __name__ == "__main__":

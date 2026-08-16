@@ -85,6 +85,7 @@ workflow GENOMIC_INTELLIGENCE {
     def ch_duckdb_dump = nextflow.Channel.empty()
     def ch_pathogen_id_tsv = nextflow.Channel.empty()
     def ch_pathogen_id_mqc = nextflow.Channel.empty()
+    def ch_multiqc_report = nextflow.Channel.empty()
 
     db_host = nextflow.Channel.value(params.kw_db_host)
     db_port = nextflow.Channel.value(params.kw_db_port)
@@ -112,13 +113,16 @@ workflow GENOMIC_INTELLIGENCE {
     // Downstream reporting: MultiQC, fed with the per-species pathogen
     // identification tables and the knowledge-warehouse load summary.
     //
-    def ch_multiqc_files = ch_pathogen_id_mqc.mix(ch_knowledge_db_summary.map { _meta, mqc_path -> mqc_path })
+    if (!params.skip_multiqc) {
+        def ch_multiqc_files = ch_pathogen_id_mqc.mix(ch_knowledge_db_summary.map { _meta, mqc_path -> mqc_path })
 
-    REPORTING(
-        ch_multiqc_files,
-        multiqc_config,
-        multiqc_logo
-    )
+        REPORTING(
+            ch_multiqc_files,
+            multiqc_config,
+            multiqc_logo
+        )
+        ch_multiqc_report = REPORTING.out.multiqc_report
+    }
 
     emit:
     unsupported    = PATHOGEN_ROUTER.out.unsupported
@@ -134,7 +138,7 @@ workflow GENOMIC_INTELLIGENCE {
     knowledge_db        = ch_knowledge_db
     knowledge_db_summary = ch_knowledge_db_summary
     identification_tsv   = ch_pathogen_id_tsv
-    multiqc_report       = REPORTING.out.multiqc_report
+    multiqc_report       = ch_multiqc_report
 }
 
 /*

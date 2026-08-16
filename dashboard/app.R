@@ -195,7 +195,7 @@ ui <- bs4DashPage(
 # -----------------------------------------------------------------------------
 server <- function(input, output, session) {
 
-  outdir_r <- reactive({ "../../results" })
+  outdir_r <- reactive({ "../results" })
   species_rv <- reactive({ list_species(outdir_r()) })
 
   # -- Sidebar: Intelligence Overview + Biological Threat (species submenu,
