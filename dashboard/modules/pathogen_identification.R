@@ -114,7 +114,8 @@ pi_metric_chart <- function(sel_df, metric, color_map) {
       title = list(text = paste0("<b>", gsub("\n", " ", metric$label), "</b>",
                                  "<br><sup>", metric$subtitle, "</sup>"),
                    font = list(size = 13), x = 0.5, y = 0.95),
-      xaxis = list(title = "", tickangle = -30, tickfont = list(size = 10)),
+      xaxis = list(title = "", tickangle = -30, tickfont = list(size = 10),
+                   categoryorder = "array", categoryarray = sel_df$sample),
       yaxis = list(
         title = "",
         tickformat = if (metric$pct) ".0f" else ".4f",
