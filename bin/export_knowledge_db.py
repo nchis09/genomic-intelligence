@@ -16,6 +16,7 @@ gains new tables in the future.
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -68,6 +69,14 @@ def main():
         for table in tables:
             print(f"Exporting table '{table}'...", file=sys.stderr)
             df = pd.read_sql_query(f'SELECT * FROM "{table}"', pg_conn)
+            # PostgreSQL jsonb columns arrive as Python dicts via psycopg2;
+            # convert them to JSON text so DuckDB stores a plain VARCHAR
+            # that R-side jsonlite::fromJSON can parse reliably.
+            for col in df.columns:
+                if df[col].dtype == object and len(df) > 0:
+                    sample_val = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
+                    if isinstance(sample_val, dict):
+                        df[col] = df[col].apply(lambda v: json.dumps(v) if isinstance(v, dict) else v)
             # DuckDB's Python API picks up local variables via its
             # replacement scan, so `df` here is directly queryable in SQL.
             duck_con.execute(f'CREATE TABLE "{table}" AS SELECT * FROM df')

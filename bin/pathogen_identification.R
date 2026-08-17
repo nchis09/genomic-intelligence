@@ -609,16 +609,23 @@ make_00_species_assignment <- function(inputs) {
 }
 
 # -----------------------------------------------------------------------------
-# 01 QC profile
+# Genomic variation profile
+#
+# Per-sample Nextclade QC/variation metrics (substitutions, deletions,
+# insertions, frameshifts, missing bases, non-ACGTNs, amino-acid
+# substitutions/deletions/insertions, and alignment score).  Extracts from
+# the nextclade_json text blob already loaded in inputs$samples via R-side
+# JSON parsing (same approach as flatten_nextclade_json used elsewhere).
+# Covers ALL query samples.
 # -----------------------------------------------------------------------------
-make_01_qc_profile <- function(inputs) {
+make_genomic_variation_profile <- function(inputs) {
   empty <- tibble(
-    sample = character(), coverage = numeric(), cds_coverage = numeric(),
-    substitutions = integer(), deletions = integer(), insertions = integer(),
-    frame_shifts = integer(), missing_bases = integer(), non_acgtns = integer(),
-    amino_acid_substitutions = integer(), alignment_score = numeric(),
-    private_nucleotide_mutations = integer(), snp_clusters = integer(),
-    stop_codons = integer(), qc_status = character()
+    sample = character(),
+    total_substitutions = integer(), total_deletions = integer(),
+    total_insertions = integer(), total_frameshifts = integer(),
+    total_missing = integer(), total_non_acgtns = integer(),
+    total_aa_substitutions = integer(), total_aa_deletions = integer(),
+    total_linked_amino_acid = integer(), alignment_score = numeric()
   )
   if (!has_rows(inputs$samples)) return(empty)
 
@@ -635,20 +642,19 @@ make_01_qc_profile <- function(inputs) {
 
   out <- tibble(
     sample = as.character(get_col(flat, "sample", "")),
-    coverage = as.numeric(get_col(flat, "coverage")),
-    cds_coverage = NA_real_,
-    substitutions = as.integer(get_col(flat, "totalSubstitutions")),
-    deletions = as.integer(get_col(flat, "totalDeletions")),
-    insertions = as.integer(get_col(flat, "totalInsertions")),
-    frame_shifts = as.integer(get_col(flat, "totalFrameShifts")),
-    missing_bases = as.integer(get_col(flat, "totalMissing")),
-    non_acgtns = as.integer(get_col(flat, "totalNonACGTNs")),
-    amino_acid_substitutions = as.integer(get_col(flat, "totalAminoacidSubstitutions")),
-    alignment_score = as.numeric(get_col(flat, "alignmentScore")),
-    private_nucleotide_mutations = as.integer(get_col(flat, "privateNucMutations.totalPrivateSubstitutions")),
-    snp_clusters = NA_integer_,
-    stop_codons = NA_integer_,
-    qc_status = as.character(get_col(flat, "qc.overallStatus"))
+    total_substitutions = as.integer(get_col(flat, "totalSubstitutions")),
+    total_deletions = as.integer(get_col(flat, "totalDeletions")),
+    total_insertions = as.integer(get_col(flat, "totalInsertions")),
+    total_frameshifts = as.integer(get_col(flat, "totalFrameShifts")),
+    total_missing = as.integer(get_col(flat, "totalMissing")),
+    total_non_acgtns = as.integer(get_col(flat, "totalNonACGTNs")),
+    total_aa_substitutions = as.integer(get_col(flat, "totalAminoacidSubstitutions")),
+    total_aa_deletions = as.integer(get_col(flat, "totalAminoacidDeletions")),
+    total_linked_amino_acid = as.integer(get_col(flat, "totalAminoacidInsertions")),
+    alignment_score = coalesce(
+      as.numeric(samples$alignment_score),
+      as.numeric(get_col(flat, "alignmentScore"))
+    )
   )
   out
 }
@@ -1656,10 +1662,12 @@ outputs$msa <- make_03_msa_profile(inputs)
 outputs$phylo <- make_04_phylogenetic_placement(inputs)
 outputs$summary <- make_identification_summary(outputs$species, outputs$seq_sim, outputs$msa, outputs$phylo)
 outputs$unresolved <- make_unresolved_samples(outputs$species)
+outputs$variation <- make_genomic_variation_profile(inputs)
 
 log_info("Writing species identification outputs")
 write_tsv(outputs$summary, "identification_summary.tsv", subdir = "species_identification")
 write_tsv(outputs$unresolved, "unresolved_samples.tsv", subdir = "species_identification")
+write_tsv(outputs$variation, "genomic_variation_profile.tsv", subdir = "species_identification")
 
 log_info("Writing MultiQC custom-content tables")
 run_prefix <- opts$`run-id`
