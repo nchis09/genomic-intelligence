@@ -7,6 +7,7 @@ include { CLASSIFICATION         } from '../subworkflows/local/classification/ma
 include { PATHOGEN_ROUTER        } from '../subworkflows/local/pathogen_router/main'
 include { KNOWLEDGE_WAREHOUSE    } from '../subworkflows/local/knowledge_warehouse/main'
 include { PATHOGEN_IDENTIFICATION_WF } from '../subworkflows/local/pathogen_identification/main'
+
 include { REPORTING              } from '../subworkflows/local/reporting/main'
 
 /*
@@ -107,6 +108,7 @@ workflow GENOMIC_INTELLIGENCE {
             ch_pathogen_id_tsv = PATHOGEN_IDENTIFICATION_WF.out.tsv
             ch_pathogen_id_mqc = PATHOGEN_IDENTIFICATION_WF.out.mqc_tsv
         }
+
     }
 
     //

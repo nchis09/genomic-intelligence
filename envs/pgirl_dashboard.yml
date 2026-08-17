@@ -1,6 +1,7 @@
 name: pgirl_dashboard
 channels:
   - conda-forge
+  - bioconda
 dependencies:
   - r-base>=4.3
   - r-shiny
@@ -13,3 +14,11 @@ dependencies:
   - r-plotly
   - r-htmltools
   - r-yaml
+  # Pathogen Genomics: interactive tree visualization
+  - r-dbi
+  - r-duckdb
+  - r-ape
+  - r-rcolorbrewer
+  - r-ggnewscale
+  - bioconductor-treeio
+  - bioconductor-ggtree

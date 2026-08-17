@@ -1,0 +1,50 @@
+[2026-08-17 22:14:25.649889] species=bdbv error=[38;5;232mProblem while computing aesthetics.
+[36mℹ[38;5;232m Error occurred in the 4th layer.[39m
+[1mCaused by error:[22m
+[33m![39m object 'SAMPLE' not found
+11: execCallbacks(timeoutSecs, all, loop$id)
+10: run_now(timeoutMs/1000, all = FALSE)
+9: service(timeout)
+8: serviceApp()
+7: ..stacktracefloor..(serviceApp())
+6: withCallingHandlers(expr, error = doCaptureStack)
+5: domain$wrapSync(expr)
+4: promises::with_promise_domain(createStackTracePromiseDomain(), 
+       expr)
+3: captureStackTraces({
+       while (!.globals$stopped) {
+           ..stacktracefloor..(serviceApp())
+       }
+   })
+2: ..stacktraceoff..(captureStackTraces({
+       while (!.globals$stopped) {
+           ..stacktracefloor..(serviceApp())
+       }
+   }))
+1: runApp()
+
+[2026-08-17 22:14:43.604663] species=bdbv error=[38;5;232mProblem while computing aesthetics.
+[36mℹ[38;5;232m Error occurred in the 4th layer.[39m
+[1mCaused by error:[22m
+[33m![39m object 'SAMPLE' not found
+11: execCallbacks(timeoutSecs, all, loop$id)
+10: run_now(timeoutMs/1000, all = FALSE)
+9: service(timeout)
+8: serviceApp()
+7: ..stacktracefloor..(serviceApp())
+6: withCallingHandlers(expr, error = doCaptureStack)
+5: domain$wrapSync(expr)
+4: promises::with_promise_domain(createStackTracePromiseDomain(), 
+       expr)
+3: captureStackTraces({
+       while (!.globals$stopped) {
+           ..stacktracefloor..(serviceApp())
+       }
+   })
+2: ..stacktraceoff..(captureStackTraces({
+       while (!.globals$stopped) {
+           ..stacktracefloor..(serviceApp())
+       }
+   }))
+1: runApp()
+

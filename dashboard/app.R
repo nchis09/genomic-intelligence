@@ -17,6 +17,29 @@
 #
 # See dashboard/README.md for details.
 
+# -- Auto-install missing packages on first run --
+local({
+  cran_pkgs <- c("shiny", "bs4Dash", "fresh", "DT", "readr", "dplyr",
+                 "ggplot2", "plotly", "yaml", "DBI", "duckdb",
+                 "RColorBrewer", "ape", "ggnewscale")
+  bioc_pkgs <- c("treeio", "ggtree")
+
+  missing_cran <- cran_pkgs[!sapply(cran_pkgs, requireNamespace, quietly = TRUE)]
+  missing_bioc <- bioc_pkgs[!sapply(bioc_pkgs, requireNamespace, quietly = TRUE)]
+
+  if (length(missing_cran) > 0) {
+    message("[dashboard] Installing CRAN packages: ", paste(missing_cran, collapse = ", "))
+    install.packages(missing_cran, repos = "https://cloud.r-project.org", quiet = TRUE)
+  }
+  if (length(missing_bioc) > 0) {
+    if (!requireNamespace("BiocManager", quietly = TRUE)) {
+      install.packages("BiocManager", repos = "https://cloud.r-project.org", quiet = TRUE)
+    }
+    message("[dashboard] Installing Bioconductor packages: ", paste(missing_bioc, collapse = ", "))
+    BiocManager::install(missing_bioc, ask = FALSE, update = FALSE, quiet = TRUE)
+  }
+})
+
 suppressPackageStartupMessages({
   library(shiny)
   library(bs4Dash)
@@ -38,6 +61,8 @@ source("modules/home.R")
 # Serve repo-root assets (GIF logo, institution logos) without copying them
 # into dashboard/www.
 addResourcePath("gif_assets", normalizePath(file.path("..", "assets")))
+
+
 
 list_species <- function(outdir) {
   base <- file.path(outdir, "pathogen_identification")
@@ -350,6 +375,17 @@ brand_css <- "
   }
   body.dark-mode .selectize-dropdown .option.active {
     background: #3d5469 !important;
+  }
+  /* ---- Dark-mode overrides for Pathogen Genomics section ---- */
+  body.dark-mode .radio label,
+  body.dark-mode .checkbox label {
+    color: #cdd9e5 !important;
+  }
+  body.dark-mode .control-label {
+    color: #adb5bd !important;
+  }
+  body.dark-mode .shiny-input-container .radio-inline label {
+    color: #cdd9e5 !important;
   }
 "
 
