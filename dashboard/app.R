@@ -30,6 +30,7 @@ suppressPackageStartupMessages({
 })
 
 source("modules/pathogen_identification.R")
+source("modules/pathogen_genomics.R")
 source("modules/assessment.R")
 source("modules/placeholder.R")
 source("modules/home.R")
@@ -429,6 +430,17 @@ server <- function(input, output, session) {
       menuItem("Biological Threat", tabName = "pi_home", icon = icon("dna"))
     }
 
+    pg_item <- if (length(species) > 0) {
+      do.call(menuItem, c(
+        list(text = "Pathogen Genomics", icon = icon("microscope"), startExpanded = FALSE),
+        lapply(species, function(sp) {
+          menuSubItem(text = toupper(sp), tabName = paste0("pg_", sp))
+        })
+      ))
+    } else {
+      menuItem("Pathogen Genomics", tabName = "pg_home", icon = icon("microscope"))
+    }
+
     roadmap_items <- lapply(ROADMAP_OBJECTIVES, function(obj) {
       menuItem(obj$label, tabName = roadmap_tab_name(obj$id), icon = icon(obj$icon))
     })
@@ -438,6 +450,7 @@ server <- function(input, output, session) {
       menuItem("Intelligence Overview", tabName = "home", icon = icon("house")),
       sidebarHeader("INTELLIGENCE OBJECTIVES"),
       pi_item,
+      pg_item,
       roadmap_items[1:6],
       sidebarHeader("EVIDENCE & REPORTING"),
       roadmap_items[7:8]
@@ -467,6 +480,25 @@ server <- function(input, output, session) {
       ))
     }
 
+    pg_tabs <- if (length(species) > 0) {
+      lapply(species, function(sp) {
+        tabItem(tabName = paste0("pg_", sp), pathogen_genomics_ui(sp))
+      })
+    } else {
+      list(tabItem(
+        tabName = "pg_home",
+        bs4Dash::bs4Card(
+          title = "Pathogen Genomics", width = 12, status = "secondary",
+          div(
+            style = "text-align: center; padding: 40px 0; color: #888;",
+            icon("microscope", class = "fa-3x"),
+            h4("No species found", style = "margin-top: 16px;"),
+            p("No species were found in the pipeline output. Run the pipeline, or check that results/ exists.")
+          )
+        )
+      ))
+    }
+
     roadmap_tabs <- lapply(ROADMAP_OBJECTIVES, function(obj) {
       tab_ui <- if (identical(obj$id, "intelligence_brief")) {
         intelligence_brief_roadmap_ui(obj)
@@ -479,6 +511,7 @@ server <- function(input, output, session) {
     do.call(tabItems, c(
       list(tabItem(tabName = "home", overview_ui())),
       pi_tabs,
+      pg_tabs,
       roadmap_tabs
     ))
   })
@@ -487,6 +520,7 @@ server <- function(input, output, session) {
   observeEvent(species_rv(), {
     for (sp in species_rv()) {
       pathogen_identification_register(input, output, session, sp, outdir_r)
+      pathogen_genomics_register(input, output, session, sp, outdir_r)
     }
   }, ignoreNULL = FALSE)
 
@@ -526,6 +560,11 @@ server <- function(input, output, session) {
   observeEvent(input$overview_live_tile_click, {
     sp <- current_species()
     if (!is.null(sp)) updateTabItems(session, "sidebarmenu", selected = paste0("pi_", sp))
+  })
+
+  observeEvent(input$overview_pg_tile_click, {
+    sp <- current_species()
+    if (!is.null(sp)) updateTabItems(session, "sidebarmenu", selected = paste0("pg_", sp))
   })
 
   observeEvent(input$overview_nav_click, {

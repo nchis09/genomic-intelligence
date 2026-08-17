@@ -114,6 +114,21 @@ live_tile_ui <- function() {
   )
 }
 
+# "Live" tile for Pathogen Genomics on the Intelligence Overview page.
+pathogen_genomics_tile_ui <- function() {
+  div(
+    style = paste(
+      "cursor: pointer; border: 1px solid #4A6C8C; border-radius: 6px;",
+      "padding: 10px 12px; text-align: center; color: #4A6C8C;",
+      "background: #fff; height: 100%;"
+    ),
+    onclick = "Shiny.setInputValue('overview_pg_tile_click', 'click', {priority: 'event'});",
+    icon("microscope"),
+    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Pathogen Genomics"),
+    span(class = "badge badge-primary", style = "font-size: 0.65rem; margin-top: 2px;", "Live")
+  )
+}
+
 # Placeholder skeleton shown inside the preview/edit modal -- editable, but
 # not backed by real data yet.
 intelligence_brief_preview_modal <- function() {

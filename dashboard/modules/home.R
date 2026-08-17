@@ -51,6 +51,7 @@ overview_ui <- function() {
     h5("Intelligence Objectives", style = "margin-top: 28px; color: #6c757d; font-weight: bold;"),
     fluidRow(
       column(width = 2, style = "margin-bottom: 10px;", live_tile_ui()),
+      column(width = 2, style = "margin-bottom: 10px;", pathogen_genomics_tile_ui()),
       lapply(ROADMAP_OBJECTIVES, function(obj) {
         column(width = 2, style = "margin-bottom: 10px;", roadmap_tile_ui(obj))
       })
