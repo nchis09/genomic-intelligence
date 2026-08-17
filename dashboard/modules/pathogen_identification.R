@@ -90,7 +90,10 @@ pi_id <- function(species, suffix) {
 }
 
 # Build one plotly dot chart for a single metric
-pi_metric_chart <- function(sel_df, metric, color_map) {
+pi_metric_chart <- function(sel_df, metric, color_map, dark_mode = FALSE) {
+  font_color <- if (dark_mode) "#e0e0e0" else "#333333"
+  grid_color <- if (dark_mode) "#4a5568" else "#e9ecef"
+
   col  <- metric$col
   vals <- sel_df[[col]]
   if (all(is.na(vals))) return(NULL)
@@ -113,17 +116,22 @@ pi_metric_chart <- function(sel_df, metric, color_map) {
     layout(
       title = list(text = paste0("<b>", gsub("\n", " ", metric$label), "</b>",
                                  "<br><sup>", metric$subtitle, "</sup>"),
-                   font = list(size = 13), x = 0.5, y = 0.95),
-      xaxis = list(title = "", tickangle = -30, tickfont = list(size = 10),
-                   categoryorder = "array", categoryarray = sel_df$sample),
+                   font = list(size = 13, color = font_color), x = 0.5, y = 0.95),
+      xaxis = list(title = "", tickangle = -30,
+                   tickfont = list(size = 10, color = font_color),
+                   categoryorder = "array", categoryarray = sel_df$sample,
+                   gridcolor = grid_color),
       yaxis = list(
         title = "",
         tickformat = if (metric$pct) ".0f" else ".4f",
+        tickfont = list(color = font_color),
         range = list(0, max(display_vals, na.rm = TRUE) * 1.25),
-        automargin = TRUE
+        automargin = TRUE,
+        gridcolor = grid_color
       ),
       margin = list(t = 85, b = 50, l = 55, r = 20, pad = 8),
       paper_bgcolor = "transparent", plot_bgcolor = "transparent",
+      font = list(color = font_color),
       height = 310
     ) %>%
     config(displayModeBar = FALSE)
@@ -133,7 +141,9 @@ pi_metric_chart <- function(sel_df, metric, color_map) {
 # ---------------------------------------------------------------------------
 # Radar chart for genomic variation profile comparison
 # ---------------------------------------------------------------------------
-pi_radar_chart <- function(sel_df, all_df, color_map) {
+pi_radar_chart <- function(sel_df, all_df, color_map, dark_mode = FALSE) {
+  font_color <- if (dark_mode) "#e0e0e0" else "#333333"
+  grid_color <- if (dark_mode) "#4a5568" else "#e0e0e0"
   axis_labels <- sapply(PI_RADAR_AXES, `[[`, "label")
   axis_cols   <- sapply(PI_RADAR_AXES, `[[`, "col")
 
@@ -178,20 +188,21 @@ pi_radar_chart <- function(sel_df, all_df, color_map) {
     polar = list(
       radialaxis = list(
         visible = TRUE, range = c(0, 105),
-        tickfont = list(size = 9), ticksuffix = "%",
-        gridcolor = "#e0e0e0"
+        tickfont = list(size = 9, color = font_color), ticksuffix = "%",
+        gridcolor = grid_color
       ),
       angularaxis = list(
-        tickfont = list(size = 10),
-        gridcolor = "#e0e0e0"
+        tickfont = list(size = 10, color = font_color),
+        gridcolor = grid_color
       )
     ),
     legend = list(
       orientation = "h", x = 0.5, xanchor = "center", y = -0.15,
-      font = list(size = 11)
+      font = list(size = 11, color = font_color)
     ),
     margin = list(t = 40, b = 60, l = 60, r = 60),
     paper_bgcolor = "transparent",
+    font = list(color = font_color),
     height = 420
   ) %>%
     config(displayModeBar = FALSE)
@@ -406,10 +417,11 @@ pathogen_identification_register <- function(input, output, session, species, ou
     output[[pi_id(sp, paste0("chart_", i))]] <- plotly::renderPlotly({
       sel <- selected_samples()
       req(length(sel) >= 2)
+      dark <- isTRUE(input$is_dark_mode)
       df <- summary_data()
       sel_df <- df[df$sample %in% sel, , drop = FALSE]
       sel_df <- sel_df[match(sel, sel_df$sample), , drop = FALSE]
-      pi_metric_chart(sel_df, PI_METRICS[[i]], color_map())
+      pi_metric_chart(sel_df, PI_METRICS[[i]], color_map(), dark_mode = dark)
     })
   })
 
@@ -543,10 +555,11 @@ pathogen_identification_register <- function(input, output, session, species, ou
   output[[pi_id(sp, "radar_chart")]] <- plotly::renderPlotly({
     sel <- var_selected()
     req(length(sel) >= 1)
+    dark <- isTRUE(input$is_dark_mode)
     df <- variation_data()
     sel_df <- df[df$sample %in% sel, , drop = FALSE]
     sel_df <- sel_df[match(sel, sel_df$sample), , drop = FALSE]
-    pi_radar_chart(sel_df, df, var_color_map())
+    pi_radar_chart(sel_df, df, var_color_map(), dark_mode = dark)
   })
 
   output[[pi_id(sp, "variation_table")]] <- DT::renderDT({

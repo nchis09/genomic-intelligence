@@ -266,6 +266,90 @@ brand_css <- "
   .dataTables_wrapper td {
     font-size: 0.82rem !important;
   }
+
+  /* ---- Dark-mode overrides for Pathogen Identification section ---- */
+  body.dark-mode .pi-summary-card {
+    background: #2b3e50;
+    border-color: #3d5469;
+  }
+  body.dark-mode .pi-summary-card .pi-sc-label {
+    color: #adb5bd;
+  }
+  body.dark-mode .pi-summary-card .pi-sc-value {
+    color: #e0e0e0;
+  }
+  body.dark-mode .pi-summary-card .pi-sc-detail {
+    color: #adb5bd;
+  }
+  body.dark-mode .pi-info-card {
+    background: #2b3e50;
+    border-color: #3d5469;
+  }
+  body.dark-mode .pi-info-card .fa,
+  body.dark-mode .pi-info-card .fas {
+    color: #8ab4d6;
+  }
+  body.dark-mode .pi-info-card span {
+    color: #cdd9e5;
+  }
+  body.dark-mode .pi-chart-section {
+    background: #1e2d3a;
+    border-color: #3d5469;
+  }
+  body.dark-mode .pi-chart-section h5 {
+    color: #e0e0e0;
+  }
+  body.dark-mode .pi-legend-item {
+    color: #e0e0e0;
+  }
+  body.dark-mode h3, body.dark-mode h4, body.dark-mode h5 {
+    color: #e0e0e0;
+  }
+  body.dark-mode p {
+    color: #cdd9e5;
+  }
+  /* DataTable text in dark mode */
+  body.dark-mode .dataTables_wrapper th {
+    color: #e0e0e0 !important;
+  }
+  body.dark-mode .dataTables_wrapper td {
+    color: #cdd9e5 !important;
+  }
+  body.dark-mode .dataTables_wrapper .dataTables_info,
+  body.dark-mode .dataTables_wrapper .dataTables_length label,
+  body.dark-mode .dataTables_wrapper .dataTables_filter label {
+    color: #adb5bd !important;
+  }
+  body.dark-mode .dataTables_wrapper .dataTables_paginate .paginate_button {
+    color: #cdd9e5 !important;
+  }
+  /* Card text and captions */
+  body.dark-mode .card-title {
+    color: #e0e0e0 !important;
+  }
+  body.dark-mode caption {
+    color: #adb5bd !important;
+  }
+  /* Selectize input in dark mode */
+  body.dark-mode .selectize-input {
+    background: #2b3e50 !important;
+    border-color: #3d5469 !important;
+    color: #e0e0e0 !important;
+  }
+  body.dark-mode .selectize-input .item {
+    color: #e0e0e0 !important;
+  }
+  body.dark-mode .selectize-dropdown {
+    background: #2b3e50 !important;
+    border-color: #3d5469 !important;
+    color: #e0e0e0 !important;
+  }
+  body.dark-mode .selectize-dropdown .option {
+    color: #e0e0e0 !important;
+  }
+  body.dark-mode .selectize-dropdown .option.active {
+    background: #3d5469 !important;
+  }
 "
 
 # -----------------------------------------------------------------------------
@@ -292,6 +376,20 @@ ui <- bs4DashPage(
         "$(document).on('click', '.brand-link', function(e) {
            e.preventDefault();
            Shiny.setInputValue('brand_home_click', 'click', {priority: 'event'});
+         });
+         // Track dark-mode toggle and expose to Shiny
+         $(function() {
+           var sendDarkMode = function() {
+             var isDark = $('body').hasClass('dark-mode');
+             Shiny.setInputValue('is_dark_mode', isDark);
+           };
+           // Observe class changes on body
+           var observer = new MutationObserver(function(mutations) {
+             sendDarkMode();
+           });
+           observer.observe(document.body, {attributes: true, attributeFilter: ['class']});
+           // Initial state once Shiny is ready
+           $(document).on('shiny:connected', sendDarkMode);
          });"
       ))
     ),
