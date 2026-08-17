@@ -721,6 +721,37 @@ def _infer_species_from_path(path):
     return None
 
 
+def register_nextstrain_msa(conn, run_id, results_dir, species=None):
+    """Register the nextstrain_ebola alignment.fasta + metadata_extended.tsv per
+    species so pathogen_identification.R can fall back to a direct MSA-based
+    identity/distance computation when a species has no usable Nextclade
+    screening tree (e.g. SUDV, whose Nextclade dataset only ships a single
+    reference genome with no background isolates baked into the tree).
+    file_name is ambiguous across species ("alignment.fasta" everywhere), so
+    species is instead encoded in process_name for unambiguous R-side lookup.
+    """
+    results_dir = Path(results_dir)
+    species_filter = normalize_text(species)
+    align_files = sorted(results_dir.rglob("alignment.fasta"))
+    if species_filter:
+        align_files = [p for p in align_files if species_filter in [x.lower() for x in p.parts]]
+    if not align_files:
+        return
+    registered = 0
+    with conn.cursor() as cur:
+        for path in align_files:
+            sp = _infer_species_from_path(path)
+            if not sp:
+                continue
+            _insert_pipeline_output(cur, run_id, "nextstrain_ebola", f"nextstrain_msa_{sp}", path)
+            registered += 1
+            meta_ext = path.parent / "metadata_extended.tsv"
+            if meta_ext.exists():
+                _insert_pipeline_output(cur, run_id, "nextstrain_ebola", f"nextstrain_metadata_extended_{sp}", meta_ext)
+    conn.commit()
+    print(f"  Registered {registered} nextstrain MSA file(s)", file=sys.stderr)
+
+
 def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
     results_dir = Path(results_dir)
     species_assignments = results_dir / "classification" / "species_assignments.tsv"
@@ -2214,6 +2245,9 @@ def main():
 
                 print("Loading reference genomes...", file=sys.stderr)
                 load_reference_genomes_and_genes(conn, args.meta_id, results_dir)
+
+                print("Registering nextstrain MSA fallback files...", file=sys.stderr)
+                register_nextstrain_msa(conn, args.meta_id, results_dir, species=args.species)
 
             print("Loading samples...", file=sys.stderr)
             load_samples(

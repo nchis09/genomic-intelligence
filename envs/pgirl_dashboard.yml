@@ -10,4 +10,6 @@ dependencies:
   - r-readr
   - r-dplyr
   - r-ggplot2
+  - r-plotly
+  - r-htmltools
   - r-yaml

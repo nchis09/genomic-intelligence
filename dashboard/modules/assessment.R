@@ -15,39 +15,30 @@
 # ever) reach ESCALATE in practice -- intentionally conservative until
 # richer evidence (epi/outbreak/phenotype data) is wired in later.
 #
-# Relies on PI_TABLES / pi_table_path() / pi_read_table_safe(), defined in
-# modules/pathogen_identification.R (must be sourced first).
+# Relies on PI_SUMMARY_TABLE / pi_table_path() / pi_read_table_safe(),
+# defined in modules/pathogen_identification.R (must be sourced first).
+#
+# Since PATHOGEN_IDENTIFICATION now emits a single identification_summary.tsv
+# (CONFIRMED samples only; qc_status == "good" is implied by that filter, so
+# it's no longer tracked as a separate confidence signal here), n_total is 1
+# and evidence_availability is simply whether that table has rows.
 
 compute_pi_assessment <- function(species, outdir) {
-  tables <- lapply(PI_TABLES, function(tbl) {
-    pi_read_table_safe(pi_table_path(outdir, species, tbl$filename))
-  })
-  names(tables) <- names(PI_TABLES)
+  sa <- pi_read_table_safe(pi_table_path(outdir, species, PI_SUMMARY_TABLE$filename))
 
-  n_total <- length(PI_TABLES)
-  n_available <- sum(vapply(tables, function(df) !is.null(df) && nrow(df) > 0, logical(1)))
+  n_total <- 1
+  n_available <- if (!is.null(sa) && nrow(sa) > 0) 1 else 0
   evidence_availability <- n_available / n_total
-
-  sa    <- tables$species_assignment
-  sim   <- tables$sequence_similarity
-  phylo <- tables$phylogenetic_placement
 
   first_num <- function(df, col) {
     if (is.null(df) || !(col %in% names(df)) || nrow(df) == 0) return(NA_real_)
     suppressWarnings(as.numeric(df[[col]][1]))
   }
-  first_chr <- function(df, col) {
-    if (is.null(df) || !(col %in% names(df)) || nrow(df) == 0) return(NA_character_)
-    as.character(df[[col]][1])
-  }
 
-  qc_status        <- first_chr(sa, "qc_status")
-  coverage          <- first_num(sa, "coverage")
-  genetic_distance  <- first_num(sa, "genetic_distance")
-  identity <- if (!is.null(sim) && "percent_nucleotide_identity" %in% names(sim) && nrow(sim) > 0) {
-    suppressWarnings(max(as.numeric(sim$percent_nucleotide_identity), na.rm = TRUE))
-  } else NA_real_
-  clade_dist <- first_num(phylo, "distance_to_assigned_clade")
+  coverage         <- first_num(sa, "coverage")
+  identity         <- first_num(sa, "pct_identity_closest_ref")
+  genetic_distance <- first_num(sa, "genetic_distance_closest_ref")
+  clade_dist       <- first_num(sa, "distance_to_assigned_clade")
 
   signals <- character()
 
@@ -62,23 +53,8 @@ compute_pi_assessment <- function(species, outdir) {
       evidence_availability = 0,
       n_available = 0,
       n_total = n_total,
-      signals = "No Pathogen Identification data available yet for this species."
+      signals = "No confirmed Pathogen Identification data available yet for this species."
     ))
-  }
-
-  if (evidence_availability < 1) {
-    confidence_penalty <- confidence_penalty + 1
-    signals <- c(signals, sprintf(
-      "Evidence availability: %d of %d Pathogen Identification tables produced data.",
-      n_available, n_total
-    ))
-  }
-
-  if (!is.na(qc_status) && tolower(qc_status) != "good") {
-    confidence_penalty <- confidence_penalty + 1
-    signals <- c(signals, sprintf("QC status is '%s' (not 'good') \u2014 lowers confidence.", qc_status))
-  } else if (!is.na(qc_status)) {
-    signals <- c(signals, "QC status: good.")
   }
 
   if (!is.na(coverage)) {
@@ -103,17 +79,27 @@ compute_pi_assessment <- function(species, outdir) {
   novelty_signals <- 0
 
   if (confidence_adequate) {
-    if (!is.na(genetic_distance) && genetic_distance > 50) {
+    # genetic_distance_closest_ref is normally a 0-1 fraction (Biostrings
+    # edit-distance / alignment length), but falls back to the legacy
+    # (possibly raw-count) genetic_distance field when no aligned-FASTA row
+    # is available -- guard against both scales.
+    dist_is_fraction <- !is.na(genetic_distance) && genetic_distance <= 1
+    dist_elevated <- if (dist_is_fraction) {
+      !is.na(genetic_distance) && genetic_distance > 0.05
+    } else {
+      !is.na(genetic_distance) && genetic_distance > 50
+    }
+    if (dist_elevated) {
       novelty_signals <- novelty_signals + 1
       signals <- c(signals, sprintf(
-        "Genetic distance to nearest reference is elevated (%.1f) \u2014 possible novelty signal.",
+        "Genetic distance to closest reference is elevated (%.4f) \u2014 possible novelty signal.",
         genetic_distance
       ))
     }
     if (!is.na(identity) && identity < 0.95) {
       novelty_signals <- novelty_signals + 1
       signals <- c(signals, sprintf(
-        "Sequence identity to references is %.1f%% \u2014 below the typical range.",
+        "Sequence identity to closest reference is %.1f%% \u2014 below the typical range.",
         identity * 100
       ))
     }
@@ -152,30 +138,21 @@ compute_pi_assessment <- function(species, outdir) {
 # of compute_pi_assessment() where GIF should present/contextualize evidence
 # rather than make a risk call.
 pi_evidence_facts <- function(species, outdir) {
-  tables <- lapply(PI_TABLES, function(tbl) {
-    pi_read_table_safe(pi_table_path(outdir, species, tbl$filename))
-  })
-  names(tables) <- names(PI_TABLES)
+  sa <- pi_read_table_safe(pi_table_path(outdir, species, PI_SUMMARY_TABLE$filename))
 
-  n_total <- length(PI_TABLES)
-  n_available <- sum(vapply(tables, function(df) !is.null(df) && nrow(df) > 0, logical(1)))
-
-  sa <- tables$species_assignment
+  n_total <- 1
+  n_available <- if (!is.null(sa) && nrow(sa) > 0) 1 else 0
 
   first_num <- function(df, col) {
     if (is.null(df) || !(col %in% names(df)) || nrow(df) == 0) return(NA_real_)
     suppressWarnings(as.numeric(df[[col]][1]))
-  }
-  first_chr <- function(df, col) {
-    if (is.null(df) || !(col %in% names(df)) || nrow(df) == 0) return(NA_character_)
-    as.character(df[[col]][1])
   }
 
   list(
     species = species,
     n_available = n_available,
     n_total = n_total,
-    qc_status = first_chr(sa, "qc_status"),
+    qc_status = if (n_available > 0) "good" else NA_character_,
     coverage = first_num(sa, "coverage")
   )
 }

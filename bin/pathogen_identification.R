@@ -249,7 +249,7 @@ extract_inputs <- function() {
   # Samples
   inputs$samples <- get_rows(con, "
     SELECT sample_id, sample_name as sample, pathogen, species, is_query,
-           nextclade_qc, genome_coverage, aa_mutation_count, nuc_substitution_count,
+           nextclade_qc, qc_score, genome_coverage, aa_mutation_count, nuc_substitution_count,
            alignment_score, divergence, best_dataset_file,
            nextclade_json::text as nextclade_json,
            country, host, collection_date, outbreak, clade, lineage
@@ -257,6 +257,22 @@ extract_inputs <- function() {
     WHERE species = ?species AND run_id = ?run_id
   ")
   inputs$completeness$samples <- list(nrow = nrow(inputs$samples))
+
+  # Nextstrain MSA fallback (used when no Nextclade screening tree exists for
+  # this species, e.g. SUDV -- see register_nextstrain_msa in build_knowledge_db.py)
+  msa_fallback_info <- get_rows(con, "
+    SELECT file_path
+    FROM pipeline_outputs
+    WHERE run_id = ?run_id AND process_name = ?process_name
+  ", process_name = paste0("nextstrain_msa_", tolower(opts$species)))
+  inputs$nextstrain_msa_path <- if (nrow(msa_fallback_info) > 0) msa_fallback_info$file_path[1] else NA_character_
+
+  msa_meta_info <- get_rows(con, "
+    SELECT file_path
+    FROM pipeline_outputs
+    WHERE run_id = ?run_id AND process_name = ?process_name
+  ", process_name = paste0("nextstrain_metadata_extended_", tolower(opts$species)))
+  inputs$nextstrain_metadata_extended_path <- if (nrow(msa_meta_info) > 0) msa_meta_info$file_path[1] else NA_character_
 
   # Genes
   inputs$genes <- get_rows(con, "
@@ -368,15 +384,109 @@ flatten_nextclade_json <- function(json_text, sample_name) {
 }
 
 # -----------------------------------------------------------------------------
+# MSA-based fallback nearest-reference (used when no Nextclade screening tree
+# exists for this species, e.g. SUDV). Computes percent identity / distance
+# directly from the pre-aligned nextstrain_ebola alignment.fasta, since a
+# proper alignment makes a phylogenetic tree unnecessary for a simple nearest-
+# neighbor lookup: columns are already in the same coordinate space.
+# -----------------------------------------------------------------------------
+compute_msa_fallback_nearest <- function(inputs, query_samples) {
+  empty <- tibble(
+    sample = character(), nearest_reference = character(),
+    nearest_reference_taxon = character(), nearest_reference_outbreak = character(),
+    msa_pct_identity = numeric(), msa_genetic_distance = numeric(),
+    msa_mean_distance_to_refs = numeric()
+  )
+  if (is.na(inputs$nextstrain_msa_path) || length(query_samples) == 0) return(empty)
+  if (!file.exists(inputs$nextstrain_msa_path)) return(empty)
+
+  seqs <- tryCatch(Biostrings::readBStringSet(inputs$nextstrain_msa_path), error = function(e) NULL)
+  if (is.null(seqs)) return(empty)
+  seq_chars <- as.character(seqs)
+
+  # Exclude ALL of this species' query samples (not just the ones we're
+  # computing a fallback for) so another query sample in the same alignment
+  # is never mistaken for a reference isolate.
+  all_query_samples <- if (has_rows(inputs$samples)) {
+    inputs$samples$sample[as.logical(inputs$samples$is_query)]
+  } else {
+    query_samples
+  }
+  ref_names <- setdiff(names(seq_chars), all_query_samples)
+  if (length(ref_names) == 0) return(empty)
+
+  meta <- NULL
+  if (!is.na(inputs$nextstrain_metadata_extended_path) && file.exists(inputs$nextstrain_metadata_extended_path)) {
+    meta <- tryCatch(
+      as_tibble(read.delim(inputs$nextstrain_metadata_extended_path, sep = "\t", colClasses = "character", check.names = FALSE)),
+      error = function(e) NULL
+    )
+  }
+
+  ref_label <- function(accession) {
+    label <- accession
+    if (!is.null(meta) && accession %in% meta$accession) {
+      row <- meta[meta$accession == accession, ][1, ]
+      loc <- if ("location" %in% names(row) && !is.na(row$location) && nchar(row$location) > 0) row$location else "Not Provided"
+      country <- if ("country" %in% names(row) && !is.na(row$country)) row$country else NA_character_
+      date <- if ("date" %in% names(row) && !is.na(row$date)) row$date else NA_character_
+      cdate <- paste0(coalesce(country, ""), ifelse(!is.na(date), paste0("/", date), ""))
+      label <- paste0(accession, "|", loc, "|", cdate)
+    }
+    label
+  }
+  ref_field <- function(accession, field) {
+    if (is.null(meta) || !(field %in% names(meta)) || !(accession %in% meta$accession)) return(NA_character_)
+    val <- meta[[field]][meta$accession == accession][1]
+    if (is.na(val) || nchar(as.character(val)) == 0) NA_character_ else as.character(val)
+  }
+
+  out <- empty
+  for (q in query_samples) {
+    if (!q %in% names(seq_chars)) next
+    q_seq <- unlist(strsplit(seq_chars[[q]], ""))
+    if (length(q_seq) == 0) next
+
+    dists <- numeric(0)
+    idents <- numeric(0)
+    for (r in ref_names) {
+      r_seq <- unlist(strsplit(seq_chars[[r]], ""))
+      if (length(r_seq) != length(q_seq)) next
+      valid <- q_seq != "-" & r_seq != "-"
+      n_valid <- sum(valid)
+      if (n_valid == 0) next
+      ident <- sum(q_seq[valid] == r_seq[valid]) / n_valid
+      idents[r] <- ident
+      dists[r] <- 1 - ident
+    }
+    if (length(dists) == 0) next
+
+    best <- names(dists)[which.min(dists)]
+    out <- bind_rows(out, tibble(
+      sample = q,
+      nearest_reference = ref_label(best),
+      nearest_reference_taxon = ref_field(best, "clade"),
+      nearest_reference_outbreak = ref_field(best, "outbreak"),
+      msa_pct_identity = as.numeric(idents[best]),
+      msa_genetic_distance = as.numeric(dists[best]),
+      msa_mean_distance_to_refs = as.numeric(mean(dists, na.rm = TRUE))
+    ))
+  }
+  if (!has_rows(out)) return(empty)
+  out
+}
+
+# -----------------------------------------------------------------------------
 # 00 Species assignment
 # -----------------------------------------------------------------------------
 make_00_species_assignment <- function(inputs) {
   empty <- tibble(
     sample = character(), assigned_taxon = character(),
     genome_length = integer(), coverage = numeric(),
-    qc_status = character(), nt_identity_best_ref = numeric(),
+    qc_status = character(), qc_overall_score = numeric(), nt_identity_best_ref = numeric(),
     nt_identity_assigned_refs = numeric(), genetic_distance = numeric(),
     nearest_reference = character(), nearest_reference_taxon = character(),
+    nearest_reference_outbreak = character(), msa_mean_distance_to_refs = numeric(),
     phylo_clade = character(), bootstrap = logical(),
     diagnostic_sites_supported = integer(), conflicting_sites = integer(),
     assignment = character()
@@ -389,7 +499,11 @@ make_00_species_assignment <- function(inputs) {
   # Nearest reference from the best-match Nextclade tree
   nearest <- tibble(sample = character(),
                     nearest_reference = character(),
-                    nearest_reference_taxon = character())
+                    nearest_reference_taxon = character(),
+                    nearest_reference_outbreak = character(),
+                    msa_pct_identity = numeric(),
+                    msa_genetic_distance = numeric(),
+                    msa_mean_distance_to_refs = numeric())
   if (has_rows(inputs$tree_nextclade) && has_rows(inputs$tip_meta_nextclade)) {
     phy <- newick_to_phylo(inputs$tree_nextclade$newick[[1]])
     if (!is.null(phy)) {
@@ -408,16 +522,31 @@ make_00_species_assignment <- function(inputs) {
               best <- names(vals)[which.min(vals)]
               taxon <- refs$clade[match(best, refs$label)]
               if (is.na(taxon) || is.null(taxon)) taxon <- NA_character_
+              ref_outbreak <- refs$outbreak[match(best, refs$label)]
+              if (is.na(ref_outbreak) || is.null(ref_outbreak)) ref_outbreak <- NA_character_
               nearest <- bind_rows(nearest, tibble(
                 sample = q_sample,
                 nearest_reference = as.character(best),
-                nearest_reference_taxon = as.character(taxon)
+                nearest_reference_taxon = as.character(taxon),
+                nearest_reference_outbreak = as.character(ref_outbreak),
+                msa_pct_identity = NA_real_,
+                msa_genetic_distance = NA_real_,
+                msa_mean_distance_to_refs = NA_real_
               ))
             }
           }
         }
       }
     }
+  }
+
+  # Fall back to a direct MSA-based nearest-reference for any query sample
+  # that didn't get a match from the Nextclade tree above (e.g. SUDV, which
+  # has no usable Nextclade screening tree in this run).
+  missing_samples <- setdiff(samples$sample, nearest$sample)
+  if (length(missing_samples) > 0) {
+    msa_fallback <- compute_msa_fallback_nearest(inputs, missing_samples)
+    if (has_rows(msa_fallback)) nearest <- bind_rows(nearest, msa_fallback)
   }
 
   out <- samples %>%
@@ -430,6 +559,7 @@ make_00_species_assignment <- function(inputs) {
       genome_length = coalesce(genome_length_raw, alignment_end - alignment_start + 1),
       coverage = as.numeric(genome_coverage),
       qc_status = nextclade_qc,
+      qc_overall_score = as.numeric(qc_score),
       nt_identity_best_ref = as.numeric(sapply(nextclade_json, get_json_field, "identity")),
       nt_identity_assigned_refs = NA_real_,
       derived_divergence = ifelse(
@@ -450,6 +580,11 @@ make_00_species_assignment <- function(inputs) {
         1 - genetic_distance,
         nt_identity_best_ref
       ),
+      # Prefer the MSA-fallback identity/distance (specific to the actual
+      # nearest_reference chosen) over Nextclade's generic best-reference
+      # estimate, when the fallback was used (e.g. SUDV).
+      nt_identity_best_ref = coalesce(msa_pct_identity, nt_identity_best_ref),
+      genetic_distance = coalesce(msa_genetic_distance, genetic_distance),
       assignment = case_when(
         is.na(qc_status) | is.na(coverage) ~ "AMBIGUOUS",
         qc_status == "good" & coverage >= 0.95 & !is.na(genetic_distance) & genetic_distance <= 50 ~ "CONFIRMED",
@@ -457,12 +592,18 @@ make_00_species_assignment <- function(inputs) {
         TRUE ~ "REJECTED"
       )
     ) %>%
-    filter(assignment == "CONFIRMED") %>%
-    select(sample, assigned_taxon, genome_length, coverage, qc_status,
+    select(sample, assigned_taxon, genome_length, coverage, qc_status, qc_overall_score,
            nt_identity_best_ref, nt_identity_assigned_refs, genetic_distance,
-           nearest_reference, nearest_reference_taxon, phylo_clade, bootstrap,
+           nearest_reference, nearest_reference_taxon, nearest_reference_outbreak,
+           msa_mean_distance_to_refs,
+           phylo_clade, bootstrap,
            diagnostic_sites_supported, conflicting_sites, assignment)
 
+  # NOTE: unlike earlier versions, this returns ALL assignments (CONFIRMED,
+  # AMBIGUOUS, REJECTED) rather than pre-filtering to CONFIRMED here. The
+  # CONFIRMED-only filter for the user-facing summary table now happens in
+  # make_identification_summary(); AMBIGUOUS/REJECTED rows are captured
+  # separately by make_unresolved_samples() instead of being discarded.
   if (!has_rows(out)) return(empty)
   out
 }
@@ -785,6 +926,100 @@ make_04_phylogenetic_placement <- function(inputs) {
     )
     out <- bind_rows(out, row)
   }
+
+  if (!has_rows(out)) return(empty)
+  out
+}
+
+# -----------------------------------------------------------------------------
+# Unified identification summary
+#
+# One row per CONFIRMED sample, combining the species assignment, the
+# similarity/genetic-distance to that sample's own closest reference
+# (joined from 02_sequence_similarity on the *specific* nearest_reference
+# tip, not the generic Nextclade dataset identity), MSA identity, and
+# distance to the assigned phylogenetic clade. Replaces the previous 4
+# separate tables with a single dashboard-facing table.
+# -----------------------------------------------------------------------------
+make_identification_summary <- function(species_df, seq_sim_df, msa_df, phylo_df) {
+  empty <- tibble(
+    sample = character(), species_identified = character(), coverage = numeric(),
+    qc_overall_score = numeric(),
+    closest_reference = character(), pct_identity_closest_ref = numeric(),
+    genetic_distance_closest_ref = numeric(),
+    distance_to_assigned_clade = numeric(), msa_identity = numeric(),
+    closest_outbreak = character()
+  )
+  if (!has_rows(species_df)) return(empty)
+
+  confirmed <- species_df %>% filter(assignment == "CONFIRMED")
+  if (!has_rows(confirmed)) return(empty)
+
+  seq_sim_closest <- tibble(sample = character(), percent_nucleotide_identity = numeric(), p_distance = numeric())
+  if (has_rows(seq_sim_df)) {
+    seq_sim_closest <- seq_sim_df %>%
+      inner_join(confirmed %>% select(sample, nearest_reference), by = "sample") %>%
+      filter(reference == nearest_reference) %>%
+      select(sample, percent_nucleotide_identity, p_distance) %>%
+      distinct(sample, .keep_all = TRUE)
+  }
+
+  msa_identity <- tibble(sample = character(), mean_identity = numeric())
+  if (has_rows(msa_df)) {
+    msa_identity <- msa_df %>% select(sample, mean_identity) %>% distinct(sample, .keep_all = TRUE)
+  }
+
+  clade_distance <- tibble(sample = character(), distance_to_assigned_clade = numeric())
+  if (has_rows(phylo_df)) {
+    clade_distance <- phylo_df %>% select(sample, distance_to_assigned_clade) %>% distinct(sample, .keep_all = TRUE)
+  }
+
+  out <- confirmed %>%
+    left_join(seq_sim_closest, by = "sample") %>%
+    left_join(msa_identity, by = "sample") %>%
+    left_join(clade_distance, by = "sample") %>%
+    mutate(
+      pct_identity_closest_ref = coalesce(percent_nucleotide_identity, nt_identity_best_ref),
+      genetic_distance_closest_ref = coalesce(p_distance, genetic_distance),
+      # MSA-fallback mean distance to all references (used when there's no
+      # Nextclade tree to compute a proper clade-distance from, e.g. SUDV).
+      distance_to_assigned_clade = coalesce(distance_to_assigned_clade, msa_mean_distance_to_refs),
+      mean_identity = coalesce(mean_identity, nt_identity_best_ref)
+    ) %>%
+    select(
+      sample,
+      species_identified = assigned_taxon,
+      coverage,
+      qc_overall_score,
+      closest_reference = nearest_reference,
+      pct_identity_closest_ref,
+      genetic_distance_closest_ref,
+      distance_to_assigned_clade,
+      msa_identity = mean_identity,
+      closest_outbreak = nearest_reference_outbreak
+    )
+
+  if (!has_rows(out)) return(empty)
+  out
+}
+
+# -----------------------------------------------------------------------------
+# Unresolved samples log
+#
+# Samples that did NOT pass identification (AMBIGUOUS/REJECTED) for this
+# species, kept for traceability instead of silently disappearing from the
+# per-species output.
+# -----------------------------------------------------------------------------
+make_unresolved_samples <- function(species_df) {
+  empty <- tibble(
+    sample = character(), assignment = character(),
+    coverage = numeric(), qc_status = character()
+  )
+  if (!has_rows(species_df)) return(empty)
+
+  out <- species_df %>%
+    filter(assignment %in% c("AMBIGUOUS", "REJECTED")) %>%
+    select(sample, assignment, coverage, qc_status)
 
   if (!has_rows(out)) return(empty)
   out
@@ -1419,30 +1654,18 @@ outputs$species <- make_00_species_assignment(inputs)
 outputs$seq_sim <- make_02_sequence_similarity(inputs)
 outputs$msa <- make_03_msa_profile(inputs)
 outputs$phylo <- make_04_phylogenetic_placement(inputs)
+outputs$summary <- make_identification_summary(outputs$species, outputs$seq_sim, outputs$msa, outputs$phylo)
+outputs$unresolved <- make_unresolved_samples(outputs$species)
 
-log_info("Writing species assignment outputs")
-write_tsv(outputs$species, "00_species_assignment.tsv", subdir = "species_identification")
-write_tsv(outputs$seq_sim, "02_sequence_similarity.tsv", subdir = "species_identification")
-write_tsv(outputs$msa, "03_msa_profile.tsv", subdir = "species_identification")
-write_tsv(outputs$phylo, "04_phylogenetic_placement.tsv", subdir = "species_identification")
+log_info("Writing species identification outputs")
+write_tsv(outputs$summary, "identification_summary.tsv", subdir = "species_identification")
+write_tsv(outputs$unresolved, "unresolved_samples.tsv", subdir = "species_identification")
 
 log_info("Writing MultiQC custom-content tables")
 run_prefix <- opts$`run-id`
-write_mqc_tsv(outputs$species, paste0(run_prefix, "_00_species_assignment_mqc.tsv"),
-              id = "species_assignment_summary", section_name = "Species Assignment",
-              description = "Per-sample species/taxon assignment, coverage, QC status, and nearest reference.",
-              subdir = "species_identification/mqc")
-write_mqc_tsv(outputs$seq_sim, paste0(run_prefix, "_02_sequence_similarity_mqc.tsv"),
-              id = "sequence_similarity_summary", section_name = "Sequence Similarity",
-              description = "Per-sample pairwise nucleotide identity and alignment stats vs. reference sequences.",
-              subdir = "species_identification/mqc")
-write_mqc_tsv(outputs$msa, paste0(run_prefix, "_03_msa_profile_mqc.tsv"),
-              id = "msa_profile_summary", section_name = "MSA Profile",
-              description = "Per-sample multiple-sequence-alignment statistics.",
-              subdir = "species_identification/mqc")
-write_mqc_tsv(outputs$phylo, paste0(run_prefix, "_04_phylogenetic_placement_mqc.tsv"),
-              id = "phylogenetic_placement_summary", section_name = "Phylogenetic Placement",
-              description = "Per-sample nearest tree neighbors and distance to assigned clade.",
+write_mqc_tsv(outputs$summary, paste0(run_prefix, "_identification_summary_mqc.tsv"),
+              id = "identification_summary", section_name = "Species Identification Summary",
+              description = "Per-sample confirmed species assignment, coverage, QC status, closest reference (and its outbreak), identity/genetic distance to that reference, phylogenetic clade, and MSA identity.",
               subdir = "species_identification/mqc")
 
 log_info("Done. Outputs in ", outdir)

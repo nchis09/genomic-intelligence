@@ -39,7 +39,7 @@ dashboard/
   modules/
     home.R                          # Intelligence Overview UI + GIF intro-text helper
     assessment.R                    # MONITOR/INVESTIGATE/ESCALATE + confidence heuristic
-    pathogen_identification.R       # Biological Threat: the 4 curated tables/plots, per species
+    pathogen_identification.R       # Biological Threat: interactive comparison workspace (selectize + plotly charts + DT table)
     placeholder.R                   # roadmap objectives + "Planned" placeholder cards + Brief preview modal
 ```
 
@@ -74,10 +74,11 @@ Alternatively, open `dashboard/app.R` in RStudio and click **Run App**.
    to see its assessment, confidence, and Key Intelligence Signals. Click a
    signal, or the "Explore Evidence" button, to jump straight into that
    species' Biological Threat tables.
-3. Under **Biological Threat** in the sidebar, browse the four cards —
-   Species Assignment, Sequence Similarity, MSA Profile, Phylogenetic
-   Placement — each showing the same table currently published to the
-   MultiQC report, plus a quick supporting bar plot.
+3. Under **Biological Threat** in the sidebar, select samples from the
+   multi-select picker (up to 5) to see a summary strip and interactive
+   plotly comparison charts (coverage, identity, genetic distance, QC score,
+   clade distance, MSA identity). The full identification results table
+   below has checkboxes synced with the picker.
 4. The other sidebar items (Transmission & Spread, Geographic & Temporal
    Context, etc.) are roadmap pages for now — they describe what each
    objective will show once its data source is wired in. **Intelligence
@@ -89,10 +90,8 @@ Alternatively, open `dashboard/app.R` in RStudio and click **Run App**.
 Reads directly from:
 
 ```
-<outdir>/pathogen_identification/<species>/species_identification/00_species_assignment.tsv
-<outdir>/pathogen_identification/<species>/species_identification/02_sequence_similarity.tsv
-<outdir>/pathogen_identification/<species>/species_identification/03_msa_profile.tsv
-<outdir>/pathogen_identification/<species>/species_identification/04_phylogenetic_placement.tsv
+<outdir>/pathogen_identification/<species>/species_identification/identification_summary.tsv
+<outdir>/pathogen_identification/<species>/species_identification/unresolved_samples.tsv
 ```
 
 No database connection — these are the same plain TSVs written by

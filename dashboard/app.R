@@ -25,6 +25,7 @@ suppressPackageStartupMessages({
   library(readr)
   library(dplyr)
   library(ggplot2)
+  library(plotly)
   library(yaml)
 })
 
@@ -152,6 +153,119 @@ brand_css <- "
     outline: none !important;
     box-shadow: none !important;
   }
+
+  /* ---- Pathogen Identification: comparison workspace ---- */
+  .pi-summary-strip {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .pi-summary-card {
+    flex: 1 1 180px;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 16px 20px;
+    text-align: center;
+    min-width: 160px;
+  }
+  .pi-summary-card .pi-sc-label {
+    font-size: 0.75rem;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .pi-summary-card .pi-sc-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #4A6C8C;
+    line-height: 1.2;
+  }
+  .pi-summary-card .pi-sc-detail {
+    font-size: 0.78rem;
+    color: #888;
+    margin-top: 2px;
+  }
+  .pi-info-card {
+    flex: 1 1 220px;
+    background: #eef3f8;
+    border: 1px solid #c5d4e3;
+    border-radius: 8px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 200px;
+  }
+  .pi-info-card .fa, .pi-info-card .fas {
+    font-size: 1.2rem;
+    color: #4A6C8C;
+  }
+  .pi-info-card span {
+    font-size: 0.82rem;
+    color: #4A6C8C;
+  }
+  .pi-chart-section {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    padding: 20px 16px 12px;
+    margin-bottom: 16px;
+  }
+  .pi-chart-section h5 {
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: #333;
+  }
+  .pi-legend {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+  .pi-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    color: #333;
+  }
+  .pi-legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .pi-sample-select-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .pi-sample-select-bar .form-group {
+    flex: 1;
+    margin-bottom: 0 !important;
+  }
+  /* Smaller sidebar menu font */
+  .sidebar-menu .nav-link {
+    font-size: 0.82rem !important;
+    padding: 8px 12px !important;
+  }
+  .sidebar-menu .nav-header {
+    font-size: 0.7rem !important;
+  }
+  /* Smaller header & cell font for the identification results table */
+  .dataTables_wrapper th {
+    font-size: 0.78rem !important;
+  }
+  .dataTables_wrapper td {
+    font-size: 0.82rem !important;
+  }
 "
 
 # -----------------------------------------------------------------------------
@@ -271,10 +385,10 @@ server <- function(input, output, session) {
     ))
   })
 
-  # -- Register renderDT/renderPlot outputs for every discovered species.
+  # -- Register renderDT outputs for every discovered species.
   observeEvent(species_rv(), {
     for (sp in species_rv()) {
-      pathogen_identification_register(output, sp, outdir_r)
+      pathogen_identification_register(input, output, session, sp, outdir_r)
     }
   }, ignoreNULL = FALSE)
 
