@@ -12,11 +12,6 @@ process NEXTSTRAIN_EBOLA_INGEST {
 
     conda "${projectDir}/envs/pgirl_nextstrain.yml"
 
-    beforeScript """
-    python -c "import pandas" 2>/dev/null || python -m pip install --quiet pandas
-    python -c "import bio" 2>/dev/null || python -m pip install --quiet bio
-    """
-
     input:
     val(meta)
 
@@ -30,6 +25,17 @@ process NEXTSTRAIN_EBOLA_INGEST {
     def species        = (meta.species ?: meta.id).replaceAll(/^.*_/, '')
     def nextstrain_dir = "${projectDir}/data/nextstrain_ebola"
     """
+    # Ensure the ingest Python helpers are available in the activated conda env.
+    # Some conda envs expose only 'python', but the upstream ingest scripts call
+    # 'python3' in their shebang, so make sure python3 resolves to the env Python.
+    PY_BIN=\$(dirname \$(which python))
+    if [ ! -e "\${PY_BIN}/python3" ]; then
+        ln -sf "\${PY_BIN}/python" "\${PY_BIN}/python3"
+    fi
+    export PATH="\${PY_BIN}:\${PATH}"
+    python3 -c "import pandas" 2>/dev/null || python3 -m pip install --quiet pandas
+    python3 -c "import bio" 2>/dev/null || python3 -m pip install --quiet bio
+
     INGEST_DIR="${nextstrain_dir}/ingest"
     SPP_DATA="\${INGEST_DIR}/data/${species}"
 
