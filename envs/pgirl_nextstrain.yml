@@ -28,7 +28,8 @@ dependencies:
   - seqkit>=2.6
   - biopython>=1.83
   - csvtk>=0.30
-  # Ingest dependencies (NCBI Entrez, JSON parsing for fetch rules)
+  # Ingest dependencies (kept here as fallback, but ingest now uses pgirl_ebola_ingest.yml)
+  - pandas>=2.0
   - jq
   - pip
   - pip:

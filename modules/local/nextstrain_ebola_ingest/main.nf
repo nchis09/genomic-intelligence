@@ -10,10 +10,10 @@ process NEXTSTRAIN_EBOLA_INGEST {
     tag "$meta.id"
     label 'process_medium'
 
-    conda "${projectDir}/envs/pgirl_nextstrain.yml"
+    conda "${projectDir}/envs/pgirl_ebola_ingest.yml"
 
     input:
-    tuple val(meta)
+    val(meta)
 
     output:
     tuple val(meta), path('background/sequences.fasta'), path('background/metadata.tsv'), emit: background
