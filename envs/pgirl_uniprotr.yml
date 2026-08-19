@@ -1,9 +1,8 @@
 name: pgirl_uniprotr
 channels:
   - conda-forge
-  - bioconda
-  - defaults
 dependencies:
+  - git
   - r-base>=4.2
   - r-httr
   - r-progress
@@ -12,3 +11,4 @@ dependencies:
   - r-stringi
   - r-tibble
   - r-curl
+  - r-remotes

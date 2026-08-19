@@ -40,8 +40,15 @@ CREATE TABLE IF NOT EXISTS samples (
     aa_mutation_count INTEGER,
     nextclade_qc TEXT,
     is_query BOOLEAN DEFAULT FALSE,
+    nextclade_json JSONB,
+    alignment_score REAL,
+    divergence REAL,
     UNIQUE(run_id, sample_name)
 );
+
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS nextclade_json JSONB;
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS alignment_score REAL;
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS divergence REAL;
 
 CREATE TABLE IF NOT EXISTS genomes (
     genome_id SERIAL PRIMARY KEY,
@@ -112,6 +119,7 @@ CREATE TABLE IF NOT EXISTS tree_tips (
     sample_id INTEGER REFERENCES samples(sample_id),
     label TEXT NOT NULL,
     is_query BOOLEAN DEFAULT FALSE,
+    clade TEXT,
     ppx_accession TEXT,
     insdc_accession TEXT,
     country TEXT,
@@ -127,6 +135,28 @@ CREATE TABLE IF NOT EXISTS tree_tips (
     aa_mutation_count INTEGER,
     nuc_mutation_count INTEGER
 );
+
+-- Remove duplicate (run_id, species, tree_method) tree/tip rows before enforcing uniqueness.
+-- This keeps the latest tree for each combination (highest tree_id).
+DELETE FROM tree_tips
+WHERE tree_id IN (
+    SELECT tree_id FROM (
+        SELECT tree_id,
+               row_number() OVER (PARTITION BY run_id, species, tree_method ORDER BY tree_id DESC) AS rn
+        FROM phylogenetic_trees
+    ) t WHERE t.rn > 1
+);
+
+DELETE FROM phylogenetic_trees
+WHERE tree_id IN (
+    SELECT tree_id FROM (
+        SELECT tree_id,
+               row_number() OVER (PARTITION BY run_id, species, tree_method ORDER BY tree_id DESC) AS rn
+        FROM phylogenetic_trees
+    ) t WHERE t.rn > 1
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_phylogenetic_trees_run_species_method ON phylogenetic_trees(run_id, species, tree_method);
 
 CREATE TABLE IF NOT EXISTS outbreaks (
     outbreak_id SERIAL PRIMARY KEY,
@@ -364,6 +394,27 @@ CREATE TABLE IF NOT EXISTS sample_geo_location (
     location_id INTEGER REFERENCES geographic_locations(location_id),
     PRIMARY KEY (sample_id, location_id)
 );
+
+ALTER TABLE tree_tips ADD COLUMN IF NOT EXISTS clade TEXT;
+
+CREATE TABLE IF NOT EXISTS clades (
+    clade_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    pathogen TEXT,
+    species TEXT,
+    clade_name TEXT,
+    lineage TEXT,
+    description TEXT,
+    UNIQUE(run_id, species, clade_name)
+);
+
+CREATE TABLE IF NOT EXISTS sample_clade (
+    sample_id INTEGER REFERENCES samples(sample_id),
+    clade_id INTEGER REFERENCES clades(clade_id),
+    PRIMARY KEY (sample_id, clade_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outbreaks_run_species_name ON outbreaks(run_id, species, name);
 
 -- Indexes for query-driven public health searches
 

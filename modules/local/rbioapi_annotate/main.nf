@@ -28,6 +28,12 @@ process RBIOAPI_ANNOTATE {
     def species     = meta.species ?: meta.id.replaceAll(/^.*_/, '')
     def rbioapi_dir = "${projectDir}/tools/rbioapi"
     """
+    # Auto-download rbioapi on first run if the local clone is empty/missing.
+    if [ ! -f "${projectDir}/tools/rbioapi/DESCRIPTION" ]; then
+        rm -rf "${projectDir}/tools/rbioapi"
+        git clone https://github.com/moosa-r/rbioapi.git "${projectDir}/tools/rbioapi"
+    fi
+
     mkdir -p rbioapi_results
 
     echo "=== Running rbioapi annotation (UniProt mutagenesis + STRING + Reactome) ==="

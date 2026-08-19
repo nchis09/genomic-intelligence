@@ -16,11 +16,11 @@
 [![Launch on Seqera Platform](https://img.shields.io/badge/Launch%20%F0%9F%9A%80-Seqera%20Platform-%234256e7)](https://cloud.seqera.io/launch?pipeline=https://github.com/pgirl/genomic-intelligence)
 
 ````text
-  ____  ___  _
- / ___||_ _|| |
-| |  _  | | | |
-| |_| | | | | |___
- \____||___||_____|
+  ____  ___  _____
+ / ___||_ _||  ___|
+| |  _  | | | |_
+| |_| | | | |  _|
+ \____||___||_|
 
 
   o===o       o===o       o===o       o===o
@@ -70,15 +70,24 @@ The phylogenetics stage relies on background sequences from the [nextstrain/ebol
 git clone https://github.com/nextstrain/ebola.git data/nextstrain_ebola
 ```
 
-Then apply the augur compatibility patch (renames `_resolve_filepath` → `resolve_filepath`):
+The main pipeline automatically runs the Nextstrain Ebola ingest workflow for each detected species, so the required background `sequences.fasta` and `metadata.tsv` files are generated on demand. You can therefore proceed straight to **Usage**.
+
+If you prefer to pre-generate the background data (e.g. to save time during repeated runs, to run offline, or to inspect the ingest outputs), run the ingest Snakemake manually:
 
 ```bash
-PATCH_FILE="data/nextstrain_ebola/shared/vendored/snakemake/config.smk"
-if grep -q "_resolve_filepath" "$PATCH_FILE" 2>/dev/null; then
-  sed -i'' -e 's/_resolve_filepath/resolve_filepath/g' "$PATCH_FILE"
-  echo "Patch applied ✓"
-fi
+cd data/nextstrain_ebola/ingest
+snakemake --snakefile Snakefile \
+  --cores 4 \
+  --config species=[bdbv,sudv,ebov] \
+  --rerun-incomplete \
+  --nolock \
+  data/bdbv/sequences.fasta data/bdbv/metadata.tsv \
+  data/sudv/sequences.fasta data/sudv/metadata.tsv \
+  data/ebov/sequences.fasta data/ebov/metadata.tsv
+cd ../../..
 ```
+
+To skip the auto-ingest step and use pre-generated files, pass `--skip_nextstrain_ingest true` to the main pipeline.
 
 ## Usage
 
@@ -127,6 +136,8 @@ Results are published under `--outdir` (default `results/`), mostly one subdirec
 | `results/knowledge_warehouse/` | Per-species ingestion logs, the shared PostgreSQL data directory, and a SQL dump of the run's database. |
 
 Additionally, `results/pipeline_info/pipeline_metro_map_*.html` — an auto-generated [nf-metro](https://github.com/seqeralabs/nf-metro) metro-map diagram of the run's actual Nextflow task graph (skipped with a warning if `nf-metro` is unavailable; see Prerequisites).
+
+For a high-level conceptual overview of the pipeline's architecture (rather than the literal per-run task graph), see [`docs/architecture_overview.html`](docs/architecture_overview.html).
 
 ### Schema visualization
 

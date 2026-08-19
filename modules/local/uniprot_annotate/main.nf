@@ -27,6 +27,12 @@ process UNIPROT_ANNOTATE {
     def prefix       = task.ext.prefix ?: "${meta.id}"
     def uniprotr_dir = "${projectDir}/tools/UniprotR"
     """
+    # Auto-download UniprotR on first run if the local clone is empty/missing.
+    if [ ! -f "${projectDir}/tools/UniprotR/DESCRIPTION" ]; then
+        rm -rf "${projectDir}/tools/UniprotR"
+        git clone https://github.com/Proteomicslab57357/UniprotR.git "${projectDir}/tools/UniprotR"
+    fi
+
     mkdir -p uniprotr_results
 
     echo "=== Running UniprotR annotation ==="

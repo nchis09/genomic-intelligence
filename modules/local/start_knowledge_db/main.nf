@@ -12,6 +12,7 @@
 
 process START_KNOWLEDGE_DB {
     label 'process_single'
+    cache false
 
     conda "${projectDir}/envs/pgirl_knowledge.yml"
 
@@ -24,11 +25,10 @@ process START_KNOWLEDGE_DB {
     val(true), emit: ready
 
     script:
-    def data_dir = "${params.outdir}/knowledge_warehouse/_shared_pg_data"
-    def log_file = "${params.outdir}/knowledge_warehouse/_shared_postgres.log"
+    def data_dir = "${params.kw_data_dir}"
+    def log_file = "${params.kw_log_file}"
     """
     export PATH="\${CONDA_PREFIX:+\$CONDA_PREFIX/bin:}\$PATH"
-    mkdir -p "${params.outdir}/knowledge_warehouse"
     python3 ${projectDir}/bin/start_shared_db.py \\
         --data-dir ${data_dir} \\
         --log-file ${log_file} \\
