@@ -70,20 +70,9 @@ The phylogenetics stage relies on background sequences from the [nextstrain/ebol
 git clone https://github.com/nextstrain/ebola.git data/nextstrain_ebola
 ```
 
-The phylogenetics stage needs local background sequences and metadata from the Nextstrain ingest workflow. These are gitignored in the upstream repo and must be generated locally before the main pipeline runs. Run the ingest Snakemake for each species you plan to analyse (replace `<species>` with `bdbv`, `sudv`, `ebov`, or a list like `[bdbv,sudv]`):
+The main pipeline automatically runs the Nextstrain Ebola ingest workflow for each detected species, so the required background `sequences.fasta` and `metadata.tsv` files are generated on demand. You can therefore proceed straight to **Usage**.
 
-```bash
-cd data/nextstrain_ebola/ingest
-snakemake --snakefile Snakefile \
-  --cores 4 \
-  --config species=[<species>] \
-  --rerun-incomplete \
-  --nolock \
-  data/<species>/sequences.fasta data/<species>/metadata.tsv
-cd ../../..
-```
-
-For example, to prepare all three supported species at once:
+If you prefer to pre-generate the background data (e.g. to save time during repeated runs, to run offline, or to inspect the ingest outputs), run the ingest Snakemake manually:
 
 ```bash
 cd data/nextstrain_ebola/ingest
@@ -97,6 +86,8 @@ snakemake --snakefile Snakefile \
   data/ebov/sequences.fasta data/ebov/metadata.tsv
 cd ../../..
 ```
+
+To skip the auto-ingest step and use pre-generated files, pass `--skip_nextstrain_ingest true` to the main pipeline.
 
 ## Usage
 

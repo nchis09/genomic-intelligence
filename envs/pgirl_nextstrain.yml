@@ -28,3 +28,8 @@ dependencies:
   - seqkit>=2.6
   - biopython>=1.83
   - csvtk>=0.30
+  # Ingest dependencies (NCBI Entrez, JSON parsing for fetch rules)
+  - jq
+  - pip
+  - pip:
+      - bio
