@@ -10,7 +10,7 @@ process NEXTSTRAIN_EBOLA_INGEST {
     tag "$meta.id"
     label 'process_medium'
 
-    conda "${projectDir}/envs/pgirl_ebola_ingest.yml"
+    conda "${projectDir}/envs/pgirl_nextstrain.yml"
 
     input:
     val(meta)
