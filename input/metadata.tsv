@@ -1,3 +1,6 @@
 accession	strain	date	region	country	division	location	host
-SAMPLE-0001	SAMPLE-0001	2027-07-15	Africa	Uganda	Western Region	Kasese	human
-SAMPLE-0002	SAMPLE-0002	2027-07-16	Africa	Uganda	Western Region	Kasese	human
+SAMPLE-0001	SAMPLE-0001	15/07/2027	Africa	Uganda	Western Region	Kasese	human
+SAMPLE-0002	SAMPLE-0002	16/07/2027	Africa	Uganda	Western Region	Kasese	human
+SAMPLE-0003	SAMPLE-0003	17/07/2027	Africa	Uganda	Western Region	Kasese	human
+SAMPLE-0004	SAMPLE-0004	18/07/2027	Africa	Uganda	Western Region	Kasese	human
+SAMPLE-0005	SAMPLE-0005	19/07/2027	Africa	Uganda	Western Region	Kasese	human

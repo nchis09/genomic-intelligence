@@ -7,6 +7,7 @@
 process BUILD_KNOWLEDGE_DB {
     tag "$meta.id"
     label 'process_low'
+    cache false
 
     conda "${projectDir}/envs/pgirl_knowledge.yml"
 
@@ -39,12 +40,13 @@ process BUILD_KNOWLEDGE_DB {
     if (qd_real)                                           args << "--query-data-dir query_data"
     def hmm_list = hmm_files instanceof List ? hmm_files : [hmm_files]
     def hmm_real = hmm_list.findAll { !it.name.startsWith('NO_FILE') }
-    if (hmm_real)                                          args << "--hmm-dir hmm"
-    // `bioinformatics_results` is the guaranteed-staged copy of NEXTSTRAIN_EBOLA's
-    // own "results/" output dir (already an input above) -- reuse it directly
-    // instead of params.outdir, which is a relative string that would otherwise
-    // resolve inside this task's own work directory, not the real output tree.
-    args << "--results-dir ${bioinformatics_results}"
+    if (!hmm_real)                                          args << "--hmm-dir hmm"
+    args << "--species-screening-only"
+    // Resolve params.outdir to an absolute path so the loader can find
+    // classification/, nextclade/results/, etc. at the pipeline output root.
+    def outdir_abs = new File(params.outdir).absolutePath
+    args << "--results-dir ${outdir_abs}"
+    args << "--bioinfo-dir ${bioinformatics_results}"
     if (evidence_qc_ready)                                 args << "--evidence-qc-dir ${params.outdir}/evidence_qc/${meta.species}"
     // Connect to the pipeline-lifetime shared Postgres (started by
     // START_KNOWLEDGE_DB before any species processing begins) instead of

@@ -30,8 +30,9 @@ if (is.na(input_dir) || is.na(outdir) || is.na(species) || is.na(domain)) {
 }
 
 in_files <- list.files(input_dir, pattern = "\\.json$", full.names = TRUE)
-# Avoid reprocessing a summary file if the module is ever rerun on its own output.
-in_files <- in_files[!grepl("^deduplication_summary\\.json$", basename(in_files))]
+# Avoid reprocessing a summary file if the module is ever rerun on its own output,
+# and skip the placeholder written when PubMed found no publications.
+in_files <- in_files[!grepl("^(deduplication_summary|no_results)\\.json$", basename(in_files))]
 
 records <- lapply(in_files, fromJSON, simplifyVector = TRUE)
 input_count <- length(records)

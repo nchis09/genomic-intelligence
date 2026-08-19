@@ -1,0 +1,16 @@
+name: pgirl_ebola_ingest
+channels:
+  - nextstrain
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python>=3.10
+  - snakemake>=8.0
+  - augur>=25.0
+  - biopython>=1.83
+  - pandas>=2.0
+  - jq
+  - pip
+  - pip:
+      - bio

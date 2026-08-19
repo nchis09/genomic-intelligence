@@ -3,7 +3,6 @@ channels:
   - nextstrain
   - conda-forge
   - bioconda
-  - defaults
 dependencies:
   - python>=3.10
   - pip
@@ -28,3 +27,8 @@ dependencies:
   - seqkit>=2.6
   - biopython>=1.83
   - csvtk>=0.30
+  # Ingest dependencies (used by the Nextstrain Ebola auto-ingest step)
+  - jq
+  - pip:
+      - bio
+      - pandas>=2.0

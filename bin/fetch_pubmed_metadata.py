@@ -199,7 +199,24 @@ def main() -> None:
     works = load_results(Path(args.results_json))
     if not works:
         print("[fetch] No publications in results.json", file=sys.stderr)
-        Path(args.outdir).mkdir(parents=True, exist_ok=True)
+        outdir = Path(args.outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        no_results = {
+            "no_results": True,
+            "species": args.species,
+            "domain": args.domain,
+            "pmid": "",
+            "title": "",
+            "abstract": "",
+            "authors": [],
+            "year": "",
+            "doi": "",
+            "journal": "",
+            "keywords": [],
+            "pmcid": "",
+        }
+        with open(outdir / "no_results.json", "w", encoding="utf-8") as fh:
+            json.dump(no_results, fh, ensure_ascii=False, indent=2)
         return
 
     pmids = []

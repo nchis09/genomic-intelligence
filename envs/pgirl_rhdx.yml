@@ -1,9 +1,8 @@
 name: pgirl_rhdx
 channels:
   - conda-forge
-  - bioconda
-  - defaults
 dependencies:
+  - git
   - r-base>=4.2
   - r-remotes
   - r-pkgbuild
