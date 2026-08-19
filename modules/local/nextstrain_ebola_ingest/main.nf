@@ -12,6 +12,11 @@ process NEXTSTRAIN_EBOLA_INGEST {
 
     conda "${projectDir}/envs/pgirl_nextstrain.yml"
 
+    beforeScript """
+    python -c "import pandas" 2>/dev/null || python -m pip install --quiet pandas
+    python -c "import bio" 2>/dev/null || python -m pip install --quiet bio
+    """
+
     input:
     val(meta)
 
