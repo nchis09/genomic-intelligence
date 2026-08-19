@@ -83,17 +83,18 @@ snakemake --snakefile Snakefile \
 cd ../../..
 ```
 
-For example, to prepare the BDBV and SUDV background data:
+For example, to prepare all three supported species at once:
 
 ```bash
 cd data/nextstrain_ebola/ingest
 snakemake --snakefile Snakefile \
   --cores 4 \
-  --config species=[bdbv,sudv] \
+  --config species=[bdbv,sudv,ebov] \
   --rerun-incomplete \
   --nolock \
   data/bdbv/sequences.fasta data/bdbv/metadata.tsv \
-  data/sudv/sequences.fasta data/sudv/metadata.tsv
+  data/sudv/sequences.fasta data/sudv/metadata.tsv \
+  data/ebov/sequences.fasta data/ebov/metadata.tsv
 cd ../../..
 ```
 
