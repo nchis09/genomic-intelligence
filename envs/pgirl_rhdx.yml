@@ -2,6 +2,7 @@ name: pgirl_rhdx
 channels:
   - conda-forge
 dependencies:
+  - git
   - r-base>=4.2
   - r-remotes
   - r-pkgbuild
