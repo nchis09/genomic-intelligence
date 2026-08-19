@@ -70,14 +70,31 @@ The phylogenetics stage relies on background sequences from the [nextstrain/ebol
 git clone https://github.com/nextstrain/ebola.git data/nextstrain_ebola
 ```
 
-Then apply the augur compatibility patch (renames `_resolve_filepath` → `resolve_filepath`):
+The phylogenetics stage needs local background sequences and metadata from the Nextstrain ingest workflow. These are gitignored in the upstream repo and must be generated locally before the main pipeline runs. Run the ingest Snakemake for each species you plan to analyse (replace `<species>` with `bdbv`, `sudv`, `ebov`, or a list like `[bdbv,sudv]`):
 
 ```bash
-PATCH_FILE="data/nextstrain_ebola/shared/vendored/snakemake/config.smk"
-if grep -q "_resolve_filepath" "$PATCH_FILE" 2>/dev/null; then
-  sed -i'' -e 's/_resolve_filepath/resolve_filepath/g' "$PATCH_FILE"
-  echo "Patch applied ✓"
-fi
+cd data/nextstrain_ebola/ingest
+snakemake --snakefile Snakefile \
+  --cores 4 \
+  --config species=[<species>] \
+  --rerun-incomplete \
+  --nolock \
+  data/<species>/sequences.fasta data/<species>/metadata.tsv
+cd ../../..
+```
+
+For example, to prepare the BDBV and SUDV background data:
+
+```bash
+cd data/nextstrain_ebola/ingest
+snakemake --snakefile Snakefile \
+  --cores 4 \
+  --config species=[bdbv,sudv] \
+  --rerun-incomplete \
+  --nolock \
+  data/bdbv/sequences.fasta data/bdbv/metadata.tsv \
+  data/sudv/sequences.fasta data/sudv/metadata.tsv
+cd ../../..
 ```
 
 ## Usage
