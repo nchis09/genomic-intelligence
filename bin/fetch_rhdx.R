@@ -31,6 +31,9 @@ hdx_key      <- parse_arg("--hdx-key", Sys.getenv("HDX_API_KEY"))
 user_agent   <- parse_arg("--user-agent", "pgirl-genomic-intelligence/1.0")
 ignore_hdx_errors <- "--ignore-hdx-errors" %in% args
 
+# Empty string from CLI/env should be treated as no key
+if (!is.null(hdx_key) && !nzchar(hdx_key)) hdx_key <- NULL
+
 if (is.null(disease) || is.null(rhdx_dir)) {
   stop("Usage: Rscript fetch_rhdx.R --disease <term> --rhdx_dir <dir> [--species <virus>] [--mapping <yml>] [--outdir <dir>] [--rows <n>] [--hdx-key <key>] [--user-agent <agent>] [--ignore-hdx-errors]")
 }
@@ -67,7 +70,9 @@ if (!is.null(mapping_file) && file.exists(mapping_file)) {
 }
 
 # ---- Configure HDX ----
-set_rhdx_config(hdx_site = "prod", hdx_key = hdx_key, user_agent = user_agent)
+set_rhdx_config(hdx_site = "prod")
+if (!is.null(hdx_key)) set_rhdx_config(hdx_key = hdx_key)
+if (!is.null(user_agent) && nzchar(user_agent)) crul::set_opts(useragent = user_agent)
 
 message(paste("Searching HDX for:", disease))
 

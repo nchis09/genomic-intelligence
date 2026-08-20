@@ -30,8 +30,8 @@ process FETCH_EPIDEMIOLOGICAL_DATA {
     def ignore_hdx_errors_arg = params.ignore_hdx_errors ? "--ignore-hdx-errors" : ""
     """
     # Optional HTTP(S) proxy for compute nodes without direct outbound access.
-    [ -n "${params.http_proxy}" ] && export http_proxy="${params.http_proxy}"
-    [ -n "${params.https_proxy}" ] && export https_proxy="${params.https_proxy}"
+    [ -n "${params.http_proxy}" ] && [ "${params.http_proxy}" != "null" ] && export http_proxy="${params.http_proxy}"
+    [ -n "${params.https_proxy}" ] && [ "${params.https_proxy}" != "null" ] && export https_proxy="${params.https_proxy}"
 
     # Ensure rhdx is cloned and installed once in a concurrency-safe way.
     RHDX_DIR="\$(${projectDir}/bin/setup_tool.sh rhdx https://github.com/dickoa/rhdx.git --install)"
