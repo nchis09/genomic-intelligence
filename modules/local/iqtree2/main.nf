@@ -25,6 +25,6 @@ process IQTREE2 {
     def prefix  = "${meta.id}"
     def args    = task.ext.args ?: ''
     """
-    iqtree -s ${alignment} -pre ${prefix} ${args}
+    iqtree -s ${alignment} -pre ${prefix} -nt ${task.cpus} -m GTR+I+G ${args}
     """
 }
