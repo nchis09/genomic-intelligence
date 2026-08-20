@@ -26,11 +26,8 @@ process FETCH_EPIDEMIOLOGICAL_DATA {
     def rows = params.epi_hdx_rows ?: 20
     def species_arg = species ? "--species \"${species}\"" : ""
     """
-    # Auto-download the rhdx tool on first run if the local clone is empty/missing.
-    if [ ! -f "${projectDir}/tools/rhdx/DESCRIPTION" ]; then
-        rm -rf "${projectDir}/tools/rhdx"
-        git clone https://github.com/dickoa/rhdx.git "${projectDir}/tools/rhdx"
-    fi
+    # Ensure rhdx is cloned once in a concurrency-safe way.
+    RHDX_DIR="\$(${projectDir}/bin/setup_tool.sh rhdx https://github.com/dickoa/rhdx.git)"
 
     \$CONDA_PREFIX/bin/Rscript ${projectDir}/bin/fetch_rhdx.R \
         --disease "${search_term}" \
