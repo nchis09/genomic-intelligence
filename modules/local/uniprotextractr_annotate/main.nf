@@ -27,16 +27,13 @@ process UNIPROT_EXTRACTR_ANNOTATE {
     def prefix       = task.ext.prefix ?: "${meta.id}"
     def extractr_dir = "${projectDir}/tools/UniProtExtractR"
     """
-    # Auto-download UniProtExtractR on first run if the local clone is empty/missing.
-    if [ ! -f "${projectDir}/tools/UniProtExtractR/DESCRIPTION" ]; then
-        rm -rf "${projectDir}/tools/UniProtExtractR"
-        git clone https://github.com/alex-bio/UniProtExtractR.git "${projectDir}/tools/UniProtExtractR"
-    fi
+    # Ensure UniProtExtractR is cloned once in a concurrency-safe way.
+    EXTRACTR_DIR="\$(${projectDir}/bin/setup_tool.sh UniProtExtractR https://github.com/alex-bio/UniProtExtractR.git)"
 
     mkdir -p uniprotextractr_results
 
     echo "=== Running UniProtExtractR annotation ==="
-    Rscript ${projectDir}/bin/annotate_uniprotextractr.R \\
+    \$CONDA_PREFIX/bin/Rscript ${projectDir}/bin/annotate_uniprotextractr.R \\
         --input ${uniprot_tsv} \\
         --extractr_dir ${extractr_dir} \\
         --outdir uniprotextractr_results \\

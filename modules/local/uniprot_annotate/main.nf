@@ -27,16 +27,13 @@ process UNIPROT_ANNOTATE {
     def prefix       = task.ext.prefix ?: "${meta.id}"
     def uniprotr_dir = "${projectDir}/tools/UniprotR"
     """
-    # Auto-download UniprotR on first run if the local clone is empty/missing.
-    if [ ! -f "${projectDir}/tools/UniprotR/DESCRIPTION" ]; then
-        rm -rf "${projectDir}/tools/UniprotR"
-        git clone https://github.com/Proteomicslab57357/UniprotR.git "${projectDir}/tools/UniprotR"
-    fi
+    # Ensure UniprotR is cloned once in a concurrency-safe way.
+    UNIPROTR_DIR="\$(${projectDir}/bin/setup_tool.sh UniprotR https://github.com/Proteomicslab57357/UniprotR.git)"
 
     mkdir -p uniprotr_results
 
     echo "=== Running UniprotR annotation ==="
-    Rscript ${projectDir}/bin/annotate_uniprotr.R \\
+    \$CONDA_PREFIX/bin/Rscript ${projectDir}/bin/annotate_uniprotr.R \\
         --accessions ${accessions_txt} \\
         --uniprotr_dir ${uniprotr_dir} \\
         --outdir uniprotr_results \\
