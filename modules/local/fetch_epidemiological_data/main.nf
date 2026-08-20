@@ -25,9 +25,19 @@ process FETCH_EPIDEMIOLOGICAL_DATA {
     script:
     def rows = params.epi_hdx_rows ?: 20
     def species_arg = species ? "--species \"${species}\"" : ""
+    def hdx_key_arg = params.hdx_key ? "--hdx-key \"${params.hdx_key}\"" : ""
+    def user_agent_arg = params.hdx_user_agent ? "--user-agent \"${params.hdx_user_agent}\"" : ""
+    def ignore_hdx_errors_arg = params.ignore_hdx_errors ? "--ignore-hdx-errors" : ""
     """
-    # Ensure rhdx is cloned once in a concurrency-safe way.
-    RHDX_DIR="\$(${projectDir}/bin/setup_tool.sh rhdx https://github.com/dickoa/rhdx.git)"
+    # Optional HTTP(S) proxy for compute nodes without direct outbound access.
+    [ -n "${params.http_proxy}" ] && export http_proxy="${params.http_proxy}"
+    [ -n "${params.https_proxy}" ] && export https_proxy="${params.https_proxy}"
+
+    # Ensure rhdx is cloned and installed once in a concurrency-safe way.
+    RHDX_DIR="\$(${projectDir}/bin/setup_tool.sh rhdx https://github.com/dickoa/rhdx.git --install)"
+
+    # Point R at the shared tool library where rhdx was installed.
+    export R_LIBS_USER="\${RHDX_DIR}/r_library:\${R_LIBS_USER:-}"
 
     \$CONDA_PREFIX/bin/Rscript ${projectDir}/bin/fetch_rhdx.R \
         --disease "${search_term}" \
@@ -35,6 +45,9 @@ process FETCH_EPIDEMIOLOGICAL_DATA {
         --mapping "${projectDir}/database/hdx_ebola_datasets.yml" \
         ${species_arg} \
         --outdir . \
-        --rows ${rows}
+        --rows ${rows} \
+        ${hdx_key_arg} \
+        ${user_agent_arg} \
+        ${ignore_hdx_errors_arg}
     """
 }

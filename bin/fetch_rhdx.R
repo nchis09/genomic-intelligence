@@ -27,9 +27,12 @@ rows         <- as.integer(parse_arg("--rows", "20"))
 rhdx_dir     <- parse_arg("--rhdx_dir", "tools/rhdx")
 species      <- parse_arg("--species", NULL)
 mapping_file <- parse_arg("--mapping", NULL)
+hdx_key      <- parse_arg("--hdx-key", Sys.getenv("HDX_API_KEY"))
+user_agent   <- parse_arg("--user-agent", "pgirl-genomic-intelligence/1.0")
+ignore_hdx_errors <- "--ignore-hdx-errors" %in% args
 
 if (is.null(disease) || is.null(rhdx_dir)) {
-  stop("Usage: Rscript fetch_rhdx.R --disease <term> --rhdx_dir <dir> [--species <virus>] [--mapping <yml>] [--outdir <dir>] [--rows <n>]")
+  stop("Usage: Rscript fetch_rhdx.R --disease <term> --rhdx_dir <dir> [--species <virus>] [--mapping <yml>] [--outdir <dir>] [--rows <n>] [--hdx-key <key>] [--user-agent <agent>] [--ignore-hdx-errors]")
 }
 
 if (!dir.exists(rhdx_dir)) {
@@ -64,11 +67,21 @@ if (!is.null(mapping_file) && file.exists(mapping_file)) {
 }
 
 # ---- Configure HDX ----
-set_rhdx_config(hdx_site = "prod")
+set_rhdx_config(hdx_site = "prod", hdx_key = hdx_key, user_agent = user_agent)
 
 message(paste("Searching HDX for:", disease))
 
-datasets <- search_datasets(disease, rows = rows)
+datasets <- tryCatch(
+  search_datasets(disease, rows = rows),
+  error = function(e) {
+    msg <- paste("HDX search failed for term '", disease, "': ", e$message, sep = "")
+    if (isTRUE(ignore_hdx_errors)) {
+      warning(msg)
+      return(list())
+    }
+    stop(msg)
+  }
+)
 
 epi_dir <- file.path(outdir, "epi_data")
 if (!is.null(species) && species != "all") {
