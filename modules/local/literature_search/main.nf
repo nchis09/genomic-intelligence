@@ -30,6 +30,17 @@ process LITERATURE_SEARCH {
     script:
     def max_results = params.literature_search_max_results ?: 1000
     """
+    [ -n "\${CONDA_PREFIX}" ] && export PATH="\${CONDA_PREFIX}/bin:\${PATH}"
+
+    # Fallback: if the conda env did not expose python, locate the cached
+    # literature env directly and prepend its bin directory to PATH.
+    if ! command -v python >/dev/null 2>&1; then
+        LIT_ENV=\$(find ${projectDir}/work/conda -maxdepth 1 -type d -name 'pgirl_literature-*' | head -n1)
+        if [ -n "\${LIT_ENV}" ]; then
+            export PATH="\${LIT_ENV}/bin:\${PATH}"
+        fi
+    fi
+
     python ${script} \
         --species "${meta.species}" \
         --terms-yaml "${terms_yaml}" \
