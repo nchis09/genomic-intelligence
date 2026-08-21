@@ -31,6 +31,7 @@ local({
     message("[dashboard] Installing CRAN packages: ", paste(missing_cran, collapse = ", "))
     install.packages(missing_cran, repos = "https://cloud.r-project.org", quiet = TRUE)
   }
+
   if (length(missing_bioc) > 0) {
     if (!requireNamespace("BiocManager", quietly = TRUE)) {
       install.packages("BiocManager", repos = "https://cloud.r-project.org", quiet = TRUE)

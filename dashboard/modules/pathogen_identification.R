@@ -63,6 +63,12 @@ PI_UNRESOLVED_TABLE <- list(
 PI_COLORS <- c("#2ECC71", "#3498DB", "#F39C12", "#E74C3C", "#9B59B6",
                "#1ABC9C", "#E67E22", "#34495E", "#E91E63", "#00BCD4")
 
+# Default d3.scaleOrdinal.schemeCategory10 palette used by parcoords
+PI_PARCOORDS_COLORS <- c(
+  "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+  "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
+)
+
 # Metrics to chart: list(col, label, subtitle, higher_is_better, is_pct)
 PI_METRICS <- list(
   list(col = "coverage",                    label = "Coverage (%)",                      subtitle = "Higher is better",             higher = TRUE,  pct = TRUE),
@@ -136,6 +142,48 @@ pi_metric_chart <- function(sel_df, metric, color_map, dark_mode = FALSE) {
     ) %>%
     config(displayModeBar = FALSE)
   p
+}
+
+# ---------------------------------------------------------------------------
+# Parallel coordinates data for D3 r2d3
+# ---------------------------------------------------------------------------
+pi_parcoords_data <- function(sel_df, color_map, dark_mode = FALSE) {
+  if (nrow(sel_df) < 2) return(NULL)
+
+  cols   <- sapply(PI_METRICS, `[[`, "col")
+  titles <- sapply(PI_METRICS, function(m) gsub("\n", " ", m$label))
+  pct    <- sapply(PI_METRICS, `[[`, "pct")
+
+  n <- nrow(sel_df)
+  raw_vals <- matrix(0, nrow = n, ncol = length(cols))
+
+  for (i in seq_along(cols)) {
+    vals <- suppressWarnings(as.numeric(sel_df[[cols[i]]]))
+    if (pct[i]) vals <- vals * 100
+    raw_vals[, i] <- vals
+  }
+
+  closest_ref <- if ("closest_reference" %in% names(sel_df)) {
+    as.character(sel_df$closest_reference)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  samples <- lapply(seq_len(n), function(j) {
+    sample_name <- as.character(sel_df$sample[j])
+    sample_color <- color_map[[sample_name]]
+    if (is.null(sample_color) || is.na(sample_color)) {
+      sample_color <- PI_PARCOORDS_COLORS[((j - 1) %% length(PI_PARCOORDS_COLORS)) + 1]
+    }
+    list(
+      name = sample_name,
+      values = as.numeric(raw_vals[j, ]),
+      closest_reference = closest_ref[j],
+      color = unname(sample_color)
+    )
+  })
+
+  list(samples = samples, titles = titles, dark_mode = dark_mode)
 }
 
 # ---------------------------------------------------------------------------
@@ -381,24 +429,10 @@ pathogen_identification_register <- function(input, output, session, species, ou
     )
   })
 
-  # -- Comparison charts section
+  # -- Comparison charts section (single parallel coordinates plot)
   output[[pi_id(sp, "chart_section")]] <- renderUI({
     sel <- selected_samples()
     if (length(sel) < 2) return(NULL)
-
-    chart_outputs <- lapply(seq_along(PI_METRICS), function(i) {
-      column(width = 4, style = "margin-bottom: 12px;",
-        plotly::plotlyOutput(pi_id(sp, paste0("chart_", i)), height = "310px")
-      )
-    })
-
-    cmap <- color_map()
-    legend_items <- lapply(names(cmap), function(s) {
-      div(class = "pi-legend-item",
-        span(class = "pi-legend-swatch", style = paste0("background:", cmap[[s]], ";")),
-        s
-      )
-    })
 
     div(class = "pi-chart-section",
       div(style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
@@ -407,22 +441,37 @@ pathogen_identification_register <- function(input, output, session, species, ou
                      icon = icon("rotate-left"),
                      class = "btn-outline-secondary btn-sm")
       ),
-      fluidRow(chart_outputs),
-      div(class = "pi-legend", legend_items)
+      fluidRow(
+        column(width = 12,
+          uiOutput(pi_id(sp, "parcoords_chart"))
+        )
+      )
     )
   })
 
-  # -- Render each metric chart
-  lapply(seq_along(PI_METRICS), function(i) {
-    output[[pi_id(sp, paste0("chart_", i))]] <- plotly::renderPlotly({
-      sel <- selected_samples()
-      req(length(sel) >= 2)
-      dark <- isTRUE(input$is_dark_mode)
-      df <- summary_data()
-      sel_df <- df[df$sample %in% sel, , drop = FALSE]
-      sel_df <- sel_df[match(sel, sel_df$sample), , drop = FALSE]
-      pi_metric_chart(sel_df, PI_METRICS[[i]], color_map(), dark_mode = dark)
-    })
+  # -- Render parallel coordinates chart
+  output[[pi_id(sp, "parcoords_chart")]] <- renderUI({
+    sel <- selected_samples()
+    req(length(sel) >= 2)
+    dark <- isTRUE(input$is_dark_mode)
+    df <- summary_data()
+    sel_df <- df[df$sample %in% sel, , drop = FALSE]
+    sel_df <- sel_df[match(sel, sel_df$sample), , drop = FALSE]
+    data <- pi_parcoords_data(sel_df, color_map(), dark_mode = dark)
+    req(!is.null(data))
+    chart_id <- pi_id(sp, "parcoords_chart")
+    json_data <- jsonlite::toJSON(data, auto_unbox = TRUE)
+    js_candidates <- c(
+      file.path(getwd(), "www", "parcoords_ui.js"),
+      file.path(getwd(), "dashboard", "www", "parcoords_ui.js")
+    )
+    js_path <- js_candidates[file.exists(js_candidates)][1]
+    cache_bust <- if (!is.na(js_path)) as.integer(file.info(js_path)$mtime) else Sys.time()
+    tagList(
+      singleton(tags$script(src = "https://d3js.org/d3.v7.min.js")),
+      tags$script(src = paste0("parcoords_ui.js?v=", cache_bust)),
+      tags$script(HTML(paste0("drawParcoords('", chart_id, "', ", json_data, ");")))
+    )
   })
 
   # -- Second reset button (inside chart section)
