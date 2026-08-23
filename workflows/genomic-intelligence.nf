@@ -7,6 +7,7 @@ include { CLASSIFICATION         } from '../subworkflows/local/classification/ma
 include { PATHOGEN_ROUTER        } from '../subworkflows/local/pathogen_router/main'
 include { KNOWLEDGE_WAREHOUSE    } from '../subworkflows/local/knowledge_warehouse/main'
 include { PATHOGEN_IDENTIFICATION_WF } from '../subworkflows/local/pathogen_identification/main'
+include { MUTATION_PROFILE_WF    } from '../subworkflows/local/mutation_profile/main'
 
 include { REPORTING              } from '../subworkflows/local/reporting/main'
 
@@ -86,6 +87,8 @@ workflow GENOMIC_INTELLIGENCE {
     def ch_duckdb_dump = nextflow.Channel.empty()
     def ch_pathogen_id_tsv = nextflow.Channel.empty()
     def ch_pathogen_id_mqc = nextflow.Channel.empty()
+    def ch_mutation_profile_tsv = nextflow.Channel.empty()
+    def ch_mutation_profile_mqc = nextflow.Channel.empty()
     def ch_multiqc_report = nextflow.Channel.empty()
 
     db_host = nextflow.Channel.value(params.kw_db_host)
@@ -107,6 +110,16 @@ workflow GENOMIC_INTELLIGENCE {
             PATHOGEN_IDENTIFICATION_WF(ch_pathogen_id)
             ch_pathogen_id_tsv = PATHOGEN_IDENTIFICATION_WF.out.tsv
             ch_pathogen_id_mqc = PATHOGEN_IDENTIFICATION_WF.out.mqc_tsv
+        }
+
+        if (!params.skip_mutation_profile) {
+            ch_knowledge_db
+                .combine(ch_duckdb_dump)
+                .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
+                .set { ch_mutation_profile }
+            MUTATION_PROFILE_WF(ch_mutation_profile)
+            ch_mutation_profile_tsv = MUTATION_PROFILE_WF.out.tsv
+            ch_mutation_profile_mqc = MUTATION_PROFILE_WF.out.mqc_tsv
         }
 
     }

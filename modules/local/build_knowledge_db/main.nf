@@ -41,7 +41,6 @@ process BUILD_KNOWLEDGE_DB {
     def hmm_list = hmm_files instanceof List ? hmm_files : [hmm_files]
     def hmm_real = hmm_list.findAll { !it.name.startsWith('NO_FILE') }
     if (!hmm_real)                                          args << "--hmm-dir hmm"
-    args << "--species-screening-only"
     // Resolve params.outdir to an absolute path so the loader can find
     // classification/, nextclade/results/, etc. at the pipeline output root.
     def outdir_abs = new File(params.outdir).absolutePath

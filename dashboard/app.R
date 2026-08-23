@@ -55,6 +55,7 @@ suppressPackageStartupMessages({
 
 source("modules/pathogen_identification.R")
 source("modules/pathogen_genomics.R")
+source("modules/pathogen_mutation_profile.R")
 source("modules/assessment.R")
 source("modules/placeholder.R")
 source("modules/home.R")
@@ -470,9 +471,15 @@ server <- function(input, output, session) {
     pg_item <- if (length(species) > 0) {
       do.call(menuItem, c(
         list(text = "Pathogen Genomics", icon = icon("microscope"), startExpanded = FALSE),
-        lapply(species, function(sp) {
-          menuSubItem(text = toupper(sp), tabName = paste0("pg_", sp))
-        })
+        unlist(
+          lapply(species, function(sp) {
+            list(
+              menuSubItem(text = toupper(sp), tabName = paste0("pg_", sp)),
+              menuSubItem(text = paste0(toupper(sp), " Mutation"), tabName = paste0("mp_", sp))
+            )
+          }),
+          recursive = FALSE
+        )
       ))
     } else {
       menuItem("Pathogen Genomics", tabName = "pg_home", icon = icon("microscope"))
@@ -518,9 +525,15 @@ server <- function(input, output, session) {
     }
 
     pg_tabs <- if (length(species) > 0) {
-      lapply(species, function(sp) {
-        tabItem(tabName = paste0("pg_", sp), pathogen_genomics_ui(sp))
-      })
+      unlist(
+        lapply(species, function(sp) {
+          list(
+            tabItem(tabName = paste0("pg_", sp), pathogen_genomics_ui(sp)),
+            tabItem(tabName = paste0("mp_", sp), pathogen_mutation_profile_ui(sp))
+          )
+        }),
+        recursive = FALSE
+      )
     } else {
       list(tabItem(
         tabName = "pg_home",
@@ -558,6 +571,7 @@ server <- function(input, output, session) {
     for (sp in species_rv()) {
       pathogen_identification_register(input, output, session, sp, outdir_r)
       pathogen_genomics_register(input, output, session, sp, outdir_r)
+      pathogen_mutation_profile_register(input, output, session, sp, outdir_r)
     }
   }, ignoreNULL = FALSE)
 
