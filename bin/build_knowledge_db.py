@@ -1227,6 +1227,121 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
     print(f"  Loaded {len(auspice_files)} tree(s) and {loaded} tip(s)", file=sys.stderr)
 
 
+def _walk_tips_with_mutations(node, path=None, mutations=None):
+    if path is None:
+        path = [node]
+        mutations = [node.get("branch_attrs", {}).get("mutations", {})]
+    children = node.get("children", [])
+    if not children:
+        yield node, mutations
+    else:
+        for child in children:
+            child_path = path + [child]
+            child_mutations = mutations + [child.get("branch_attrs", {}).get("mutations", {})]
+            yield from _walk_tips_with_mutations(child, child_path, child_mutations)
+
+
+def load_background_from_auspice(conn, run_id, results_dir, species=None):
+    results_dir = Path(results_dir)
+    species_filter = normalize_text(species)
+    auspice_files = sorted(results_dir.rglob("*all-outbreaks.json"))
+    if species_filter:
+        auspice_files = [p for p in auspice_files if species_filter in [x.lower() for x in p.parts]]
+    if not auspice_files:
+        print("  SKIP: no Auspice JSON for background", file=sys.stderr)
+        return
+    loaded_samples = 0
+    loaded_muts = 0
+    with conn.cursor() as cur:
+        for path in auspice_files:
+            species = None
+            for part in path.parts:
+                if part.lower() in ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan"):
+                    species = part.lower()
+                    break
+            with open(path) as f:
+                data = json.load(f)
+            tree = data.get("tree") if isinstance(data, dict) else None
+            if not tree:
+                continue
+            cur.execute(
+                "SELECT sample_name FROM samples WHERE run_id = %s AND is_query = TRUE",
+                (run_id,),
+            )
+            query_labels = {r[0] for r in cur.fetchall()}
+
+            for tip, branch_mutations in _walk_tips_with_mutations(tree):
+                tip_attrs = tip.get("node_attrs", {})
+                label = normalize_text(tip.get("name"))
+                if not label or label in query_labels:
+                    continue
+                cur.execute(
+                    "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name = %s",
+                    (run_id, label),
+                )
+                if cur.fetchone():
+                    continue
+
+                country = normalize_country(_get_node_value(tip_attrs, "country"))
+                admin1 = normalize_text(_get_node_value(tip_attrs, "division"))
+                locality = normalize_text(_get_node_value(tip_attrs, "location"))
+                location_id = get_or_create_location(cur, country, admin1, None, locality)
+
+                cur.execute(
+                    """
+                    INSERT INTO samples (
+                        run_id, sample_name, pathogen, species, is_query,
+                        collection_date, country, host, outbreak, clade,
+                        best_dataset_file
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (run_id, sample_name) DO UPDATE
+                    SET is_query = EXCLUDED.is_query
+                    RETURNING sample_id
+                    """,
+                    (
+                        run_id,
+                        label,
+                        "orthoebolavirus",
+                        species,
+                        False,
+                        normalize_date(_get_node_value(tip_attrs, "date")),
+                        country,
+                        normalize_text(_get_node_value(tip_attrs, "host")),
+                        normalize_text(_get_node_value(tip_attrs, "outbreak")),
+                        normalize_text(_get_node_value(tip_attrs, "clade")),
+                        str(path),
+                    ),
+                )
+                sample_id = cur.fetchone()[0]
+                loaded_samples += 1
+
+                # Accumulate amino-acid mutations from every branch on the path
+                aa_muts = set()
+                for bm in branch_mutations:
+                    for gene, muts in bm.items():
+                        if gene == "nuc":
+                            continue
+                        for mut in muts:
+                            aa_muts.add(f"{gene}:{mut}")
+
+                for mut in sorted(aa_muts):
+                    parsed = _parse_mutation_column(mut)
+                    if not parsed:
+                        continue
+                    gene, ref_aa, pos, alt_aa = parsed
+                    protein_id = _protein_id_for_gene(cur, gene)
+                    mutation_id = _insert_mutation(cur, protein_id, gene, mut, ref_aa, pos, alt_aa)
+                    if not mutation_id:
+                        continue
+                    cur.execute(
+                        "INSERT INTO sample_mutation (sample_id, mutation_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                        (sample_id, mutation_id),
+                    )
+                    loaded_muts += 1
+            conn.commit()
+    print(f"  Loaded {loaded_samples} background samples and {loaded_muts} background mutations", file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # Mutations
 # ---------------------------------------------------------------------------
@@ -2264,6 +2379,9 @@ def main():
 
                 print("Loading mutations...", file=sys.stderr)
                 load_mutations(conn, args.meta_id, results_dir)
+
+                print("Loading background from Auspice...", file=sys.stderr)
+                load_background_from_auspice(conn, args.meta_id, results_dir, species=args.species)
 
                 print("Loading phenotype annotations...", file=sys.stderr)
                 load_phenotype_annotations(
