@@ -203,8 +203,9 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       return()
     }
 
-    df <- df |>
-      mutate(group = if (is_query) "Query" else "Background")
+    if (!"mutation_positions" %in% names(df)) {
+      df <- df |> rename(mutation_positions = mutation_count)
+    }
 
     pval <- protein_summary_data()
     if (!is.null(pval) && nrow(pval) > 0) {
