@@ -333,7 +333,7 @@ protein_burden_samples_long <- if (length(protein_names) > 0) {
     tidyr::pivot_longer(
       cols = -c(sample_id, sample_name, is_query),
       names_to = "protein_name",
-      values_to = "mutation_count"
+      values_to = "mutation_positions"
     )
 } else {
   tibble(
@@ -341,13 +341,13 @@ protein_burden_samples_long <- if (length(protein_names) > 0) {
     sample_name = character(),
     is_query = logical(),
     protein_name = character(),
-    mutation_count = integer()
+    mutation_positions = integer()
   )
 }
 
 write_tsv(
   protein_burden_samples_long |>
-    dplyr::select(sample_id, sample_name, is_query, protein_name, mutation_count),
+    dplyr::select(sample_id, sample_name, is_query, protein_name, mutation_positions),
   "01_protein_burden_samples.tsv",
   subdir = "mutation_profile"
 )
@@ -370,9 +370,9 @@ protein_test <- if (length(protein_names) > 0) {
     if (nq > 0 && nb > 0) {
       use_t <- opts$parametric && nq >= 2 && nb >= 2
       res <- if (use_t) {
-        broom::tidy(t.test(mutation_count ~ is_query, data = d))
+        broom::tidy(t.test(mutation_positions ~ is_query, data = d))
       } else {
-        broom::tidy(wilcox.test(mutation_count ~ is_query, data = d, exact = FALSE))
+        broom::tidy(wilcox.test(mutation_positions ~ is_query, data = d, exact = FALSE))
       }
       tibble(
         protein_name = prot,
@@ -407,9 +407,9 @@ protein_burden_summary <- if (nrow(protein_burden_samples_long) > 0) {
     group_by(protein_name, is_query) |>
     summarise(
       n = n(),
-      mean_burden = mean(mutation_count, na.rm = TRUE),
-      median_burden = median(mutation_count, na.rm = TRUE),
-      sd_burden = sd(mutation_count, na.rm = TRUE),
+      mean_mutation_positions = mean(mutation_positions, na.rm = TRUE),
+      median_mutation_positions = median(mutation_positions, na.rm = TRUE),
+      sd_mutation_positions = sd(mutation_positions, na.rm = TRUE),
       .groups = "drop"
     ) |>
     left_join(protein_test, by = "protein_name")
@@ -418,9 +418,9 @@ protein_burden_summary <- if (nrow(protein_burden_samples_long) > 0) {
     protein_name = character(),
     is_query = logical(),
     n = integer(),
-    mean_burden = numeric(),
-    median_burden = numeric(),
-    sd_burden = numeric(),
+    mean_mutation_positions = numeric(),
+    median_mutation_positions = numeric(),
+    sd_mutation_positions = numeric(),
     test = character(),
     statistic = numeric(),
     p_value = numeric(),
