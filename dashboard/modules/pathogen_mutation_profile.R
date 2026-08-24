@@ -81,22 +81,32 @@ pathogen_mutation_profile_ui <- function(species) {
     ),
 
     fluidRow(
-      column(6,
+      column(9,
         bs4Dash::bs4Card(
           title = "Per-Protein Mutation Positions (Background vs Query)",
           width = 12,
           status = "warning",
           solidHeader = TRUE,
-          plotOutput(mp_id(species, "protein_burden_summary_plot"), height = "400px")
+          plotOutput(mp_id(species, "protein_burden_summary_plot"),
+                    click = mp_id(species, "protein_burden_click"),
+                    height = "400px")
         )
       ),
-      column(6,
+      column(3,
         bs4Dash::bs4Card(
-          title = "Per-Protein Mutation Positions by Sample",
+          title = "Select query sample",
           width = 12,
-          status = "warning",
+          status = "info",
           solidHeader = TRUE,
-          DT::DTOutput(mp_id(species, "protein_burden_samples_table"))
+          selectizeInput(
+            inputId = mp_id(species, "protein_sample_search"),
+            label = NULL,
+            choices = NULL,
+            selected = NULL,
+            options = list(placeholder = "Search query sample..."),
+            width = "100%"
+          ),
+          uiOutput(mp_id(species, "protein_sample_info"))
         )
       )
     ),
@@ -167,6 +177,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
   })
 
   click_info <- reactiveVal(NULL)
+  protein_selected_sample <- reactiveVal(NULL)
 
   observe({
     df <- plsda_scores_data()
@@ -182,6 +193,51 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       selected = NULL,
       server = FALSE
     )
+  })
+
+  observe({
+    df <- protein_samples_data()
+    if (is.null(df) || nrow(df) == 0) return()
+    query_df <- df |> filter(is_query)
+    if (nrow(query_df) == 0) return()
+    choices <- unique(query_df$sample_name)
+    updateSelectizeInput(
+      session,
+      inputId = mp_id(sp, "protein_sample_search"),
+      choices = choices,
+      selected = character(0),
+      server = FALSE
+    )
+  })
+
+  observeEvent(input[[mp_id(sp, "protein_sample_search")]], {
+    val <- input[[mp_id(sp, "protein_sample_search")]]
+    if (!is.null(val) && val != "") {
+      protein_selected_sample(val)
+    } else {
+      protein_selected_sample(NULL)
+    }
+  }, ignoreNULL = FALSE)
+
+  observeEvent(input[[mp_id(sp, "protein_burden_click")]], {
+    click <- input[[mp_id(sp, "protein_burden_click")]]
+    if (is.null(click)) return()
+    df <- protein_samples_data()
+    if (is.null(df) || nrow(df) == 0) return()
+    if (!"mutation_positions" %in% names(df)) {
+      df <- df |> rename(mutation_positions = mutation_count)
+    }
+    query_df <- df |> filter(is_query)
+    if (nrow(query_df) == 0) return()
+    selected <- nearPoints(query_df, click,
+                           xvar = "protein_name", yvar = "mutation_positions",
+                           threshold = 10, maxpoints = 1)
+    if (nrow(selected) > 0) {
+      sname <- selected$sample_name[1]
+      protein_selected_sample(sname)
+      updateSelectizeInput(session, mp_id(sp, "protein_sample_search"),
+                           selected = sname)
+    }
   })
 
   output[[mp_id(sp, "manova_table")]] <- DT::renderDT({
@@ -241,9 +297,22 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
         width = 0.2,
         height = 0
       ) +
-      labs(x = "Protein", y = "Mutation positions per sample") +
+      labs(x = "Protein", y = "Amino acid substitution positions per sample") +
       theme_bw(base_size = 12) +
       theme(legend.position = "none")
+
+    sel <- protein_selected_sample()
+    if (!is.null(sel) && sel != "") {
+      sel_df <- df |> filter(is_query, .data[["sample_name"]] == sel)
+      if (nrow(sel_df) > 0) {
+        p <- p + geom_point(
+          data = sel_df,
+          aes(x = .data[["protein_name"]], y = .data[["mutation_positions"]]),
+          colour = "#8E44AD",
+          size = 4
+        )
+      }
+    }
 
     if (!is.null(pval) && nrow(pval) > 0) {
       p <- p + geom_text(
@@ -256,6 +325,18 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     }
 
     p
+  })
+
+  output[[mp_id(sp, "protein_sample_info")]] <- renderUI({
+    sel <- protein_selected_sample()
+    if (is.null(sel) || sel == "") {
+      return(div(style = "margin-top: 10px; color: #6c757d; font-size: 0.85rem;",
+                 "Click a dot or search to select a sample."))
+    }
+    div(
+      style = "margin-top: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 4px;",
+      h5(sel, style = "margin: 0; font-weight: 600; color: #8E44AD;")
+    )
   })
 
   output[[mp_id(sp, "protein_burden_samples_table")]] <- DT::renderDT({
