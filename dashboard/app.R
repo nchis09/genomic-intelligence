@@ -155,6 +155,12 @@ brand_css <- "
   .badge-secondary { background-color: #adb5bd; color: #fff; }
   .badge-light { background-color: #e9ecef; color: #495057; }
   .badge-dark { background-color: #343a40; color: #fff; }
+  /* Indent Phylotree/Mutation under Pathogen Genomics */
+  .pg-child-items > .nav-item {
+    padding-left: 12px;
+    background-color: rgba(0, 0, 0, 0.03);
+    border-left: 3px solid #4A6C8C;
+  }
   /* Species dropdown merged inline into the Intelligence Brief card header
      bar -- borderless/transparent so it reads as one continuous line. */
   .header-inline-select {
@@ -429,6 +435,14 @@ ui <- bs4DashPage(
            observer.observe(document.body, {attributes: true, attributeFilter: ['class']});
            // Initial state once Shiny is ready
            $(document).on('shiny:connected', sendDarkMode);
+         });
+         // Auto-collapse other sidebar tree items when one is expanded
+         $(document).on('click', '.sidebar .nav-item.has-treeview > a', function() {
+           var $this = $(this).parent();
+           $('.sidebar .nav-item.has-treeview.menu-open').not($this).each(function() {
+             $(this).removeClass('menu-open');
+             $(this).children('.nav-treeview').css('display', 'none');
+           });
          });"
       ))
     ),
@@ -459,7 +473,7 @@ server <- function(input, output, session) {
 
     pi_item <- if (length(species) > 0) {
       do.call(menuItem, c(
-        list(text = "Biological Threat", icon = icon("dna"), startExpanded = TRUE),
+        list(text = "Biological Threat", icon = icon("dna"), startExpanded = FALSE),
         lapply(species, function(sp) {
           menuSubItem(text = toupper(sp), tabName = paste0("pi_", sp))
         })
@@ -471,18 +485,21 @@ server <- function(input, output, session) {
     pg_items <- if (length(species) > 0) {
       list(
         menuItem(text = "Pathogen Genomics", tabName = "pg_home", icon = icon("microscope")),
-        do.call(menuItem, c(
-          list(text = "Phylotree", icon = icon("share-nodes"), startExpanded = FALSE),
-          lapply(species, function(sp) {
-            menuSubItem(text = toupper(sp), tabName = paste0("pg_", sp))
-          })
-        )),
-        do.call(menuItem, c(
-          list(text = "Mutation", icon = icon("chart-bar"), startExpanded = FALSE),
-          lapply(species, function(sp) {
-            menuSubItem(text = toupper(sp), tabName = paste0("mp_", sp))
-          })
-        ))
+        tags$div(
+          class = "pg-child-items",
+          do.call(menuItem, c(
+            list(text = "Phylotree", icon = icon("share-nodes"), startExpanded = FALSE),
+            lapply(species, function(sp) {
+              menuSubItem(text = toupper(sp), tabName = paste0("pg_", sp))
+            })
+          )),
+          do.call(menuItem, c(
+            list(text = "Mutation", icon = icon("chart-bar"), startExpanded = FALSE),
+            lapply(species, function(sp) {
+              menuSubItem(text = toupper(sp), tabName = paste0("mp_", sp))
+            })
+          ))
+        )
       )
     } else {
       list(menuItem("Pathogen Genomics", tabName = "pg_home", icon = icon("microscope")))
