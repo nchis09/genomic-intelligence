@@ -111,38 +111,6 @@ pathogen_mutation_profile_ui <- function(species) {
       )
     ),
 
-    fluidRow(
-      column(6,
-        bs4Dash::bs4Card(
-          title = "PLS-DA Loadings (PC1 vs PC2)",
-          width = 12,
-          status = "success",
-          solidHeader = TRUE,
-          plotOutput(mp_id(species, "plsda_loading_plot"))
-        )
-      ),
-      column(6,
-        bs4Dash::bs4Card(
-          title = "PLS-DA VIP",
-          width = 12,
-          status = "success",
-          solidHeader = TRUE,
-          plotOutput(mp_id(species, "plsda_vip_plot"))
-        )
-      )
-    ),
-
-    fluidRow(
-      column(12,
-        bs4Dash::bs4Card(
-          title = "PLS-DA Scores Table",
-          width = 12,
-          status = "success",
-          solidHeader = TRUE,
-          DT::DTOutput(mp_id(species, "plsda_scores_table"))
-        )
-      )
-    )
   )
 }
 
@@ -168,13 +136,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     mp_read_table(mp_table_path(outdir(), sp, "01_plsda_scores.tsv"))
   })
 
-  plsda_loadings_data <- reactive({
-    mp_read_table(mp_table_path(outdir(), sp, "01_plsda_loadings.tsv"))
-  })
 
-  plsda_vip_data <- reactive({
-    mp_read_table(mp_table_path(outdir(), sp, "01_plsda_vip.tsv"))
-  })
 
   click_info <- reactiveVal(NULL)
   protein_selected_sample <- reactiveVal(NULL)
@@ -492,47 +454,4 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     )
   })
 
-  output[[mp_id(sp, "plsda_loading_plot")]] <- renderPlot({
-    df <- plsda_loadings_data()
-    if (is.null(df) || nrow(df) == 0) {
-      plot.new()
-      text(0.5, 0.5, "No PLS-DA loadings available.", cex = 1.1, col = "#6c757d")
-      return()
-    }
-
-    ggplot(df, aes(x = .data[["PC1"]], y = .data[["PC2"]], label = .data[["protein_name"]])) +
-      geom_point(alpha = 0.7, size = 3, colour = "#2C3E50") +
-      geom_text(vjust = -0.5, hjust = 0.5, size = 3, colour = "#2C3E50") +
-      labs(title = paste("PLS-DA loadings —", toupper(sp)),
-           x = "PC1", y = "PC2") +
-      theme_bw(base_size = 12)
-  })
-
-  output[[mp_id(sp, "plsda_vip_plot")]] <- renderPlot({
-    df <- plsda_vip_data()
-    if (is.null(df) || nrow(df) == 0) {
-      plot.new()
-      text(0.5, 0.5, "No PLS-DA VIP available.", cex = 1.1, col = "#6c757d")
-      return()
-    }
-
-    df <- df |> arrange(desc(.data[["vip"]])) |> head(20)
-
-    ggplot(df, aes(x = reorder(.data[["protein_name"]], .data[["vip"]]), y = .data[["vip"]])) +
-      geom_col(fill = "#27AE60") +
-      coord_flip() +
-      labs(title = paste("Top 20 PLS-DA VIP —", toupper(sp)),
-           x = "Protein", y = "VIP (|PC1| + |PC2|)") +
-      theme_bw(base_size = 12)
-  })
-
-  output[[mp_id(sp, "plsda_scores_table")]] <- DT::renderDT({
-    req(plsda_scores_data())
-    DT::datatable(
-      plsda_scores_data(),
-      options = list(pageLength = 10, scrollX = TRUE),
-      rownames = FALSE
-    ) |>
-      DT::formatRound(columns = c("PC1", "PC2"), digits = 3)
-  })
 }
