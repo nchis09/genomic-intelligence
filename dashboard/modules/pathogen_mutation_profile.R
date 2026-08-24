@@ -83,16 +83,16 @@ pathogen_mutation_profile_ui <- function(species) {
     fluidRow(
       column(6,
         bs4Dash::bs4Card(
-          title = "Per-Protein Burden Summary",
+          title = "Per-Protein Mutation Positions (Background vs Query)",
           width = 12,
           status = "warning",
           solidHeader = TRUE,
-          DT::DTOutput(mp_id(species, "protein_burden_summary_table"))
+          plotOutput(mp_id(species, "protein_burden_summary_plot"), height = "400px")
         )
       ),
       column(6,
         bs4Dash::bs4Card(
-          title = "Per-Protein Burden by Sample",
+          title = "Per-Protein Mutation Positions by Sample",
           width = 12,
           status = "warning",
           solidHeader = TRUE,
@@ -195,15 +195,66 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       DT::formatSignif(columns = c("p_value"), digits = 3)
   })
 
-  output[[mp_id(sp, "protein_burden_summary_table")]] <- DT::renderDT({
-    req(protein_summary_data())
-    DT::datatable(
-      protein_summary_data(),
-      options = list(pageLength = 10, scrollX = TRUE),
-      rownames = FALSE
-    ) |>
-      DT::formatRound(columns = c("mean_burden", "median_burden", "sd_burden"), digits = 2) |>
-      DT::formatSignif(columns = c("statistic", "p_value", "estimate"), digits = 3)
+  output[[mp_id(sp, "protein_burden_summary_plot")]] <- renderPlot({
+    df <- protein_samples_data()
+    if (is.null(df) || nrow(df) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No protein position data available.", cex = 1.1, col = "#6c757d")
+      return()
+    }
+
+    df <- df |>
+      mutate(group = if (is_query) "Query" else "Background")
+
+    pval <- protein_summary_data()
+    if (!is.null(pval) && nrow(pval) > 0) {
+      pval <- pval |>
+        filter(is_query) |>
+        distinct(protein_name, .keep_all = TRUE) |>
+        dplyr::select(protein_name, p_value)
+      max_y <- df |>
+        group_by(protein_name) |>
+        summarise(y = max(mutation_positions, na.rm = TRUE), .groups = "drop")
+      pval <- pval |>
+        left_join(max_y, by = "protein_name") |>
+        mutate(
+          label = ifelse(p_value < 0.001, "p < 0.001", paste0("p = ", signif(p_value, 2)))
+        )
+    } else {
+      pval <- NULL
+    }
+
+    p <- ggplot(df, aes(x = .data[["protein_name"]], y = .data[["mutation_positions"]])) +
+      geom_boxplot(
+        data = df |> filter(!is_query),
+        aes(x = .data[["protein_name"]], y = .data[["mutation_positions"]]),
+        fill = "#BDC3C7",
+        alpha = 0.7,
+        outlier.shape = NA
+      ) +
+      geom_jitter(
+        data = df |> filter(is_query),
+        aes(x = .data[["protein_name"]], y = .data[["mutation_positions"]]),
+        colour = "#E74C3C",
+        size = 3,
+        width = 0.2,
+        height = 0
+      ) +
+      labs(x = "Protein", y = "Mutation positions per sample") +
+      theme_bw(base_size = 12) +
+      theme(legend.position = "none")
+
+    if (!is.null(pval) && nrow(pval) > 0) {
+      p <- p + geom_text(
+        data = pval,
+        aes(x = .data[["protein_name"]], y = .data[["y"]], label = .data[["label"]]),
+        vjust = -0.5,
+        size = 3,
+        colour = "#2C3E50"
+      )
+    }
+
+    p
   })
 
   output[[mp_id(sp, "protein_burden_samples_table")]] <- DT::renderDT({
@@ -213,7 +264,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       options = list(pageLength = 15, scrollX = TRUE),
       rownames = FALSE
     ) |>
-      DT::formatRound(columns = c("mutation_count"), digits = 0)
+      DT::formatRound(columns = c("mutation_positions"), digits = 0)
   })
 
   observeEvent(input[[mp_id(sp, "plsda_click")]], {
