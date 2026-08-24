@@ -7,6 +7,9 @@
 #   01_mutation_burden_samples.tsv    per-sample burden
 #   01_mutation_burden_summary.tsv    group summary + statistical test
 #   01_mutation_profile_manova.tsv    MANOVA on protein-level burden
+#   01_plsda_scores.tsv               PLS-DA sample scores
+#   01_plsda_loadings.tsv             PLS-DA protein loadings
+#   01_plsda_vip.tsv                  PLS-DA protein VIP
 #
 # Usage:
 #   Rscript bin/pathogen_mutation_profile.R \
@@ -26,6 +29,7 @@ suppressPackageStartupMessages({
   library(stringr)
   library(readr)
   library(broom)
+  library(mixOmics)
 })
 
 # ---------------------------------------------------------------------------
@@ -142,7 +146,7 @@ if (nrow(mutations_long) > 0) {
 # Build sample metadata and full sample list
 # ---------------------------------------------------------------------------
 sample_meta <- samples |>
-  select(sample_id, sample_name, is_query, collection_year, country, host, outbreak, clade, lineage)
+  dplyr::select(sample_id, sample_name, is_query, collection_year, country, host, outbreak, clade, lineage)
 
 sample_order <- sample_meta$sample_id
 all_samples <- tibble(sample_id = sample_order)
@@ -152,7 +156,7 @@ all_samples <- tibble(sample_id = sample_order)
 # ---------------------------------------------------------------------------
 mutation_mat <- if (nrow(mutations_long) > 0) {
   mutations_long |>
-    select(sample_id, mutation_uid) |>
+    dplyr::select(sample_id, mutation_uid) |>
     mutate(present = 1L) |>
     pivot_wider(
       id_cols = sample_id,
@@ -210,7 +214,7 @@ n_bg <- sum(!sample_meta$is_query)
 # Per-sample burden TSV
 # ---------------------------------------------------------------------------
 write_tsv(
-  sample_meta |> select(sample_id, sample_name, is_query, collection_year, country, mutation_burden),
+  sample_meta |> dplyr::select(sample_id, sample_name, is_query, collection_year, country, mutation_burden),
   "01_mutation_burden_samples.tsv",
   subdir = "mutation_profile"
 )
@@ -269,7 +273,7 @@ write_mqc_tsv(
 log_info("Running MANOVA on protein burden")
 
 manova_df <- sample_meta |>
-  select(sample_id, is_query) |>
+  dplyr::select(sample_id, is_query) |>
   inner_join(
     as.data.frame(protein_burden) |>
       tibble::rownames_to_column("sample_id") |>
@@ -287,7 +291,7 @@ manova_out <- if (n_query >= 2 && n_bg >= 1 && length(protein_names) > 1) {
     as.data.frame(s$stats) |>
       tibble::rownames_to_column("term") |>
       filter(term != "Residuals") |>
-      select(term, Wilks = `Wilks`, statistic = `approx F`, num_Df = `num Df`, den_Df = `den Df`, p_value = `Pr(>F)`) |>
+      dplyr::select(term, Wilks = `Wilks`, statistic = `approx F`, num_Df = `num Df`, den_Df = `den Df`, p_value = `Pr(>F)`) |>
       mutate(note = "MANOVA on protein-level burden")
   } else {
     tibble(term = "is_query", note = "MANOVA model failed")
@@ -323,7 +327,7 @@ protein_burden_samples_long <- if (length(protein_names) > 0) {
     tibble::rownames_to_column("sample_id") |>
     mutate(sample_id = as.integer(sample_id)) |>
     inner_join(
-      sample_meta |> select(sample_id, sample_name, is_query),
+      sample_meta |> dplyr::select(sample_id, sample_name, is_query),
       by = "sample_id"
     ) |>
     tidyr::pivot_longer(
@@ -343,7 +347,7 @@ protein_burden_samples_long <- if (length(protein_names) > 0) {
 
 write_tsv(
   protein_burden_samples_long |>
-    select(sample_id, sample_name, is_query, protein_name, mutation_count),
+    dplyr::select(sample_id, sample_name, is_query, protein_name, mutation_count),
   "01_protein_burden_samples.tsv",
   subdir = "mutation_profile"
 )
@@ -431,6 +435,88 @@ write_mqc_tsv(
   id = "protein_burden_summary",
   section_name = "Protein Burden Summary",
   description = "Per-protein mutation burden comparison between query and background samples.",
+  subdir = "mutation_profile/mqc"
+)
+
+# ---------------------------------------------------------------------------
+# PLS-DA on protein burden to separate query vs background
+# ---------------------------------------------------------------------------
+log_info("Running PLS-DA on protein burden")
+
+plsda_out <- if (n_query >= 2 && n_bg >= 2 && length(protein_names) >= 2) {
+  X <- as.matrix(protein_burden)
+  rownames(X) <- as.character(sample_meta$sample_id)
+  Y <- factor(
+    sample_meta$is_query,
+    levels = c(FALSE, TRUE),
+    labels = c("Background", "Query")
+  )
+  pls <- tryCatch(
+    plsda(X, Y, ncomp = 2, scale = TRUE),
+    error = function(e) NULL
+  )
+
+  if (!is.null(pls)) {
+    scores <- as.data.frame(pls$variates$X) |>
+      tibble::rownames_to_column("sample_id") |>
+      mutate(sample_id = as.integer(sample_id)) |>
+      inner_join(
+        sample_meta |> dplyr::select(sample_id, sample_name, is_query, collection_year, country, outbreak, mutation_burden),
+        by = "sample_id"
+      ) |>
+      dplyr::select(sample_id, sample_name, is_query, collection_year, country, outbreak, mutation_burden, PC1 = comp1, PC2 = comp2)
+
+    loadings <- as.data.frame(pls$loadings$X) |>
+      tibble::rownames_to_column("protein_name") |>
+      dplyr::select(protein_name, PC1 = comp1, PC2 = comp2)
+
+    vip <- loadings |>
+      mutate(vip = abs(PC1) + abs(PC2)) |>
+      dplyr::select(protein_name, vip)
+
+    list(scores = scores, loadings = loadings, vip = vip)
+  } else {
+    list(
+      scores = tibble(sample_id = integer(), sample_name = character(), is_query = logical(), collection_year = integer(), country = character(), outbreak = character(), mutation_burden = integer(), PC1 = numeric(), PC2 = numeric()),
+      loadings = tibble(protein_name = character(), PC1 = numeric(), PC2 = numeric()),
+      vip = tibble(protein_name = character(), vip = numeric())
+    )
+  }
+} else {
+  list(
+    scores = tibble(sample_id = integer(), sample_name = character(), is_query = logical(), collection_year = integer(), country = character(), outbreak = character(), mutation_burden = integer(), PC1 = numeric(), PC2 = numeric()),
+    loadings = tibble(protein_name = character(), PC1 = numeric(), PC2 = numeric()),
+    vip = tibble(protein_name = character(), vip = numeric())
+  )
+}
+
+write_tsv(plsda_out$scores, "01_plsda_scores.tsv", subdir = "mutation_profile")
+write_mqc_tsv(
+  plsda_out$scores,
+  paste0(run_prefix, "_01_plsda_scores_mqc.tsv"),
+  id = "plsda_scores",
+  section_name = "PLS-DA Scores",
+  description = "PLS-DA sample scores on protein-level mutation burden.",
+  subdir = "mutation_profile/mqc"
+)
+
+write_tsv(plsda_out$loadings, "01_plsda_loadings.tsv", subdir = "mutation_profile")
+write_mqc_tsv(
+  plsda_out$loadings,
+  paste0(run_prefix, "_01_plsda_loadings_mqc.tsv"),
+  id = "plsda_loadings",
+  section_name = "PLS-DA Loadings",
+  description = "PLS-DA protein loadings on protein-level mutation burden.",
+  subdir = "mutation_profile/mqc"
+)
+
+write_tsv(plsda_out$vip, "01_plsda_vip.tsv", subdir = "mutation_profile")
+write_mqc_tsv(
+  plsda_out$vip,
+  paste0(run_prefix, "_01_plsda_vip_mqc.tsv"),
+  id = "plsda_vip",
+  section_name = "PLS-DA VIP",
+  description = "PLS-DA variable importance (sum of absolute PC1 and PC2 loadings).",
   subdir = "mutation_profile/mqc"
 )
 
