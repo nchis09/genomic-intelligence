@@ -468,37 +468,40 @@ server <- function(input, output, session) {
       menuItem("Biological Threat", tabName = "pi_home", icon = icon("dna"))
     }
 
-    pg_item <- if (length(species) > 0) {
-      do.call(menuItem, c(
-        list(text = "Pathogen Genomics", icon = icon("microscope"), startExpanded = FALSE),
-        unlist(
+    pg_items <- if (length(species) > 0) {
+      list(
+        menuItem(text = "Pathogen Genomics", tabName = "pg_home", icon = icon("microscope")),
+        do.call(menuItem, c(
+          list(text = "Phylotree", icon = icon("share-nodes"), startExpanded = FALSE),
           lapply(species, function(sp) {
-            list(
-              menuSubItem(text = toupper(sp), tabName = paste0("pg_", sp)),
-              menuSubItem(text = paste0(toupper(sp), " Mutation"), tabName = paste0("mp_", sp))
-            )
-          }),
-          recursive = FALSE
-        )
-      ))
+            menuSubItem(text = toupper(sp), tabName = paste0("pg_", sp))
+          })
+        )),
+        do.call(menuItem, c(
+          list(text = "Mutation", icon = icon("chart-bar"), startExpanded = FALSE),
+          lapply(species, function(sp) {
+            menuSubItem(text = toupper(sp), tabName = paste0("mp_", sp))
+          })
+        ))
+      )
     } else {
-      menuItem("Pathogen Genomics", tabName = "pg_home", icon = icon("microscope"))
+      list(menuItem("Pathogen Genomics", tabName = "pg_home", icon = icon("microscope")))
     }
 
     roadmap_items <- lapply(ROADMAP_OBJECTIVES, function(obj) {
       menuItem(obj$label, tabName = roadmap_tab_name(obj$id), icon = icon(obj$icon))
     })
 
-    sidebarMenu(
-      id = "sidebarmenu",
-      menuItem("Intelligence Overview", tabName = "home", icon = icon("house")),
-      sidebarHeader("INTELLIGENCE OBJECTIVES"),
-      pi_item,
-      pg_item,
+    do.call(sidebarMenu, c(
+      list(id = "sidebarmenu"),
+      list(menuItem("Intelligence Overview", tabName = "home", icon = icon("house"))),
+      list(sidebarHeader("INTELLIGENCE OBJECTIVES")),
+      list(pi_item),
+      pg_items,
       roadmap_items[1:6],
-      sidebarHeader("EVIDENCE & REPORTING"),
+      list(sidebarHeader("EVIDENCE & REPORTING")),
       roadmap_items[7:8]
-    )
+    ))
   })
 
   # -- Body: one tabItem per sidebar entry, rebuilt in lockstep with the menu.
@@ -525,14 +528,17 @@ server <- function(input, output, session) {
     }
 
     pg_tabs <- if (length(species) > 0) {
-      unlist(
-        lapply(species, function(sp) {
-          list(
-            tabItem(tabName = paste0("pg_", sp), pathogen_genomics_ui(sp)),
-            tabItem(tabName = paste0("mp_", sp), pathogen_mutation_profile_ui(sp))
-          )
-        }),
-        recursive = FALSE
+      c(
+        list(tabItem(tabName = "pg_home", pg_home_ui(species))),
+        unlist(
+          lapply(species, function(sp) {
+            list(
+              tabItem(tabName = paste0("pg_", sp), pathogen_genomics_ui(sp)),
+              tabItem(tabName = paste0("mp_", sp), pathogen_mutation_profile_ui(sp))
+            )
+          }),
+          recursive = FALSE
+        )
       )
     } else {
       list(tabItem(
@@ -572,6 +578,16 @@ server <- function(input, output, session) {
       pathogen_identification_register(input, output, session, sp, outdir_r)
       pathogen_genomics_register(input, output, session, sp, outdir_r)
       pathogen_mutation_profile_register(input, output, session, sp, outdir_r)
+
+      local({
+        s <- sp
+        observeEvent(input[[paste0("pg_home_phylotree_", s)]], {
+          updateTabItems(session, "sidebarmenu", selected = paste0("pg_", s))
+        })
+        observeEvent(input[[paste0("pg_home_mutation_", s)]], {
+          updateTabItems(session, "sidebarmenu", selected = paste0("mp_", s))
+        })
+      })
     }
   }, ignoreNULL = FALSE)
 
@@ -614,8 +630,7 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$overview_pg_tile_click, {
-    sp <- current_species()
-    if (!is.null(sp)) updateTabItems(session, "sidebarmenu", selected = paste0("pg_", sp))
+    updateTabItems(session, "sidebarmenu", selected = "pg_home")
   })
 
   observeEvent(input$overview_nav_click, {

@@ -84,3 +84,49 @@ overview_body_ui <- function(has_species) {
   }
   tags$ul(tags$li("In planning."))
 }
+
+# Pathogen Genomics landing page: choose a species and whether to view the
+# phylotree or the mutation profile.
+pg_home_ui <- function(species) {
+  if (length(species) == 0) {
+    return(bs4Dash::bs4Card(
+      title = "Pathogen Genomics", width = 12, status = "secondary",
+      div(
+        style = "text-align: center; padding: 40px 0; color: #888;",
+        icon("microscope", class = "fa-3x"),
+        h4("No species found", style = "margin-top: 16px;"),
+        p("No species were found in the pipeline output. Run the pipeline, or check that results/ exists.")
+      )
+    ))
+  }
+
+  bs4Dash::bs4Card(
+    title = "Pathogen Genomics",
+    width = 12,
+    status = "secondary",
+    lapply(species, function(sp) {
+      div(
+        style = "display: inline-block; width: 260px; margin: 12px; vertical-align: top;",
+        bs4Dash::bs4Card(
+          title = toupper(sp),
+          width = 12,
+          status = "primary",
+          solidHeader = FALSE,
+          actionButton(
+            inputId = paste0("pg_home_phylotree_", sp),
+            label = "Phylotree",
+            icon = icon("share-nodes"),
+            class = "btn-primary btn-block",
+            style = "margin-bottom: 8px;"
+          ),
+          actionButton(
+            inputId = paste0("pg_home_mutation_", sp),
+            label = "Mutation",
+            icon = icon("chart-bar"),
+            class = "btn-outline-primary btn-block"
+          )
+        )
+      )
+    })
+  )
+}
