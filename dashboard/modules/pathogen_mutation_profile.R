@@ -604,8 +604,19 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       return()
     }
 
+    pos <- selected$position[1]
+    z <- landscape_zoom()
+    n_at_pos <- sum(plot_df$position == pos, na.rm = TRUE)
+
+    if (is.null(z) && n_at_pos > 1) {
+      # Clicked on an overlapping position: zoom in and open the detail panel
+      landscape_zoom(c(pos - 5, pos + 5))
+      clicked_position(pos)
+      return()
+    }
+
     selected_mutation_id(selected$mutation_id[1])
-    clicked_position(selected$position[1])
+    clicked_position(pos)
   })
 
   # --- Position detail panel (shown when multiple substitutions at one position) ---
