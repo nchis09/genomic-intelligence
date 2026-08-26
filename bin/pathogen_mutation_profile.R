@@ -77,6 +77,7 @@ option_list <- list(
   make_option(c("--species"), type = "character", default = NULL, help = "Species code (e.g. bdbv, sudv)"),
   make_option(c("--run-id"), type = "character", default = NULL, help = "Run prefix for output filenames"),
   make_option(c("--outdir"), type = "character", default = ".", help = "Output directory"),
+  make_option(c("--translations-dir"), type = "character", default = NULL, help = "Directory containing per-protein aligned FASTA translations (from nextclade)"),
   make_option(c("--parametric"), action = "store_true", default = FALSE, help = "Use parametric tests where appropriate")
 )
 
@@ -120,6 +121,7 @@ samples$is_query <- as.logical(samples$is_query)
 mutations_long <- dbGetQuery(con,
   "SELECT s.sample_id, s.sample_name, s.is_query,
           m.mutation_id, m.mutation_label, m.position, m.mutation_type,
+          m.ref_aa, m.alt_aa,
           COALESCE(p.protein_name, g.gene_name, 'unknown') AS protein_name,
           COALESCE(g.gene_name, 'unknown') AS gene_name
    FROM samples s
@@ -519,5 +521,96 @@ write_mqc_tsv(
   description = "PLS-DA variable importance (sum of absolute PC1 and PC2 loadings).",
   subdir = "mutation_profile/mqc"
 )
+
+# ---------------------------------------------------------------------------
+# Position-specific amino acid frequencies from aligned translations
+# ---------------------------------------------------------------------------
+translations_dir <- opts$`translations-dir`
+
+if (!is.null(translations_dir) && dir.exists(translations_dir)) {
+  log_info("Computing position-specific AA frequencies from translations")
+
+  fasta_files <- list.files(translations_dir, pattern = "\\.fasta$", full.names = TRUE)
+
+  if (length(fasta_files) > 0) {
+    aa_freq_list <- lapply(fasta_files, function(fpath) {
+      protein <- tools::file_path_sans_ext(basename(fpath))
+      lines <- readLines(fpath, warn = FALSE)
+
+      # Parse FASTA: extract sequences (skip headers)
+      header_idx <- grep("^>", lines)
+      if (length(header_idx) == 0) return(NULL)
+
+      seqs <- vapply(seq_along(header_idx), function(i) {
+        start <- header_idx[i] + 1L
+        end <- if (i < length(header_idx)) header_idx[i + 1L] - 1L else length(lines)
+        paste(lines[start:end], collapse = "")
+      }, character(1))
+
+      # All sequences should be the same length (aligned)
+      seq_len_max <- max(nchar(seqs))
+      if (seq_len_max == 0) return(NULL)
+
+      # Split into character matrix
+      char_mat <- do.call(rbind, strsplit(seqs, ""))
+      n_seqs <- nrow(char_mat)
+      n_pos <- ncol(char_mat)
+
+      # Compute frequencies at each position
+      pos_freq <- do.call(rbind, lapply(seq_len(n_pos), function(pos_i) {
+        col <- char_mat[, pos_i]
+        # Exclude gaps, unknown (X, -, *)
+        valid <- col[!col %in% c("X", "-", "*", "x")]
+        if (length(valid) == 0) return(NULL)
+        tbl <- table(valid)
+        tibble(
+          protein_name = protein,
+          position = pos_i,
+          amino_acid = names(tbl),
+          count = as.integer(tbl),
+          total_valid = length(valid),
+          frequency = round(as.numeric(tbl) / length(valid), 4)
+        )
+      }))
+
+      pos_freq
+    })
+
+    aa_frequencies <- do.call(rbind, aa_freq_list)
+
+    if (!is.null(aa_frequencies) && nrow(aa_frequencies) > 0) {
+      # Mark the reference (most frequent) AA at each position
+      aa_frequencies <- aa_frequencies |>
+        group_by(protein_name, position) |>
+        mutate(is_reference = frequency == max(frequency)) |>
+        ungroup()
+
+      write_tsv(aa_frequencies, "01_position_aa_frequencies.tsv", subdir = "mutation_profile")
+      log_info("Wrote position AA frequencies: ", nrow(aa_frequencies), " rows across ",
+               length(unique(aa_frequencies$protein_name)), " proteins")
+    } else {
+      log_info("No valid AA frequency data computed from translations")
+      write_tsv(
+        tibble(protein_name = character(), position = integer(), amino_acid = character(),
+               count = integer(), total_valid = integer(), frequency = numeric(), is_reference = logical()),
+        "01_position_aa_frequencies.tsv", subdir = "mutation_profile"
+      )
+    }
+  } else {
+    log_info("No FASTA files found in translations directory: ", translations_dir)
+    write_tsv(
+      tibble(protein_name = character(), position = integer(), amino_acid = character(),
+             count = integer(), total_valid = integer(), frequency = numeric(), is_reference = logical()),
+      "01_position_aa_frequencies.tsv", subdir = "mutation_profile"
+    )
+  }
+} else {
+  log_info("No translations directory provided or it does not exist; skipping AA frequency computation")
+  write_tsv(
+    tibble(protein_name = character(), position = integer(), amino_acid = character(),
+           count = integer(), total_valid = integer(), frequency = numeric(), is_reference = logical()),
+    "01_position_aa_frequencies.tsv", subdir = "mutation_profile"
+  )
+}
 
 log_info("Done. Outputs in ", file.path(outdir, "mutation_profile"))
