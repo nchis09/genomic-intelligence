@@ -137,8 +137,9 @@ pathogen_mutation_profile_ui <- function(species) {
               value = TRUE
             )
           ),
-          plotly::plotlyOutput(mp_id(species, "landscape_plot"),
-                               height = "520px")
+          plotOutput(mp_id(species, "landscape_plot"),
+                     click = mp_id(species, "landscape_click"),
+                     height = "520px")
         )
       )
     ),
@@ -432,26 +433,28 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
   })
 
   # --- Mutation landscape lollipop (ProteinPaint style) ---
-  output[[mp_id(sp, "landscape_plot")]] <- plotly::renderPlotly({
+  output[[mp_id(sp, "landscape_plot")]] <- renderPlot({
     prot <- input[[mp_id(sp, "landscape_protein")]]
     show_query <- isTRUE(input[[mp_id(sp, "landscape_highlight_query")]])
     agg <- .catalogue_data()
 
-    shiny::validate(
-      shiny::need(!is.null(agg), "Loading mutation data..."),
-      shiny::need(!is.null(prot) && prot != "", "Select a protein to view its mutation landscape.")
-    )
+    if (is.null(agg) || is.null(prot) || prot == "") {
+      plot.new()
+      text(0.5, 0.5, "Select a protein to view its mutation landscape.",
+           cex = 1.1, col = "#6c757d")
+      return()
+    }
 
     prot_data <- agg |> filter(protein_name == prot)
-    shiny::validate(
-      shiny::need(nrow(prot_data) > 0, paste("No mutations found in", prot))
-    )
+    if (nrow(prot_data) == 0) {
+      plot.new()
+      text(0.5, 0.5, paste("No mutations found in", prot),
+           cex = 1.1, col = "#6c757d")
+      return()
+    }
 
     pheno <- mutation_phenotypes_data()
     pheno_ids <- if (!is.null(pheno) && nrow(pheno) > 0) unique(pheno$mutation_id) else character(0)
-
-    n_query <- length(unique(agg$sample_id[agg$is_query]))
-    n_bg <- length(unique(agg$sample_id[!agg$is_query]))
 
     plot_df <- prot_data |>
       mutate(
@@ -469,114 +472,100 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
           "#27AE60",
           if_else(show_query & in_query, "#E74C3C", "transparent")
         ),
-        count_label = as.character(n_total)
+        count_label = if_else(n_total >= 1, as.character(n_total), "")
       )
 
     if (nrow(plot_df) == 0) {
-      return(plotly::plotly_empty())
+      plot.new()
+      text(0.5, 0.5, "No mutations to display.",
+           cex = 1.1, col = "#6c757d")
+      return()
     }
 
     x_limits <- range(plot_df$position) + c(-5, 5)
     y_min <- min(plot_df$y, -1, na.rm = TRUE) - 1.5
 
-    n_classes <- length(unique(plot_df$mutation_class))
-    class_pal <- RColorBrewer::brewer.pal(max(n_classes, 3), "Set1")[1:n_classes]
-    names(class_pal) <- sort(unique(plot_df$mutation_class))
-
-    plot_df <- plot_df |>
-      mutate(
-        fill_col = class_pal[as.character(mutation_class)],
-        marker_size = if (max(n_total) == min(n_total)) {
-          4
-        } else {
-          4 + 12 * (n_total - min(n_total)) / (max(n_total) - min(n_total))
-        },
-        hover_template = paste0(
-          "<b>", mutation_label, "</b><br>",
-          "Position: ", position, "<br>",
-          "Total: ", n_total, "<br>",
-          "Query: ", n_query_mut, " (", query_prev_pct, "%)<br>",
-          "Background: ", n_bg_mut, " (", bg_prev_pct, "%)<br>",
-          "<extra></extra>"
-        )
-      )
-
-    p <- plot_ly(source = mp_id(sp, "landscape_plot")) |>
-      add_segments(
-        data = plot_df,
-        x = ~position, y = ~y,
-        xend = ~position, yend = 0,
-        line = list(color = "#BDC3C7", width = 0.5),
-        showlegend = FALSE,
-        hoverinfo = "skip"
-      ) |>
-      add_markers(
-        data = plot_df,
-        x = ~position, y = ~y,
-        color = ~mutation_class,
-        colors = class_pal,
-        size = ~n_total,
-        sizes = c(4, 16),
-        key = ~mutation_id,
-        hovertemplate = ~hover_template,
-        marker = list(
-          line = list(color = plot_df$stroke_col, width = 1.2)
-        )
-      ) |>
-      add_text(
-        data = plot_df,
-        x = ~position, y = ~y,
-        text = ~count_label,
-        textposition = "middle center",
-        textfont = list(color = "white", size = 9),
-        hoverinfo = "skip",
-        showlegend = FALSE
-      ) |>
-      layout(
-        title = list(
-          text = paste0("<b>", prot, " \u2014 Mutation Landscape", "</b>"),
-          font = list(size = 13),
-          x = 0
-        ),
-        xaxis = list(
-          title = "Amino acid position",
-          range = as.list(x_limits)
-        ),
-        yaxis = list(
-          title = "",
-          showticklabels = FALSE,
-          showgrid = FALSE,
-          range = list(y_min, 0.5)
-        ),
-        hovermode = "closest",
-        showlegend = TRUE,
-        legend = list(title = list(text = "Mutation class")),
-        margin = list(t = 40, r = 80, b = 40, l = 40)
-      ) |>
-      config(
-        displayModeBar = "hover",
-        displaylogo = FALSE
+    p <- ggplot(plot_df, aes(x = position, y = y)) +
+      geom_segment(aes(xend = position, y = 0, yend = y),
+                   colour = "#BDC3C7", linewidth = 0.5) +
+      geom_point(aes(size = n_total, fill = mutation_class, colour = stroke_col),
+                 shape = 21, stroke = 1.2) +
+      geom_text(aes(label = count_label),
+                colour = "white", size = 2.2, fontface = "bold",
+                vjust = 0.5, hjust = 0.5) +
+      ggrepel::geom_text_repel(
+        aes(label = mutation_label),
+        colour = "#2C3E50", size = 2.4,
+        nudge_x = 3, nudge_y = 0,
+        hjust = 0, vjust = 0.5,
+        force = 2, force_pull = 0.5,
+        box.padding = 0.3, point.padding = 0.3,
+        max.overlaps = Inf,
+        segment.size = 0.25, min.segment.length = 0
+      ) +
+      scale_size_continuous(range = c(4, 16), guide = "none") +
+      scale_fill_brewer(palette = "Set1", na.value = "#95A5A6",
+                        name = "Mutation class") +
+      scale_colour_identity(guide = "none") +
+      scale_x_continuous(limits = x_limits) +
+      scale_y_continuous(expand = expansion(add = c(0.5, 0.5))) +
+      coord_cartesian(ylim = c(y_min, 0.5)) +
+      labs(
+        x = "Amino acid position",
+        y = NULL,
+        title = paste(prot, "\u2014 Mutation Landscape"),
+        caption = if (show_query) "Red outline = also in query sample(s)" else NULL
+      ) +
+      theme_bw(base_size = 11) +
+      theme(
+        plot.title = element_text(size = 13, face = "bold"),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "right",
+        legend.key.size = unit(0.4, "cm"),
+        plot.margin = margin(t = 5, r = 5, b = 0, l = 5)
       )
 
     p
   })
 
   # --- Landscape click handler ---
-  observe({
-    click <- plotly::event_data("plotly_click", source = mp_id(sp, "landscape_plot"))
-    if (is.null(click) || !"key" %in% names(click) || length(click$key) == 0) return()
+  observeEvent(input[[mp_id(sp, "landscape_click")]], {
+    click <- input[[mp_id(sp, "landscape_click")]]
+    if (is.null(click)) return()
 
-    mid <- as.character(click$key[1])
-    if (is.na(mid) || mid == "") return()
-
+    prot <- input[[mp_id(sp, "landscape_protein")]]
     agg <- .catalogue_data()
-    if (is.null(agg) || nrow(agg) == 0) return()
+    if (is.null(agg) || is.null(prot) || prot == "") return()
 
-    mut <- agg |> filter(mutation_id == mid)
-    if (nrow(mut) == 0) return()
+    prot_data <- agg |> filter(protein_name == prot)
+    if (nrow(prot_data) == 0) return()
 
-    selected_mutation_id(mid)
-    clicked_position(mut$position[1])
+    plot_df <- prot_data |>
+      mutate(n_total = n_query_mut + n_bg_mut) |>
+      filter(n_total > 0) |>
+      group_by(position) |>
+      arrange(desc(n_total), .by_group = TRUE) |>
+      mutate(y = -row_number()) |>
+      ungroup()
+
+    if (nrow(plot_df) == 0) {
+      selected_mutation_id(NULL)
+      return()
+    }
+
+    selected <- nearPoints(plot_df, click,
+                           xvar = "position", yvar = "y",
+                           threshold = 25, maxpoints = 1)
+    if (nrow(selected) == 0) {
+      selected_mutation_id(NULL)
+      return()
+    }
+
+    selected_mutation_id(selected$mutation_id[1])
   })
 
   # --- Position detail panel (shown when multiple substitutions at one position) ---
