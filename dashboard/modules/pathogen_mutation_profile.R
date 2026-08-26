@@ -139,7 +139,9 @@ pathogen_mutation_profile_ui <- function(species) {
           ),
           plotOutput(mp_id(species, "landscape_plot"),
                      click = mp_id(species, "landscape_click"),
-                     height = "520px")
+                     brush = brushOpts(id = mp_id(species, "landscape_brush"), resetOnNew = TRUE),
+                     height = "520px"),
+          actionButton(mp_id(species, "landscape_reset_zoom"), "Reset zoom", class = "btn-sm")
         )
       )
     ),
@@ -388,6 +390,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
   # =========================================================================
 
   clicked_position <- reactiveVal(NULL)
+  landscape_zoom <- reactiveVal(NULL)
 
   # Populate protein selector for the landscape
   observe({
@@ -482,7 +485,22 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       return()
     }
 
-    x_limits <- range(plot_df$position) + c(-5, 5)
+    z <- landscape_zoom()
+    if (!is.null(z)) {
+      zmin <- min(z, na.rm = TRUE)
+      zmax <- max(z, na.rm = TRUE)
+      plot_df <- plot_df |>
+        filter(position >= zmin, position <= zmax)
+    }
+
+    if (nrow(plot_df) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No mutations in selected zoom region.",
+           cex = 1.1, col = "#6c757d")
+      return()
+    }
+
+    x_limits <- range(plot_df$position) + c(-1, 1)
     y_min <- min(plot_df$y, -1, na.rm = TRUE) - 1.5
 
     p <- ggplot(plot_df, aes(x = position, y = y)) +
@@ -532,6 +550,17 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     p
   })
 
+  # --- Landscape zoom controls ---
+  observeEvent(input[[mp_id(sp, "landscape_brush")]], {
+    br <- input[[mp_id(sp, "landscape_brush")]]
+    if (is.null(br) || is.null(br$xmin) || is.null(br$xmax)) return()
+    landscape_zoom(c(br$xmin, br$xmax))
+  })
+
+  observeEvent(input[[mp_id(sp, "landscape_reset_zoom")]], {
+    landscape_zoom(NULL)
+  })
+
   # --- Landscape click handler ---
   observeEvent(input[[mp_id(sp, "landscape_click")]], {
     click <- input[[mp_id(sp, "landscape_click")]]
@@ -552,8 +581,17 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       mutate(y = -row_number()) |>
       ungroup()
 
+    z <- landscape_zoom()
+    if (!is.null(z)) {
+      zmin <- min(z, na.rm = TRUE)
+      zmax <- max(z, na.rm = TRUE)
+      plot_df <- plot_df |>
+        filter(position >= zmin, position <= zmax)
+    }
+
     if (nrow(plot_df) == 0) {
       selected_mutation_id(NULL)
+      clicked_position(NULL)
       return()
     }
 
@@ -562,10 +600,12 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
                            threshold = 25, maxpoints = 1)
     if (nrow(selected) == 0) {
       selected_mutation_id(NULL)
+      clicked_position(NULL)
       return()
     }
 
     selected_mutation_id(selected$mutation_id[1])
+    clicked_position(selected$position[1])
   })
 
   # --- Position detail panel (shown when multiple substitutions at one position) ---
