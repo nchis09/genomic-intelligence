@@ -11,7 +11,12 @@ dependencies:
   - r-readr
   - r-dplyr
   - r-ggplot2
+  - r-ggrepel
+  - r-gridextra
+  - r-scales
   - r-plotly
+  - r-tidyr
+  - r-leaflet
   - r-htmltools
   - r-yaml
   # Pathogen Genomics: interactive tree visualization

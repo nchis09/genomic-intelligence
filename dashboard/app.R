@@ -19,8 +19,9 @@
 
 # -- Auto-install missing packages on first run --
 local({
-  cran_pkgs <- c("shiny", "bs4Dash", "fresh", "DT", "readr", "dplyr",
-                 "ggplot2", "plotly", "yaml", "DBI", "duckdb",
+  cran_pkgs <- c("shiny", "bs4Dash", "fresh", "DT", "readr", "dplyr", "tidyr",
+                 "ggplot2", "ggrepel", "gridExtra", "scales", "plotly", "yaml",
+                 "DBI", "duckdb", "leaflet",
                  "RColorBrewer", "ape", "ggnewscale")
   bioc_pkgs <- c("treeio", "ggtree")
 

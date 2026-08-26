@@ -117,7 +117,15 @@ workflow GENOMIC_INTELLIGENCE {
                 .combine(ch_duckdb_dump)
                 .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
                 .set { ch_mutation_profile }
-            MUTATION_PROFILE_WF(ch_mutation_profile)
+
+            // Derive translations directory from Nextstrain/Nextclade outputs
+            ch_translations = ch_knowledge_db
+                .map { meta, kw_dir ->
+                    def trans = file("${params.outdir}/nextstrain_ebola/${meta.species}/results/${meta.species}/translations")
+                    trans.exists() ? trans : file("NO_TRANSLATIONS")
+                }
+
+            MUTATION_PROFILE_WF(ch_mutation_profile, ch_translations)
             ch_mutation_profile_tsv = MUTATION_PROFILE_WF.out.tsv
             ch_mutation_profile_mqc = MUTATION_PROFILE_WF.out.mqc_tsv
         }
