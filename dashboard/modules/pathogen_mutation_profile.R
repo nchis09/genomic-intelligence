@@ -131,10 +131,23 @@ pathogen_mutation_profile_ui <- function(species) {
                 width = "100%"
               )
             ),
-            checkboxInput(
-              mp_id(species, "landscape_highlight_query"),
-              label = "Highlight query mutations",
-              value = TRUE
+            div(
+              style = "display: flex; gap: 16px; align-items: center; flex-wrap: wrap;",
+              checkboxInput(
+                mp_id(species, "landscape_query_only"),
+                label = "Only query mutations",
+                value = FALSE
+              ),
+              checkboxInput(
+                mp_id(species, "landscape_phenotype_only"),
+                label = "Only phenotype-annotated mutations",
+                value = FALSE
+              ),
+              checkboxInput(
+                mp_id(species, "landscape_highlight_query"),
+                label = "Highlight query mutations",
+                value = TRUE
+              )
             )
           ),
           plotOutput(mp_id(species, "landscape_plot"),
@@ -398,7 +411,9 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
                          choices = proteins, selected = proteins[1])
   })
 
-  # Aggregated mutation data: one row per unique mutation, all proteins
+  # Aggregated mutation data: one row per unique mutation, all proteins.
+  # The two toggles below also filter the lollipop, position detail, and
+  # export table so the view stays consistent.
   .catalogue_data <- reactive({
     df <- mutation_detail_data()
     if (is.null(df) || nrow(df) == 0) return(NULL)
@@ -429,6 +444,19 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
         in_query = n_query_mut > 0
       )
 
+    # Mark phenotype-annotated mutations once, for both colour and filtering.
+    pheno <- mutation_phenotypes_data()
+    pheno_ids <- if (!is.null(pheno) && nrow(pheno) > 0) as.character(unique(pheno$mutation_id)) else character(0)
+    agg <- agg |>
+      mutate(has_phenotype = as.character(mutation_id) %in% pheno_ids)
+
+    if (isTRUE(input[[mp_id(sp, "landscape_query_only")]])) {
+      agg <- agg |> filter(in_query)
+    }
+    if (isTRUE(input[[mp_id(sp, "landscape_phenotype_only")]])) {
+      agg <- agg |> filter(has_phenotype)
+    }
+
     agg
   })
 
@@ -453,9 +481,6 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       return()
     }
 
-    pheno <- mutation_phenotypes_data()
-    pheno_ids <- if (!is.null(pheno) && nrow(pheno) > 0) unique(pheno$mutation_id) else character(0)
-
     plot_df <- prot_data |>
       mutate(
         n_total = n_query_mut + n_bg_mut,
@@ -468,7 +493,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       ungroup() |>
       mutate(
         stroke_col = if_else(
-          mutation_id %in% pheno_ids,
+          has_phenotype,
           "#27AE60",
           if_else(show_query & in_query, "#E74C3C", "transparent")
         ),
@@ -484,6 +509,12 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
 
     x_limits <- range(plot_df$position) + c(-5, 5)
     y_min <- min(plot_df$y, -1, na.rm = TRUE) - 1.5
+
+    pheno_present <- any(prot_data$has_phenotype, na.rm = TRUE)
+    caption_parts <- character(0)
+    if (pheno_present) caption_parts <- c(caption_parts, "Green outline = phenotype-annotated")
+    if (show_query) caption_parts <- c(caption_parts, "Red outline = also in query sample(s)")
+    caption <- if (length(caption_parts) > 0) paste(caption_parts, collapse = "; ") else NULL
 
     p <- ggplot(plot_df, aes(x = position, y = y)) +
       geom_segment(aes(xend = position, y = 0, yend = y),
@@ -514,7 +545,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
         x = "Amino acid position",
         y = NULL,
         title = paste(prot, "\u2014 Mutation Landscape"),
-        caption = if (show_query) "Red outline = also in query sample(s)" else NULL
+        caption = caption
       ) +
       theme_bw(base_size = 11) +
       theme(
