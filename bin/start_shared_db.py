@@ -38,7 +38,12 @@ def main():
     pg.init(reset=False)
     print(f"Starting shared PostgreSQL on {args.host}:{args.port}...", file=sys.stderr)
     pg.start()
-    print("Creating warehouse database (if needed)...", file=sys.stderr)
+    # Reset the warehouse so each pipeline run starts clean: the shared data
+    # dir persists across runs, so without this the samples table (and every
+    # other table) would still carry rows from the previous dataset.
+    print("Dropping existing warehouse database (clean slate for this run)...", file=sys.stderr)
+    pg.drop_db()
+    print("Creating warehouse database...", file=sys.stderr)
     pg.create_db()
     print("Shared PostgreSQL is up.", file=sys.stderr)
 
