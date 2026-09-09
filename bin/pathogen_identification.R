@@ -958,7 +958,11 @@ make_identification_summary <- function(species_df, seq_sim_df, msa_df, phylo_df
   )
   if (!has_rows(species_df)) return(empty)
 
-  confirmed <- species_df %>% filter(assignment == "CONFIRMED")
+  # Include ALL samples, not just CONFIRMED: highly divergent query genomes
+  # (e.g. simulated outbreak data) are flagged qc_status="bad" by Nextclade
+  # and would otherwise leave this table empty. The unresolved_samples table
+  # still records the assignment status for traceability.
+  confirmed <- species_df
   if (!has_rows(confirmed)) return(empty)
 
   seq_sim_closest <- tibble(sample = character(), percent_nucleotide_identity = numeric(), p_distance = numeric())

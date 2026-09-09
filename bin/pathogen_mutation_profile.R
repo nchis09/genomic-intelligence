@@ -285,18 +285,33 @@ manova_df <- sample_meta |>
 
 protein_names <- setdiff(colnames(manova_df), c("sample_id", "is_query"))
 
+# Fallback row used whenever MANOVA cannot be computed. Keeps the same
+# columns as the success path so downstream readers (dashboard formatRound
+# on Wilks/statistic/num_Df/den_Df) never hit missing-column errors.
+manova_skipped <- function(note) {
+  tibble(
+    term = "is_query", Wilks = NA_real_, statistic = NA_real_,
+    num_Df = NA_real_, den_Df = NA_real_, p_value = NA_real_,
+    note = note
+  )
+}
+
 manova_out <- if (n_query >= 2 && n_bg >= 1 && length(protein_names) > 1) {
   f <- as.formula(paste("cbind(", paste(protein_names, collapse = ","), ") ~ is_query"))
   mfit <- tryCatch(manova(f, data = manova_df), error = function(e) NULL)
-  if (!is.null(mfit)) {
-    s <- summary(mfit, test = "Wilks")
+  # summary() can still fail when residual rank < number of responses
+  # (e.g. very few samples relative to proteins), so guard it as well.
+  s <- if (!is.null(mfit)) {
+    tryCatch(summary(mfit, test = "Wilks"), error = function(e) NULL)
+  }
+  if (!is.null(s)) {
     as.data.frame(s$stats) |>
       tibble::rownames_to_column("term") |>
       filter(term != "Residuals") |>
       dplyr::select(term, Wilks = `Wilks`, statistic = `approx F`, num_Df = `num Df`, den_Df = `den Df`, p_value = `Pr(>F)`) |>
       mutate(note = "MANOVA on protein-level burden")
   } else {
-    tibble(term = "is_query", note = "MANOVA model failed")
+    manova_skipped("MANOVA model failed")
   }
 } else {
   note <- if (length(protein_names) <= 1) {
@@ -306,7 +321,7 @@ manova_out <- if (n_query >= 2 && n_bg >= 1 && length(protein_names) > 1) {
   } else {
     "No background samples for MANOVA"
   }
-  tibble(term = "is_query", note = note)
+  manova_skipped(note)
 }
 
 write_tsv(manova_out, "01_mutation_profile_manova.tsv", subdir = "mutation_profile")
@@ -612,5 +627,35 @@ if (!is.null(translations_dir) && dir.exists(translations_dir)) {
     "01_position_aa_frequencies.tsv", subdir = "mutation_profile"
   )
 }
+
+# ---------------------------------------------------------------------------
+# Per-sample mutation detail (long format) — drives the dashboard Mutation
+# Landscape, catalogue, trajectory and related views.
+# ---------------------------------------------------------------------------
+mutation_detail <- if (nrow(mutations_long) > 0) {
+  mutations_long |>
+    dplyr::select(
+      sample_id, sample_name, is_query,
+      mutation_id, mutation_uid, mutation_label, mutation_type,
+      protein_name, gene_name, position, ref_aa, alt_aa
+    ) |>
+    # Attach per-sample metadata used by the dashboard trajectory
+    # (collection_year) and geo-map (country) views.
+    left_join(
+      sample_meta |> dplyr::select(sample_id, collection_year, country, host, outbreak, clade, lineage),
+      by = "sample_id"
+    ) |>
+    arrange(protein_name, position, sample_id)
+} else {
+  tibble(
+    sample_id = integer(), sample_name = character(), is_query = logical(),
+    mutation_id = integer(), mutation_uid = character(), mutation_label = character(),
+    mutation_type = character(), protein_name = character(), gene_name = character(),
+    position = integer(), ref_aa = character(), alt_aa = character(),
+    collection_year = numeric(), country = character(), host = character(),
+    outbreak = character(), clade = character(), lineage = character()
+  )
+}
+write_tsv(mutation_detail, "01_mutation_detail.tsv", subdir = "mutation_profile")
 
 log_info("Done. Outputs in ", file.path(outdir, "mutation_profile"))

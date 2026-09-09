@@ -163,6 +163,25 @@ class TemporaryPostgres:
         pg_ctl = find_executable("pg_ctl")
         run_cmd([pg_ctl, "stop", "-D", str(self.data_dir), "-m", "fast"], check=False)
 
+    def drop_db(self):
+        """Drop the warehouse database if it exists. Used to guarantee each
+        pipeline run starts from a clean slate so stale rows (e.g. samples from
+        a previous dataset) never leak into the current run's outputs."""
+        env = {"PGUSER": self.superuser}
+        psql = find_executable("psql")
+        # Terminate any open connections to the db so DROP DATABASE succeeds.
+        run_cmd([
+            psql, "-h", self.host, "-p", str(self.port), "-U", self.superuser,
+            "-d", "template1",
+            "-c", f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                  f"WHERE datname = '{self.db_name}' AND pid <> pg_backend_pid()",
+        ], check=False, env=env, capture_output=True, text=True)
+        run_cmd([
+            psql, "-h", self.host, "-p", str(self.port), "-U", self.superuser,
+            "-d", "template1",
+            "-c", f"DROP DATABASE IF EXISTS {self.db_name}",
+        ], check=False, env=env, capture_output=True, text=True)
+
     def create_db(self):
         """Create the warehouse database if it doesn't already exist."""
         env = {"PGUSER": self.superuser}
@@ -1075,16 +1094,38 @@ def _collect_tips(tree, tips=None):
     return tips
 
 
+_SPECIES_TOKENS = ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan")
+
+
+def _detect_species_from_path(path):
+    """Detect the species code from a file path. Checks directory parts first,
+    then falls back to the filename so staged files like
+    'ebola_sudv_all-outbreaks.json' (no species directory) still resolve."""
+    path = Path(path)
+    for part in path.parts:
+        if part.lower() in _SPECIES_TOKENS:
+            return part.lower()
+    name = path.name.lower()
+    for token in _SPECIES_TOKENS:
+        if token in name:
+            return token
+    return None
+
+
 def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=None, species=None):
     results_dir = Path(results_dir)
     species_filter = normalize_text(species)
     # Auspice JSON files under nextstrain_ebola/<species>/auspice/
     auspice_files = []
-    if auspice_json and Path(auspice_json).exists():
+    direct_auspice = bool(auspice_json and Path(auspice_json).exists())
+    if direct_auspice:
         auspice_files = [Path(auspice_json)]
     else:
         auspice_files = sorted(results_dir.rglob("*all-outbreaks.json"))
-    if species_filter:
+    # Only apply the species filter when scanning the results tree. A directly
+    # passed (staged) file is already the correct one for this run — its path
+    # parts don't contain the species directory, so filtering would drop it.
+    if species_filter and not direct_auspice:
         auspice_files = [p for p in auspice_files if species_filter in [x.lower() for x in p.parts]]
     if not auspice_files:
         print("  SKIP: no Auspice JSON files found", file=sys.stderr)
@@ -1092,11 +1133,7 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
     loaded = 0
     with conn.cursor() as cur:
         for path in auspice_files:
-            species = None
-            for part in path.parts:
-                if part.lower() in ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan"):
-                    species = part.lower()
-                    break
+            species = _detect_species_from_path(path) or species_filter
             newick_candidates = sorted(results_dir.rglob("tree.nwk"))
             if species_filter:
                 newick_candidates = [p for p in newick_candidates if species_filter in [x.lower() for x in p.parts]]
