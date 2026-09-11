@@ -153,9 +153,8 @@ workflow EBOLA_WORKFLOW {
             .map { meta, dir -> [ meta, (dir && !dir.name.startsWith('NO_FILE')) ? dir : no_file_rbioapi ] }
 
         ch_auspice_for_kw = ch_auspice_results
-            .join(BIOINFORMATICS_AND_EPIDEMIOLOGICAL.out.tree, by: 0, remainder: true)
-            .map { meta, auspice, _results, tree ->
-                [ meta, (auspice && !auspice.name.startsWith('NO_FILE')) ? auspice : no_file_auspice, (tree && !tree.name.startsWith('NO_FILE')) ? tree : no_file_tree ]
+            .map { meta, auspice, _results ->
+                [ meta, (auspice && !auspice.name.startsWith('NO_FILE')) ? auspice : no_file_auspice, no_file_tree ]
             }
 
         ch_hmm_for_kw = params.skip_phenotype_annotation

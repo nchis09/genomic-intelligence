@@ -181,10 +181,6 @@ extract_inputs <- function() {
   }
   inputs$completeness$phylogenetic_trees <- list(nrow = nrow(trees), available_methods = unique(trees$tree_method))
 
-  inputs$tree_iq <- trees %>%
-    filter(tolower(tree_method) == "iqtree2") %>%
-    dplyr::slice(1)
-
   inputs$tree_augur <- trees %>%
     filter(tolower(tree_method) %in% c("augur", "nextstrain", "auspice")) %>%
     dplyr::slice(1)
@@ -194,7 +190,7 @@ extract_inputs <- function() {
     dplyr::slice(1)
 
   # Tree tips
-  if (has_rows(inputs$tree_iq)) {
+  if (has_rows(inputs$tree_augur)) {
     inputs$tip_meta <- get_rows(con, "
       SELECT tt.sample_id, tt.label, tt.is_query, tt.div,
              s.sample_name as sample, s.clade, s.lineage,
@@ -204,7 +200,7 @@ extract_inputs <- function() {
       FROM tree_tips tt
       JOIN samples s ON s.sample_id = tt.sample_id
       WHERE tt.tree_id = ?tree_id
-    ", tree_id = inputs$tree_iq$tree_id[[1]])
+    ", tree_id = inputs$tree_augur$tree_id[[1]])
   } else {
     inputs$tip_meta <- tibble(
       sample_id = integer(), label = character(), is_query = logical(),
@@ -328,7 +324,7 @@ extract_inputs <- function() {
       JOIN tree_tips tt ON tt.sample_id = s.sample_id
       WHERE tt.tree_id = ?tree_id
         AND s.species = ?species
-    ", tree_id = inputs$tree_iq$tree_id[[1]])
+    ", tree_id = inputs$tree_augur$tree_id[[1]])
   } else {
     inputs$mutation_community <- tibble(label = character(), mutation_label = character())
   }
@@ -1047,7 +1043,7 @@ make_01_genetic_distinctiveness <- function(inputs) {
   }
   tip_meta <- inputs$tip_meta %>%
     mutate(label = as.character(label), is_query = as.logical(is_query))
-  cop <- cophenetic_matrix(if (has_rows(inputs$tree_iq)) inputs$tree_iq$newick[[1]] else NULL)
+  cop <- cophenetic_matrix(if (has_rows(inputs$tree_augur)) inputs$tree_augur$newick[[1]] else NULL)
   if (is.null(cop)) {
     return(tip_meta %>% select(sample, is_query, div) %>%
              mutate(mean_pairwise_distance = NA_real_, nearest_background_distance = NA_real_,
@@ -1102,7 +1098,7 @@ make_02_divergence_distribution <- function(inputs) {
   if (!has_rows(inputs$tip_meta)) return(empty)
   tip_meta <- inputs$tip_meta %>%
     mutate(label = as.character(label), is_query = as.logical(is_query))
-  phy <- newick_to_phylo(if (has_rows(inputs$tree_iq)) inputs$tree_iq$newick[[1]] else NULL)
+  phy <- newick_to_phylo(if (has_rows(inputs$tree_augur)) inputs$tree_augur$newick[[1]] else NULL)
   if (is.null(phy)) {
     return(tip_meta %>% select(sample, is_query) %>%
              mutate(terminal_branch_length = NA_real_, terminal_branch_length_percentile = NA_real_,
@@ -1110,7 +1106,7 @@ make_02_divergence_distribution <- function(inputs) {
                     distance_to_nearest_background_sample = NA_character_,
                     distance_to_mrca_with_nearest_background = NA_real_))
   }
-  cop <- cophenetic_matrix(if (has_rows(inputs$tree_iq)) inputs$tree_iq$newick[[1]] else NULL)
+  cop <- cophenetic_matrix(if (has_rows(inputs$tree_augur)) inputs$tree_augur$newick[[1]] else NULL)
   labels <- rownames(cop)
   tip_meta <- tip_meta %>% filter(label %in% labels)
   if (nrow(tip_meta) == 0) return(empty)
@@ -1169,7 +1165,7 @@ make_03_clade_placement <- function(inputs) {
   if (!has_rows(inputs$tip_meta)) return(empty)
   tip_meta <- inputs$tip_meta %>%
     mutate(label = as.character(label), is_query = as.logical(is_query))
-  cop <- cophenetic_matrix(if (has_rows(inputs$tree_iq)) inputs$tree_iq$newick[[1]] else NULL)
+  cop <- cophenetic_matrix(if (has_rows(inputs$tree_augur)) inputs$tree_augur$newick[[1]] else NULL)
   if (is.null(cop)) {
     return(tip_meta %>% select(sample, is_query, assigned_clade = clade, assigned_lineage = lineage) %>%
              mutate(nearest_background_sample = NA_character_, nearest_background_distance = NA_real_,
@@ -1221,7 +1217,7 @@ make_04_distance_distributions <- function(inputs) {
                   max_distance = numeric(), q25 = numeric(), q75 = numeric(), sd_distance = numeric())
   if (!has_rows(inputs$tip_meta)) return(empty)
   tip_meta <- inputs$tip_meta %>% mutate(label = as.character(label), is_query = as.logical(is_query))
-  cop <- cophenetic_matrix(if (has_rows(inputs$tree_iq)) inputs$tree_iq$newick[[1]] else NULL)
+  cop <- cophenetic_matrix(if (has_rows(inputs$tree_augur)) inputs$tree_augur$newick[[1]] else NULL)
   if (is.null(cop)) return(empty)
   labels <- rownames(cop)
   tip_meta <- tip_meta %>% filter(label %in% labels)
@@ -1267,7 +1263,7 @@ make_05_temporal_signal <- function(inputs) {
                   p_value = numeric(), rtt_r_squared = numeric(), rtt_slope = numeric(),
                   note = character())
   if (!has_rows(inputs$tip_meta)) return(empty)
-  phy <- newick_to_phylo(if (has_rows(inputs$tree_iq)) inputs$tree_iq$newick[[1]] else NULL)
+  phy <- newick_to_phylo(if (has_rows(inputs$tree_augur)) inputs$tree_augur$newick[[1]] else NULL)
   if (is.null(phy)) return(empty)
   rtt <- node.depth.edgelength(phy)[1:length(phy$tip.label)]
   tip_meta <- inputs$tip_meta %>%

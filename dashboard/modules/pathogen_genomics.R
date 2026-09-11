@@ -116,15 +116,14 @@ pathogen_genomics_ui <- function(species) {
               "Country" = "country",
               "Genome coverage" = "coverage",
               "Mutation count" = "mutations",
-              "Query highlight" = "query",
-              "Bootstrap support" = "bootstrap"
+              "Query highlight" = "query"
             ),
             selected = c("clade", "query", "outbreak")
           ),
           radioButtons(
             inputId = pg_id(species, "tree_select"),
             label = "Tree type:",
-            choices = c("Augur (evolutionary)" = "augur", "IQ-TREE (bootstrap)" = "iqtree"),
+            choices = c("Augur (evolutionary)" = "augur"),
             selected = "augur"
           ),
           radioButtons(
@@ -242,11 +241,7 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
     trees_df <- data$trees
     tips_df <- data$tips
 
-    selected_tree <- if (!is.null(tree_choice) && tree_choice == "iqtree") {
-      trees_df[grepl("iqtree", tolower(trees_df$tree_method)), ]
-    } else {
-      trees_df[!grepl("iqtree", tolower(trees_df$tree_method)), ]
-    }
+    selected_tree <- trees_df[!grepl("iqtree", tolower(trees_df$tree_method)), ]
 
     if (nrow(selected_tree) == 0) {
       selected_tree <- trees_df[1, , drop = FALSE]
