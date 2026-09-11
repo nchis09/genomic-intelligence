@@ -11,8 +11,6 @@
 
 include { NEXTSTRAIN_EBOLA             } from '../../../modules/local/nextstrain_ebola/main'
 include { NEXTSTRAIN_EBOLA_INGEST      } from '../../../modules/local/nextstrain_ebola_ingest/main'
-include { MAFFT_ALIGN                  } from '../../../modules/local/mafft_align/main'
-include { IQTREE2                      } from '../../../modules/local/iqtree2/main'
 
 workflow BIOINFORMATICS_ANALYSIS {
     take:
@@ -40,15 +38,7 @@ workflow BIOINFORMATICS_ANALYSIS {
     //
     NEXTSTRAIN_EBOLA(ch_ebola_input)
 
-    //
-    // Build a model-aware ML tree from the Nextstrain subsampled sequences
-    //
-    MAFFT_ALIGN(NEXTSTRAIN_EBOLA.out.results_dir)
-    IQTREE2(MAFFT_ALIGN.out.alignment)
-
     emit:
     auspice   = NEXTSTRAIN_EBOLA.out.auspice      // channel: [ meta, json ]
     results   = NEXTSTRAIN_EBOLA.out.results_dir  // channel: [ meta, dir ]
-    alignment = MAFFT_ALIGN.out.alignment         // channel: [ meta, fasta ]
-    tree      = IQTREE2.out.tree                  // channel: [ meta, newick ]
 }

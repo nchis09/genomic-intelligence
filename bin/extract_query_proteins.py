@@ -62,6 +62,8 @@ def parse_args():
     parser.add_argument("--species", required=True)
     parser.add_argument("--prefix", default="query")
     parser.add_argument("--max_neighbors", type=int, default=5)
+    parser.add_argument("--max_xrefs", type=int, default=0,
+                        help="Max INSDC accessions to cross-reference with UniProt per query sample (0 disables Strategy 4)")
     return parser.parse_args()
 
 
@@ -616,15 +618,41 @@ def main():
         print(f"    {len(seen_match)} gene:mutation matches, {len(mut_match_insdc)} unique INSDC accessions", file=sys.stderr)
 
         # --- Collect all unique INSDC accessions for this sample ---
-        sample_insdc = set()
-        for d in all_discoveries:
-            if d["sample"] == sample_name and d["insdc"]:
-                sample_insdc.add(d["insdc"])
-        print(f"\n  Total unique INSDC accessions to map: {len(sample_insdc)}", file=sys.stderr)
+        # Order by likely relevance: phylogenetic neighbors first, then
+        # outbreak matches, then mutation matches; cap to keep the UniProt
+        # REST xref queries reasonable for large outbreaks.
+        ordered_insdc = []
+        seen_insdc = set()
+        for t in phylo_neighbors:
+            insdc = get_insdc(t)
+            if insdc and insdc not in seen_insdc:
+                seen_insdc.add(insdc)
+                ordered_insdc.append(insdc)
+        for insdc in sorted(outbreak_insdc):
+            if insdc and insdc not in seen_insdc:
+                seen_insdc.add(insdc)
+                ordered_insdc.append(insdc)
+        for insdc in sorted(mut_match_insdc):
+            if insdc and insdc not in seen_insdc:
+                seen_insdc.add(insdc)
+                ordered_insdc.append(insdc)
+
+        n_discovered_insdc = len(ordered_insdc)
+        sample_insdc = ordered_insdc[:args.max_xrefs]
+        if args.max_xrefs == 0:
+            print(f"\n  Total unique INSDC accessions discovered: {n_discovered_insdc} (Strategy 4 GenBank→UniProt xref is disabled)", file=sys.stderr)
+        else:
+            if n_discovered_insdc > args.max_xrefs:
+                print(f"\n  WARNING: capping INSDC xrefs from {n_discovered_insdc} to {args.max_xrefs} per sample", file=sys.stderr)
+            print(f"\n  Total unique INSDC accessions to map: {len(sample_insdc)} (of {n_discovered_insdc} discovered)", file=sys.stderr)
 
         # --- Strategy 4: GenBank → UniProt xref mapping ---
-        print(f"\n  [Strategy 4] GenBank → UniProt xref mapping:", file=sys.stderr)
-        xref_results = genbank_to_uniprot(sorted(sample_insdc))
+        xref_results = {}
+        if sample_insdc:
+            print(f"\n  [Strategy 4] GenBank → UniProt xref mapping:", file=sys.stderr)
+            xref_results = genbank_to_uniprot(sample_insdc)
+        else:
+            print(f"\n  [Strategy 4] GenBank → UniProt xref mapping: skipped (--max_xrefs={args.max_xrefs})", file=sys.stderr)
 
         # Enrich discovery rows with UniProt accessions
         for d in all_discoveries:
@@ -738,7 +766,7 @@ def main():
             "phylo_neighbors": len(phylo_neighbors),
             "outbreak_matches": len(outbreak_matches),
             "mutation_matches": len(seen_match),
-            "unique_insdc_discovered": len(sample_insdc),
+            "unique_insdc_discovered": n_discovered_insdc,
             "unique_uniprot_discovered": len(all_uniprot_accessions),
             "reviewed_canonical_accessions": n_reviewed,
         })
