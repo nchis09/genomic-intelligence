@@ -31,15 +31,17 @@ process EXTRACT_QUERY_PROTEINS {
     task.ext.when == null || task.ext.when
 
     script:
-    def prefix  = task.ext.prefix ?: "${meta.id}"
-    def species = meta.species ?: meta.id.replaceAll(/^.*_/, '')
-    def query   = params.query_samples ?: (meta.query_samples ?: '')
+    def prefix    = task.ext.prefix ?: "${meta.id}"
+    def species   = meta.species ?: meta.id.replaceAll(/^.*_/, '')
+    def query     = params.query_samples ?: (meta.query_samples ?: '')
+    def max_xrefs = params.max_query_xrefs ?: 0
     """
     python3 ${projectDir}/bin/extract_query_proteins.py \\
         --auspice ${auspice_json} \\
         --results_dir ${results_dir} \\
         --query_samples "${query}" \\
         --species ${species} \\
-        --prefix ${prefix}
+        --prefix ${prefix} \\
+        --max_xrefs ${max_xrefs}
     """
 }
