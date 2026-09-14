@@ -39,7 +39,7 @@ pathogen_mutation_profile_ui <- function(species) {
           radioButtons(
             inputId = mp_id(species, "plsda_colour"),
             label = "Colour samples by:",
-            choices = c("country", "outbreak"),
+            choices = c("country", "outbreak", "collection_year"),
             selected = "country",
             inline = TRUE
           ),
@@ -133,26 +133,50 @@ pathogen_mutation_profile_ui <- function(species) {
             ),
             div(
               style = "display: flex; gap: 16px; align-items: center; flex-wrap: wrap;",
+              selectInput(
+                inputId = mp_id(species, "landscape_metric"),
+                label = NULL,
+                choices = c(
+                  "Shannon entropy" = "shannon_entropy",
+                  "% samples mutated" = "mutated_fraction",
+                  "Distinct amino acids" = "n_distinct_aa"
+                ),
+                selected = "shannon_entropy",
+                width = "180px"
+              ),
               checkboxInput(
                 mp_id(species, "landscape_query_only"),
-                label = "Only query mutations",
+                label = "Only query positions",
                 value = FALSE
               ),
               checkboxInput(
                 mp_id(species, "landscape_phenotype_only"),
-                label = "Only phenotype-annotated mutations",
+                label = "Only phenotype-annotated positions",
                 value = FALSE
               ),
               checkboxInput(
                 mp_id(species, "landscape_highlight_query"),
-                label = "Highlight query mutations",
+                label = "Highlight query positions",
                 value = TRUE
+              ),
+              div(
+                style = "display: flex; gap: 8px; align-items: center; margin-left: 16px;",
+                textInput(
+                  inputId = mp_id(species, "landscape_position"),
+                  label = NULL,
+                  value = "",
+                  placeholder = "Position...",
+                  width = "110px"
+                ),
+                actionButton(
+                  inputId = mp_id(species, "landscape_go"),
+                  label = "Go",
+                  class = "btn-sm btn-primary"
+                )
               )
             )
           ),
-          plotOutput(mp_id(species, "landscape_plot"),
-                     click = mp_id(species, "landscape_click"),
-                     height = "520px")
+          plotly::plotlyOutput(mp_id(species, "landscape_plot"), height = "520px")
         )
       )
     ),
@@ -211,15 +235,32 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
 
 
   mutation_detail_data <- reactive({
-    mp_read_table(mp_table_path(outdir(), sp, "01_mutation_detail.tsv"))
+    df <- mp_read_table(mp_table_path(outdir(), sp, "01_mutation_detail.tsv"))
+    if (is.null(df) || nrow(df) == 0) return(NULL)
+    df |>
+      mutate(mutation_id = as.character(mutation_uid))
   })
 
   mutation_phenotypes_data <- reactive({
-    mp_read_table(mp_table_path(outdir(), sp, "01_mutation_phenotypes.tsv"))
+    df <- mp_read_table(mp_table_path(outdir(), sp, "01_mutation_phenotypes.tsv"))
+    if (is.null(df) || nrow(df) == 0) return(NULL)
+    df |>
+      mutate(mutation_id = as.character(mutation_uid))
+  })
+
+  mutation_context_data <- reactive({
+    df <- mp_read_table(mp_table_path(outdir(), sp, "01_mutation_context.tsv"))
+    if (is.null(df) || nrow(df) == 0) return(NULL)
+    df |>
+      mutate(mutation_id = as.character(mutation_uid))
   })
 
   aa_frequencies_data <- reactive({
     mp_read_table(mp_table_path(outdir(), sp, "01_position_aa_frequencies.tsv"))
+  })
+
+  position_summary_data <- reactive({
+    mp_read_table(mp_table_path(outdir(), sp, "01_position_summary.tsv"))
   })
 
   click_info <- reactiveVal(NULL)
@@ -450,153 +491,130 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     agg <- agg |>
       mutate(has_phenotype = as.character(mutation_id) %in% pheno_ids)
 
-    if (isTRUE(input[[mp_id(sp, "landscape_query_only")]])) {
-      agg <- agg |> filter(in_query)
-    }
-    if (isTRUE(input[[mp_id(sp, "landscape_phenotype_only")]])) {
-      agg <- agg |> filter(has_phenotype)
-    }
-
     agg
   })
 
-  # --- Mutation landscape lollipop (ProteinPaint style) ---
-  output[[mp_id(sp, "landscape_plot")]] <- renderPlot({
-    prot <- input[[mp_id(sp, "landscape_protein")]]
-    show_query <- isTRUE(input[[mp_id(sp, "landscape_highlight_query")]])
-    agg <- .catalogue_data()
+  # --- Position-level landscape data (one row per protein/position) ---
+  landscape_data <- reactive({
+    df <- position_summary_data()
+    if (is.null(df) || nrow(df) == 0) return(NULL)
 
-    if (is.null(agg) || is.null(prot) || prot == "") {
-      plot.new()
-      text(0.5, 0.5, "Select a protein to view its mutation landscape.",
-           cex = 1.1, col = "#6c757d")
-      return()
-    }
+    metric <- input[[mp_id(sp, "landscape_metric")]]
+    if (is.null(metric) || metric == "") metric <- "shannon_entropy"
 
-    prot_data <- agg |> filter(protein_name == prot)
-    if (nrow(prot_data) == 0) {
-      plot.new()
-      text(0.5, 0.5, paste("No mutations found in", prot),
-           cex = 1.1, col = "#6c757d")
-      return()
-    }
-
-    plot_df <- prot_data |>
+    out <- df |>
       mutate(
-        n_total = n_query_mut + n_bg_mut,
-        mutation_class = coalesce(mutation_type, "Unknown")
-      ) |>
-      filter(n_total > 0) |>
-      group_by(position) |>
-      arrange(desc(n_total), .by_group = TRUE) |>
-      mutate(y = -row_number()) |>
-      ungroup() |>
-      mutate(
-        stroke_col = if_else(
-          has_phenotype,
-          "#27AE60",
-          if_else(show_query & in_query, "#E74C3C", "transparent")
+        y_metric = case_when(
+          metric == "mutated_fraction" ~ 100 * mutated_fraction,
+          metric == "n_distinct_aa"    ~ as.numeric(n_distinct_aa),
+          TRUE                         ~ shannon_entropy
         ),
-        count_label = if_else(n_total >= 1, as.character(n_total), "")
+        y_label = case_when(
+          metric == "mutated_fraction" ~ "% samples with non-reference residue",
+          metric == "n_distinct_aa"    ~ "Distinct amino-acid variants",
+          TRUE                         ~ "Shannon entropy (bits)"
+        )
       )
 
-    if (nrow(plot_df) == 0) {
-      plot.new()
-      text(0.5, 0.5, "No mutations to display.",
-           cex = 1.1, col = "#6c757d")
-      return()
+    prot <- input[[mp_id(sp, "landscape_protein")]]
+    if (!is.null(prot) && prot != "") {
+      out <- out |> filter(protein_name == prot)
     }
 
-    x_limits <- range(plot_df$position) + c(-5, 5)
-    y_min <- min(plot_df$y, -1, na.rm = TRUE) - 1.5
+    if (isTRUE(input[[mp_id(sp, "landscape_query_only")]])) {
+      out <- out |> filter(has_query_mutation)
+    }
 
-    pheno_present <- any(prot_data$has_phenotype, na.rm = TRUE)
-    caption_parts <- character(0)
-    if (pheno_present) caption_parts <- c(caption_parts, "Green outline = phenotype-annotated")
-    if (show_query) caption_parts <- c(caption_parts, "Red outline = also in query sample(s)")
-    caption <- if (length(caption_parts) > 0) paste(caption_parts, collapse = "; ") else NULL
+    if (isTRUE(input[[mp_id(sp, "landscape_phenotype_only")]])) {
+      pheno <- mutation_phenotypes_data()
+      if (!is.null(pheno) && nrow(pheno) > 0) {
+        pheno_positions <- pheno |>
+          dplyr::distinct(protein_name, position)
+        out <- out |>
+          inner_join(pheno_positions, by = c("protein_name", "position"))
+      } else {
+        out <- out[0, ]
+      }
+    }
 
-    p <- ggplot(plot_df, aes(x = position, y = y)) +
-      geom_segment(aes(xend = position, y = 0, yend = y),
-                   colour = "#BDC3C7", linewidth = 0.5) +
-      geom_point(aes(size = n_total, fill = mutation_class, colour = stroke_col),
-                 shape = 21, stroke = 1.2) +
-      geom_text(aes(label = count_label),
-                colour = "white", size = 2.2, fontface = "bold",
-                vjust = 0.5, hjust = 0.5) +
-      ggrepel::geom_text_repel(
-        aes(label = mutation_label),
-        colour = "#2C3E50", size = 2.4,
-        nudge_x = 3, nudge_y = 0,
-        hjust = 0, vjust = 0.5,
-        force = 2, force_pull = 0.5,
-        box.padding = 0.3, point.padding = 0.3,
-        max.overlaps = Inf,
-        segment.size = 0.25, min.segment.length = 0
-      ) +
-      scale_size_continuous(range = c(4, 16), guide = "none") +
-      scale_fill_brewer(palette = "Set1", na.value = "#95A5A6",
-                        name = "Mutation class") +
-      scale_colour_identity(guide = "none") +
-      scale_x_continuous(limits = x_limits) +
-      scale_y_continuous(expand = expansion(add = c(0.5, 0.5))) +
-      coord_cartesian(ylim = c(y_min, 0.5)) +
-      labs(
-        x = "Amino acid position",
-        y = NULL,
-        title = paste(prot, "\u2014 Mutation Landscape"),
-        caption = caption
-      ) +
-      theme_bw(base_size = 11) +
-      theme(
-        plot.title = element_text(size = 13, face = "bold"),
-        axis.title.y = element_blank(),
-        axis.text.y = element_blank(),
-        axis.ticks.y = element_blank(),
-        panel.grid.major.y = element_blank(),
-        panel.grid.minor.y = element_blank(),
-        legend.position = "right",
-        legend.key.size = unit(0.4, "cm"),
-        plot.margin = margin(t = 5, r = 5, b = 0, l = 5)
+    out |>
+      mutate(
+        query_flag = if (isTRUE(input[[mp_id(sp, "landscape_highlight_query")]])) {
+          if_else(has_query_mutation, "Query position", "Background only")
+        } else {
+          "Position"
+        }
+      )
+  })
+
+  # --- Mutation landscape line/scatter (position-level entropy/change) ---
+  output[[mp_id(sp, "landscape_plot")]] <- plotly::renderPlotly({
+    prot <- input[[mp_id(sp, "landscape_protein")]]
+    plot_df <- landscape_data()
+
+    if (is.null(plot_df) || is.null(prot) || prot == "" || nrow(plot_df) == 0) {
+      return(plotly::plot_ly() |>
+               plotly::layout(
+                 title = list(text = "Select a protein to view its mutation landscape.",
+                              font = list(size = 13, color = "#6c757d")),
+                 xaxis = list(visible = FALSE),
+                 yaxis = list(visible = FALSE)
+               ))
+    }
+
+    source_id <- mp_id(sp, "landscape_plot")
+    y_label <- plot_df$y_label[1]
+    highlight_query <- isTRUE(input[[mp_id(sp, "landscape_highlight_query")]])
+
+    p <- plotly::plot_ly(
+      data = plot_df,
+      x = ~position,
+      y = ~y_metric,
+      source = source_id,
+      type = "scatter",
+      mode = "lines+markers",
+      color = ~query_flag,
+      colors = c(
+        "Query position" = "#E74C3C",
+        "Background only" = "#3498DB",
+        "Position" = "#3498DB"
+      ),
+      line = list(color = "#BDC3C7", width = 1),
+      marker = list(size = 8),
+      hoverinfo = "text",
+      text = ~paste0(
+        "Position: ", position,
+        "<br>Reference: ", reference_aa,
+        "<br>", y_label, ": ", round(y_metric, 3),
+        "<br>Distinct AAs: ", n_distinct_aa,
+        "<br>Mutated: ", n_mutated, " / ", total_valid,
+        "<br>Query: ", n_query_mutated, " | Background: ", n_bg_mutated,
+        ifelse(has_query_mutation, "<br><b>Query mutation observed</b>", "")
+      )
+    ) |>
+      plotly::layout(
+        title = list(text = paste0(prot, " \u2014 Mutation Landscape"), font = list(size = 14)),
+        xaxis = list(title = "Amino acid position"),
+        yaxis = list(title = y_label),
+        showlegend = highlight_query,
+        margin = list(t = 40, r = 20, b = 40, l = 60)
       )
 
     p
   })
 
-  # --- Landscape click handler ---
-  observeEvent(input[[mp_id(sp, "landscape_click")]], {
-    click <- input[[mp_id(sp, "landscape_click")]]
-    if (is.null(click)) return()
+  # --- Plotly click handler: set clicked position ---
+  observeEvent(plotly::event_data("plotly_click", source = mp_id(sp, "landscape_plot")), {
+    event <- plotly::event_data("plotly_click", source = mp_id(sp, "landscape_plot"))
+    if (is.null(event) || nrow(event) == 0) return()
+    clicked_position(as.integer(event$x[1]))
+  })
 
-    prot <- input[[mp_id(sp, "landscape_protein")]]
-    agg <- .catalogue_data()
-    if (is.null(agg) || is.null(prot) || prot == "") return()
-
-    prot_data <- agg |> filter(protein_name == prot)
-    if (nrow(prot_data) == 0) return()
-
-    plot_df <- prot_data |>
-      mutate(n_total = n_query_mut + n_bg_mut) |>
-      filter(n_total > 0) |>
-      group_by(position) |>
-      arrange(desc(n_total), .by_group = TRUE) |>
-      mutate(y = -row_number()) |>
-      ungroup()
-
-    if (nrow(plot_df) == 0) {
-      selected_mutation_id(NULL)
-      return()
-    }
-
-    selected <- nearPoints(plot_df, click,
-                           xvar = "position", yvar = "y",
-                           threshold = 25, maxpoints = 1)
-    if (nrow(selected) == 0) {
-      selected_mutation_id(NULL)
-      return()
-    }
-
-    selected_mutation_id(selected$mutation_id[1])
+  # --- Manual position search: set clicked position from input ---
+  observeEvent(input[[mp_id(sp, "landscape_go")]], {
+    pos <- suppressWarnings(as.integer(input[[mp_id(sp, "landscape_position")]]))
+    if (is.null(pos) || is.na(pos) || pos < 1) return()
+    clicked_position(pos)
   })
 
   # --- Position detail panel (shown when multiple substitutions at one position) ---
@@ -613,7 +631,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     if (nrow(subs) == 0) return(NULL)
 
     pheno <- mutation_phenotypes_data()
-    pheno_ids <- if (!is.null(pheno) && nrow(pheno) > 0) unique(pheno$mutation_id) else character(0)
+    pheno_ids <- if (!is.null(pheno) && nrow(pheno) > 0) as.character(unique(pheno$mutation_id)) else character(0)
 
     bs4Dash::bs4Card(
       title = paste0(prot, " position ", pos, " \u2014 ", nrow(subs), " substitutions"),
@@ -625,14 +643,14 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
         style = "display: flex; flex-wrap: wrap; gap: 12px;",
         lapply(seq_len(nrow(subs)), function(i) {
           row <- subs[i, ]
-          is_pheno <- row$mutation_id %in% pheno_ids
+          is_pheno <- as.character(row$mutation_id) %in% pheno_ids
           border_col <- if (row$in_query) "#E74C3C"
                         else if (is_pheno) "#27AE60"
                         else "#dee2e6"
           bg_col <- if (row$in_query) "#FDEDEC" else "#f8f9fa"
 
           actionLink(
-            inputId = mp_id(sp, paste0("pos_sub_", row$mutation_id)),
+            inputId = mp_id(sp, paste0("pos_sub_", i)),
             label = div(
               style = paste0(
                 "padding: 10px 14px; border: 2px solid ", border_col, ";",
@@ -641,15 +659,17 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
               ),
               strong(row$mutation_label, style = "font-size: 1rem; display: block;"),
               if (!is.na(row$ref_aa) && !is.na(row$alt_aa)) {
-                span(paste0(row$ref_aa, " → ", row$alt_aa),
+                span(paste0(row$ref_aa, " \u2192 ", row$alt_aa),
                      style = "font-size: 0.85rem; color: #495057; display: block;")
               } else NULL,
-              span(paste0("Query: ", row$query_prev_pct, "%"),
+              span(paste0("Query: ", round(row$query_prev_pct, 1), "% (", row$n_query_mut, "/", row$n_query_total, ")"),
                    style = "font-size: 0.8rem; color: #E74C3C; display: block;"),
-              span(paste0("Background: ", row$bg_prev_pct, "%"),
+              span(paste0("Background: ", round(row$bg_prev_pct, 1), "% (", row$n_bg_mut, "/", row$n_bg_total, ")"),
                    style = "font-size: 0.8rem; color: #6c757d; display: block;"),
-              if (is_pheno) span("Has biological annotation",
-                                 style = "font-size: 0.7rem; color: #27AE60; display: block; margin-top: 2px;")
+              if (is_pheno) {
+                span("Has biological annotation",
+                     style = "font-size: 0.7rem; color: #27AE60; display: block; margin-top: 2px;")
+              } else NULL
             )
           )
         })
@@ -668,10 +688,8 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     if (nrow(subs) == 0) return()
 
     lapply(seq_len(nrow(subs)), function(i) {
-      mid <- subs$mutation_id[i]
-      observeEvent(input[[mp_id(sp, paste0("pos_sub_", mid))]], {
-        clicked_position(NULL)
-        selected_mutation_id(mid)
+      observeEvent(input[[mp_id(sp, paste0("pos_sub_", i))]], {
+        selected_mutation_id(as.character(subs$mutation_id[i]))
       }, ignoreInit = TRUE, once = TRUE)
     })
   })
@@ -732,7 +750,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     # Data table is sorted by Protein, Position — rebuild same order
     sorted_agg <- agg |> arrange(protein_name, position)
     if (sel_row > nrow(sorted_agg)) return()
-    selected_mutation_id(sorted_agg$mutation_id[sel_row])
+    selected_mutation_id(as.character(sorted_agg$mutation_id[sel_row]))
   })
 
   # --- Mutation Intelligence Card ---
@@ -741,7 +759,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     df <- mutation_detail_data()
     if (is.null(mid) || is.null(df) || nrow(df) == 0) return(NULL)
 
-    mut_rows <- df |> filter(mutation_id == mid)
+    mut_rows <- df |> filter(as.character(mutation_id) == as.character(mid))
     mut_label <- mut_rows$mutation_label[1]
     protein <- mut_rows$protein_name[1]
     pos <- mut_rows$position[1]
@@ -776,7 +794,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     pheno_ui <- NULL
     has_pheno <- FALSE
     if (!is.null(pheno) && nrow(pheno) > 0) {
-      matched <- pheno |> filter(mutation_id == mid)
+      matched <- pheno |> filter(as.character(mutation_id) == as.character(mid))
       if (nrow(matched) > 0) {
         has_pheno <- TRUE
         pheno_ui <- div(
@@ -784,11 +802,21 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
           h6("Phenotype Characteristics", style = "margin: 0 0 8px 0; font-weight: 700; color: #27AE60;"),
           lapply(seq_len(nrow(matched)), function(i) {
             row <- matched[i, ]
-            div(style = "margin-bottom: 6px;",
+            div(style = "margin-bottom: 8px;",
               p(style = "margin: 2px 0; font-size: 0.85rem;",
-                strong("Phenotype: "), row$phenotype,
-                if (!is.na(row$effect)) paste0(" | Effect: ", row$effect) else "",
-                if (!is.na(row$source)) paste0(" | Source: ", row$source) else "")
+                tags$span(class = "badge", style = "background-color: #27AE60; color: white; margin-right: 6px; padding: 2px 6px; border-radius: 4px;", row$phenotype),
+                if (!is.na(row$source) && row$source != "") {
+                  tags$span(class = "badge", style = "background-color: #3498db; color: white; margin-right: 6px; padding: 2px 6px; border-radius: 4px;", row$source)
+                } else NULL
+              ),
+              if (!is.na(row$effect) && row$effect != "") {
+                p(style = "margin: 2px 0; font-size: 0.85rem; word-break: break-word;",
+                  strong("Effect: "), row$effect)
+              } else NULL,
+              if (!is.na(row$evidence) && row$evidence != "") {
+                p(style = "margin: 2px 0; font-size: 0.85rem; word-break: break-word;",
+                  strong("Evidence: "), row$evidence)
+              } else NULL
             )
           })
         )
@@ -799,6 +827,57 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
         style = "margin-top: 12px; padding: 10px 12px; background: #f8f9fa; border-left: 4px solid #95A5A6; border-radius: 4px;",
         p(style = "margin: 0; font-size: 0.85rem; color: #6c757d;",
           "No phenotype characteristics recorded for this position.")
+      )
+    }
+
+    # Functional / domain context section
+    ctx <- mutation_context_data()
+    context_ui <- NULL
+    has_context <- FALSE
+    if (!is.null(ctx) && nrow(ctx) > 0) {
+      matched_ctx <- ctx |> filter(as.character(mutation_id) == as.character(mid))
+      if (nrow(matched_ctx) > 0) {
+        has_context <- TRUE
+        context_ui <- div(
+          style = "margin-top: 12px; padding: 12px; background: #eef6fc; border-left: 4px solid #3498db; border-radius: 4px;",
+          h6("Functional / Domain context", style = "margin: 0 0 8px 0; font-weight: 700; color: #3498db;"),
+          lapply(seq_len(nrow(matched_ctx)), function(i) {
+            row <- matched_ctx[i, ]
+            sub_title <- case_when(
+              as.character(row$context_type) == "domain" ~ "Domain",
+              as.character(row$context_type) == "function" ~ "Function",
+              as.character(row$context_type) == "go_term" ~ "GO term",
+              TRUE ~ as.character(row$context_type)
+            )
+            div(style = "margin-bottom: 6px;",
+              p(style = "margin: 2px 0; font-size: 0.85rem;",
+                tags$span(class = "badge", style = "background-color: #3498db; color: white; margin-right: 6px; padding: 2px 6px; border-radius: 4px;", sub_title),
+                if (!is.na(row$source) && row$source != "") {
+                  tags$span(class = "badge", style = "background-color: #95A5A6; color: white; margin-right: 6px; padding: 2px 6px; border-radius: 4px;", row$source)
+                } else NULL
+              ),
+              if (!is.na(row$context_label) && row$context_label != "") {
+                p(style = "margin: 2px 0; font-size: 0.85rem; word-break: break-word;",
+                  strong(paste0(sub_title, ": ")), row$context_label)
+              } else NULL,
+              if (!is.na(row$context_description) && row$context_description != "") {
+                p(style = "margin: 2px 0; font-size: 0.85rem; word-break: break-word;", row$context_description)
+              } else NULL,
+              if (!is.na(row$start_pos) && !is.na(row$end_pos) && row$start_pos != "" && row$end_pos != "") {
+                p(style = "margin: 2px 0; font-size: 0.8rem; color: #6c757d;",
+                  paste0("Position range: ", row$start_pos, " \u2013 ", row$end_pos,
+                         if (!is.na(row$evalue) && row$evalue != "") paste0(" | E-value: ", row$evalue) else ""))
+              } else NULL
+            )
+          })
+        )
+      }
+    }
+    if (!has_context) {
+      context_ui <- div(
+        style = "margin-top: 12px; padding: 10px 12px; background: #f8f9fa; border-left: 4px solid #95A5A6; border-radius: 4px;",
+        p(style = "margin: 0; font-size: 0.85rem; color: #6c757d;",
+          "No functional / domain context recorded for this position.")
       )
     }
 
@@ -869,7 +948,10 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       ),
 
       # Row 3: Phenotype
-      pheno_ui
+      pheno_ui,
+
+      # Row 4: Functional / Domain context
+      context_ui
     )
   })
 
@@ -885,7 +967,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       count(collection_year, name = "total")
 
     mut_counts <- df |>
-      filter(mutation_id == mid, !is.na(collection_year)) |>
+      filter(as.character(mutation_id) == as.character(mid), !is.na(collection_year)) |>
       distinct(sample_id, collection_year) |>
       count(collection_year, name = "n_mutant")
 
@@ -902,7 +984,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       return()
     }
 
-    mut_label <- unique(df$mutation_label[df$mutation_id == mid])[1]
+    mut_label <- unique(df$mutation_label[as.character(df$mutation_id) == as.character(mid)])[1]
     overall_prev <- round(100 * sum(plot_df$n_mutant) / sum(plot_df$total), 1)
 
     p <- ggplot(plot_df, aes(x = collection_year, y = prevalence))
@@ -962,7 +1044,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       count(country, name = "total")
 
     mut_country <- df |>
-      filter(mutation_id == mid, !is.na(country), country != "") |>
+      filter(as.character(mutation_id) == as.character(mid), !is.na(country), country != "") |>
       distinct(sample_id, country) |>
       count(country, name = "n_mutant")
 
@@ -985,7 +1067,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
         leaflet::setView(lng = 20, lat = 0, zoom = 2))
     }
 
-    mut_label <- unique(df$mutation_label[df$mutation_id == mid])[1]
+    mut_label <- unique(df$mutation_label[as.character(df$mutation_id) == as.character(mid)])[1]
 
     leaflet::leaflet(prev) |>
       leaflet::addTiles() |>
@@ -1045,7 +1127,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     aa_freq <- aa_frequencies_data()
     if (is.null(mid) || is.null(df) || nrow(df) == 0) return(NULL)
 
-    mut_rows <- df |> filter(mutation_id == mid)
+    mut_rows <- df |> filter(as.character(mutation_id) == as.character(mid))
     protein <- mut_rows$protein_name[1]
     pos <- mut_rows$position[1]
     ref_aa_val <- mut_rows$ref_aa[1]
@@ -1123,7 +1205,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     df <- mutation_detail_data()
     if (is.null(mid) || is.null(df) || nrow(df) == 0) return(NULL)
 
-    mut_rows <- df |> filter(mutation_id == mid)
+    mut_rows <- df |> filter(as.character(mutation_id) == as.character(mid))
     ref_aa_val <- mut_rows$ref_aa[1]
     alt_aa_val <- mut_rows$alt_aa[1]
     mut_label <- mut_rows$mutation_label[1]
@@ -1277,7 +1359,13 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       df <- df |> mutate(outbreak = ifelse(is.na(outbreak), "Missing", as.character(outbreak)))
     }
 
-    df_ellipse <- df |> filter(.data[[colour_by]] != "Missing")
+    if (colour_by == "collection_year") {
+      df <- df |> mutate(collection_year = suppressWarnings(as.numeric(as.character(collection_year))))
+      df_ellipse <- df |> filter(!is.na(collection_year))
+    } else {
+      df <- df |> mutate("{colour_by}" := ifelse(is.na(.data[[colour_by]]), "Missing", as.character(.data[[colour_by]])))
+      df_ellipse <- df |> filter(.data[[colour_by]] != "Missing")
+    }
 
     p <- ggplot(df, aes(x = .data[["PC1"]], y = .data[["PC2"]])) +
       geom_point(aes(colour = .data[[colour_by]], shape = is_query),
@@ -1287,19 +1375,23 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
            colour = tools::toTitleCase(colour_by),
            shape = "Group") +
       theme_bw(base_size = 12) +
-      scale_shape_manual(values = c("Background" = 19, "Query" = 17)) +
-      scale_colour_brewer(palette = "Set1", na.value = "grey50")
+      scale_shape_manual(values = c("Background" = 19, "Query" = 17))
 
-    if (nrow(df_ellipse) >= 2) {
-      p <- p + stat_ellipse(
-        aes(x = .data[["PC1"]], y = .data[["PC2"]],
-            colour = .data[[colour_by]], group = .data[[colour_by]]),
-        data = df_ellipse,
-        alpha = 0.7,
-        linewidth = 1.2,
-        level = 0.95,
-        inherit.aes = FALSE
-      )
+    if (colour_by == "collection_year") {
+      p <- p + scale_colour_gradientn(colours = c("darkblue", "green", "yellow", "red"), na.value = "grey50")
+    } else {
+      p <- p + scale_colour_brewer(palette = "Set1", na.value = "grey50")
+      if (nrow(df_ellipse) >= 2) {
+        p <- p + stat_ellipse(
+          aes(x = .data[["PC1"]], y = .data[["PC2"]],
+              colour = .data[[colour_by]], group = .data[[colour_by]]),
+          data = df_ellipse,
+          alpha = 0.7,
+          linewidth = 1.2,
+          level = 0.95,
+          inherit.aes = FALSE
+        )
+      }
     }
 
     selected_id <- input[[mp_id(sp, "plsda_sample_search")]]

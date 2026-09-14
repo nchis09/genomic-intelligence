@@ -1582,7 +1582,7 @@ def _first_col(row, *names):
     return None
 
 
-def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=None, rbioapi_dir=None):
+def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=None, rbioapi_dir=None, query_data_dir=None):
     search_dirs = []
     if uniprotr_dir:
         search_dirs.append(Path(uniprotr_dir))
@@ -1590,6 +1590,8 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
         search_dirs.append(Path(extractr_dir))
     if rbioapi_dir:
         search_dirs.append(Path(rbioapi_dir))
+    if query_data_dir:
+        search_dirs.append(Path(query_data_dir))
     if not search_dirs:
         print("  SKIP: no phenotype annotation directories provided", file=sys.stderr)
         return
@@ -1654,6 +1656,11 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
                 protein_id = _get_or_create_protein(cur, gene, acc, protein_name=protein_name, organism=organism, length=length)
                 # Functions
                 func_text = _first_col(row, "Function [CC]", "Function..CC.", "func.Function..CC.")
+                # Fallback for UniProtExtractR-style outputs that lack a Function column
+                if not func_text:
+                    func_text = _first_col(row, "Protein families", "Protein.families", "Protein.families.edit", "family.Protein.families.")
+                if not func_text:
+                    func_text = _first_col(row, "Subcellular location [CC]", "Subcellular location", "Subcellular.location", "Subcellular.location..CC.", "Subcellular.location..CC.edit", "loc.Subcellular.location..CC.")
                 if func_text:
                     cur.execute(
                         """
@@ -1684,13 +1691,14 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
                         cur.execute(
                             """
                             INSERT INTO protein_domains (protein_id, domain_name, start_pos, end_pos, source)
-                            VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING
                             """,
                             (protein_id, m.group(3), parse_int(m.group(1)), parse_int(m.group(2)), "UniProtKB"),
                         )
 
-        # rbioapi mutagenesis/variation -> mutation_phenotypes
-        for path in _rglob_dirs(search_dirs, ["*_mutagenesis.tsv", "*_variation.tsv"]):
+        # rbioapi mutagenesis -> mutation_phenotypes
+        for path in _rglob_dirs(search_dirs, ["*_mutagenesis.tsv"]):
             rows = read_tsv_or_csv(path)
             if not rows:
                 continue
@@ -1700,18 +1708,32 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
                 pos_end = parse_int(row.get("position_end"))
                 ref_aa = normalize_text(row.get("original_aa"))
                 alt_aa = normalize_text(row.get("alternative_aa"))
-                description = row.get("description") or row.get("consequence") or row.get("notes")
+                uniprot_accession = normalize_text(row.get("uniprot_accession"))
+
+                # Rich, source-specific field mapping
+                source_type = normalize_text(row.get("source_type")) or "uniprot"
+                source_species = row.get("source_species") or ""
+                raw_evidence = row.get("evidence") or ""
+
+                phenotype = "mutagenesis"
+                effect = row.get("description") or row.get("consequence") or row.get("notes") or ""
+                evidence = raw_evidence or source_species or str(path.name)
+                source = source_type or "uniprot"
+
                 mutation_id = None
-                if gene and pos_start:
+                if uniprot_accession and pos_start and ref_aa and alt_aa:
                     cur.execute(
                         """
-                        SELECT mutation_id FROM mutations
-                        WHERE position = %s AND ref_aa = %s AND alt_aa = %s
-                          AND (protein_id IN (SELECT protein_id FROM proteins WHERE protein_name = %s)
-                               OR gene_id = (SELECT gene_id FROM genes WHERE gene_name = %s LIMIT 1))
+                        SELECT m.mutation_id
+                        FROM mutations m
+                        LEFT JOIN proteins p ON m.protein_id = p.protein_id
+                        LEFT JOIN genes g ON m.gene_id = g.gene_id
+                        LEFT JOIN proteins gp ON g.gene_id = gp.gene_id
+                        WHERE m.position = %s AND m.ref_aa = %s AND m.alt_aa = %s
+                          AND (p.uniprot_accession = %s OR gp.uniprot_accession = %s OR g.gene_name = %s)
                         LIMIT 1
                         """,
-                        (pos_start, ref_aa, alt_aa, gene, gene),
+                        (pos_start, ref_aa, alt_aa, uniprot_accession, uniprot_accession, gene),
                     )
                     r = cur.fetchone()
                     if r:
@@ -1721,7 +1743,7 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
                     INSERT INTO mutation_phenotypes (mutation_id, phenotype, effect, evidence, source)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (mutation_id, "mutagenesis" if "mutagenesis" in path.name else "variation", description, str(path.name), "rbioapi"),
+                    (mutation_id, phenotype, effect, evidence, source),
                 )
     conn.commit()
     print("  Loaded phenotype annotations", file=sys.stderr)
@@ -1856,18 +1878,19 @@ def _get_or_create_protein(cur, gene, uniprot_accession, protein_name=None, orga
         r = cur.fetchone()
         if r:
             return r[0]
-    # If no accession, look by gene placeholder
+    # If no accession, look by the full protein name or the short gene name
     name = protein_name or gene
+    short = gene or name
     cur.execute(
-        "SELECT protein_id FROM proteins WHERE uniprot_accession IS NULL AND protein_name = %s LIMIT 1",
-        (name,),
+        "SELECT protein_id, protein_name, organism, length FROM proteins WHERE uniprot_accession IS NULL AND (protein_name = %s OR protein_name = %s) LIMIT 1",
+        (name, short),
     )
     r = cur.fetchone()
     if r:
         if uniprot_accession:
             cur.execute(
-                "UPDATE proteins SET uniprot_accession = %s WHERE protein_id = %s",
-                (uniprot_accession, r[0]),
+                "UPDATE proteins SET uniprot_accession = %s, organism = COALESCE(%s, organism), length = COALESCE(%s, length) WHERE protein_id = %s",
+                (uniprot_accession, organism, length, r[0]),
             )
         return r[0]
     # Need a gene_id
@@ -2426,6 +2449,7 @@ def main():
                     uniprotr_dir=args.uniprotr_dir,
                     extractr_dir=args.extractr_dir,
                     rbioapi_dir=args.rbioapi_dir,
+                    query_data_dir=args.query_data_dir,
                 )
 
                 print("Loading HMMER/Pfam annotations...", file=sys.stderr)
