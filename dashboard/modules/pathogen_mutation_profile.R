@@ -87,6 +87,30 @@ pathogen_mutation_profile_ui <- function(species) {
           width = 12,
           status = "warning",
           solidHeader = TRUE,
+          div(
+            style = "display: flex; gap: 16px; align-items: center; margin-bottom: 12px;",
+            selectInput(
+              inputId = mp_id(species, "protein_burden_metric"),
+              label = "Y-axis metric:",
+              choices = c("Count per sample" = "mutation_positions", "Z-score (σ from background)" = "z_score"),
+              selected = "mutation_positions",
+              width = "260px"
+            ),
+            selectInput(
+              inputId = mp_id(species, "protein_burden_y_scale"),
+              label = "Y-axis scale:",
+              choices = c("Raw counts" = "raw", "Square-root" = "sqrt", "Log1p" = "log1p"),
+              selected = "sqrt",
+              width = "180px"
+            ),
+            selectInput(
+              inputId = mp_id(species, "protein_burden_x_sort"),
+              label = "Sort x-axis:",
+              choices = c("Protein name" = "name", "Mean count (desc)" = "mean_desc", "Mean Z-score (desc)" = "z_desc", "p-value (asc)" = "p_asc", "Max count (desc)" = "max_desc"),
+              selected = "name",
+              width = "200px"
+            )
+          ),
           plotOutput(mp_id(species, "protein_burden_summary_plot"),
                     click = mp_id(species, "protein_burden_click"),
                     height = "400px")
@@ -221,7 +245,23 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
   })
 
   protein_samples_data <- reactive({
-    mp_read_table(mp_table_path(outdir(), sp, "01_protein_burden_samples.tsv"))
+    df <- mp_read_table(mp_table_path(outdir(), sp, "01_protein_burden_samples.tsv"))
+    if (is.null(df) || nrow(df) == 0) return(df)
+    if (!"mutation_positions" %in% names(df)) {
+      df <- df |> rename(mutation_positions = mutation_count)
+    }
+    df <- df |>
+      group_by(protein_name) |>
+      mutate(
+        bg_mean = mean(mutation_positions[!is_query], na.rm = TRUE),
+        bg_sd = sd(mutation_positions[!is_query], na.rm = TRUE)
+      ) |>
+      ungroup() |>
+      mutate(
+        bg_sd = ifelse(bg_sd == 0 | is.na(bg_sd), 1, bg_sd),
+        z_score = (mutation_positions - bg_mean) / bg_sd
+      )
+    df
   })
 
   protein_summary_data <- reactive({
@@ -317,8 +357,58 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     }
     query_df <- df |> filter(is_query)
     if (nrow(query_df) == 0) return()
+    metric <- input[[mp_id(sp, "protein_burden_metric")]]
+    if (is.null(metric) || metric == "" || !metric %in% names(query_df)) {
+      metric <- "mutation_positions"
+    }
+    y_scale <- input[[mp_id(sp, "protein_burden_y_scale")]]
+    if (is.null(y_scale) || y_scale == "") y_scale <- "sqrt"
+    if (metric == "z_score") y_scale <- "raw"
+    x_sort <- input[[mp_id(sp, "protein_burden_x_sort")]]
+    if (is.null(x_sort) || x_sort == "") x_sort <- "name"
+    if (x_sort == "name") {
+      protein_order <- sort(unique(df$protein_name))
+    } else if (x_sort == "mean_desc") {
+      order_df <- df |>
+        group_by(protein_name) |>
+        summarise(stat = mean(.data[[metric]], na.rm = TRUE), .groups = "drop") |>
+        arrange(desc(stat))
+      protein_order <- order_df$protein_name
+    } else if (x_sort == "z_desc") {
+      order_df <- df |>
+        group_by(protein_name) |>
+        summarise(stat = mean(z_score, na.rm = TRUE), .groups = "drop") |>
+        arrange(desc(stat))
+      protein_order <- order_df$protein_name
+    } else if (x_sort == "max_desc") {
+      order_df <- df |>
+        group_by(protein_name) |>
+        summarise(stat = max(.data[[metric]], na.rm = TRUE), .groups = "drop") |>
+        arrange(desc(stat))
+      protein_order <- order_df$protein_name
+    } else if (x_sort == "p_asc") {
+      psum <- protein_summary_data()
+      if (!is.null(psum) && nrow(psum) > 0) {
+        order_df <- psum |>
+          filter(is_query) |>
+          arrange(p_value) |>
+          distinct(protein_name, .keep_all = TRUE)
+        protein_order <- order_df$protein_name
+      } else {
+        protein_order <- sort(unique(df$protein_name))
+      }
+    }
+    missing <- setdiff(unique(query_df$protein_name), protein_order)
+    protein_order <- c(protein_order, sort(missing))
+    query_df$protein_name <- factor(query_df$protein_name, levels = protein_order)
+
+    y_vals <- query_df[[metric]]
+    query_df$y_plot <- switch(y_scale,
+                              "sqrt" = sqrt(y_vals),
+                              "log1p" = log1p(y_vals),
+                              y_vals)
     selected <- nearPoints(query_df, click,
-                           xvar = "protein_name", yvar = "mutation_positions",
+                           xvar = "protein_name", yvar = "y_plot",
                            threshold = 10, maxpoints = 1)
     if (nrow(selected) > 0) {
       sname <- selected$sample_name[1]
@@ -351,6 +441,12 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       df <- df |> rename(mutation_positions = mutation_count)
     }
 
+    y_col <- input[[mp_id(sp, "protein_burden_metric")]]
+    if (is.null(y_col) || y_col == "" || !y_col %in% names(df)) {
+      y_col <- "mutation_positions"
+    }
+    y_label <- if (y_col == "z_score") "Z-score (σ from background)" else "Amino acid substitution positions per sample"
+
     pval <- protein_summary_data()
     if (!is.null(pval) && nrow(pval) > 0) {
       pval <- pval |>
@@ -359,7 +455,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
         dplyr::select(protein_name, p_value)
       max_y <- df |>
         group_by(protein_name) |>
-        summarise(y = max(mutation_positions, na.rm = TRUE), .groups = "drop")
+        summarise(y = max(.data[[y_col]], na.rm = TRUE), .groups = "drop")
       pval <- pval |>
         left_join(max_y, by = "protein_name") |>
         mutate(
@@ -369,25 +465,76 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       pval <- NULL
     }
 
-    p <- ggplot(df, aes(x = .data[["protein_name"]], y = .data[["mutation_positions"]])) +
-      geom_boxplot(
+    x_sort <- input[[mp_id(sp, "protein_burden_x_sort")]]
+    if (is.null(x_sort) || x_sort == "") x_sort <- "name"
+    if (x_sort == "name") {
+      protein_order <- sort(unique(df$protein_name))
+    } else if (x_sort == "mean_desc") {
+      order_df <- df |>
+        group_by(protein_name) |>
+        summarise(stat = mean(.data[[y_col]], na.rm = TRUE), .groups = "drop") |>
+        arrange(desc(stat))
+      protein_order <- order_df$protein_name
+    } else if (x_sort == "z_desc") {
+      order_df <- df |>
+        group_by(protein_name) |>
+        summarise(stat = mean(z_score, na.rm = TRUE), .groups = "drop") |>
+        arrange(desc(stat))
+      protein_order <- order_df$protein_name
+    } else if (x_sort == "max_desc") {
+      order_df <- df |>
+        group_by(protein_name) |>
+        summarise(stat = max(.data[[y_col]], na.rm = TRUE), .groups = "drop") |>
+        arrange(desc(stat))
+      protein_order <- order_df$protein_name
+    } else if (x_sort == "p_asc") {
+      psum <- protein_summary_data()
+      if (!is.null(psum) && nrow(psum) > 0) {
+        order_df <- psum |>
+          filter(is_query) |>
+          arrange(p_value) |>
+          distinct(protein_name, .keep_all = TRUE)
+        protein_order <- order_df$protein_name
+      } else {
+        protein_order <- sort(unique(df$protein_name))
+      }
+    }
+    missing <- setdiff(unique(df$protein_name), protein_order)
+    protein_order <- c(protein_order, sort(missing))
+    df$protein_name <- factor(df$protein_name, levels = protein_order)
+    if (!is.null(pval) && nrow(pval) > 0) {
+      pval$protein_name <- factor(pval$protein_name, levels = protein_order)
+    }
+
+    p <- ggplot(df, aes(x = .data[["protein_name"]], y = .data[[y_col]])) +
+      geom_violin(
         data = df |> filter(!is_query),
-        aes(x = .data[["protein_name"]], y = .data[["mutation_positions"]]),
-        fill = "#BDC3C7",
+        aes(x = .data[["protein_name"]], y = .data[[y_col]]),
+        fill = "#E0E0E0",
+        colour = "#B0B0B0",
         alpha = 0.7,
-        outlier.shape = NA
+        scale = "width"
       ) +
       geom_jitter(
         data = df |> filter(is_query),
-        aes(x = .data[["protein_name"]], y = .data[["mutation_positions"]]),
+        aes(x = .data[["protein_name"]], y = .data[[y_col]]),
         colour = "#E74C3C",
         size = 3,
         width = 0.2,
         height = 0
       ) +
-      labs(x = "Protein", y = "Amino acid substitution positions per sample") +
+      labs(x = "Protein", y = y_label) +
       theme_bw(base_size = 12) +
       theme(legend.position = "none")
+
+    y_scale <- input[[mp_id(sp, "protein_burden_y_scale")]]
+    if (is.null(y_scale) || y_scale == "") y_scale <- "sqrt"
+    if (y_col == "z_score") y_scale <- "raw"
+    if (y_scale == "sqrt") {
+      p <- p + scale_y_sqrt()
+    } else if (y_scale == "log1p") {
+      p <- p + scale_y_continuous(trans = scales::log1p_trans())
+    }
 
     sel <- protein_selected_sample()
     if (!is.null(sel) && sel != "") {
@@ -395,7 +542,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       if (nrow(sel_df) > 0) {
         p <- p + geom_point(
           data = sel_df,
-          aes(x = .data[["protein_name"]], y = .data[["mutation_positions"]]),
+          aes(x = .data[["protein_name"]], y = .data[[y_col]]),
           colour = "#8E44AD",
           size = 4
         )
@@ -421,9 +568,39 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       return(div(style = "margin-top: 10px; color: #6c757d; font-size: 0.85rem;",
                  "Click a dot or search to select a sample."))
     }
+    df <- protein_samples_data()
+    if (is.null(df) || nrow(df) == 0) {
+      return(div(style = "margin-top: 10px; color: #6c757d; font-size: 0.85rem;",
+                 "Click a dot or search to select a sample."))
+    }
+    if (!"mutation_positions" %in% names(df)) {
+      df <- df |> rename(mutation_positions = mutation_count)
+    }
+    sel_df <- df |> filter(sample_name == sel) |> arrange(protein_name)
     div(
       style = "margin-top: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 4px;",
-      h5(sel, style = "margin: 0; font-weight: 600; color: #8E44AD;")
+      h5(sel, style = "margin: 0 0 8px 0; font-weight: 600; color: #8E44AD;"),
+      tags$table(
+        class = "table table-sm table-borderless",
+        style = "font-size: 0.85rem; margin: 0;",
+        tags$thead(
+          tags$tr(
+            tags$th("Protein"),
+            tags$th("Positions"),
+            if ("z_score" %in% names(sel_df)) tags$th("Z-score") else NULL
+          )
+        ),
+        tags$tbody(
+          lapply(seq_len(nrow(sel_df)), function(i) {
+            row <- sel_df[i, ]
+            tags$tr(
+              tags$td(row$protein_name),
+              tags$td(round(row$mutation_positions, 0)),
+              if ("z_score" %in% names(sel_df)) tags$td(round(row$z_score, 2)) else NULL
+            )
+          })
+        )
+      )
     )
   })
 
@@ -434,7 +611,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       options = list(pageLength = 15, scrollX = TRUE),
       rownames = FALSE
     ) |>
-      DT::formatRound(columns = c("mutation_positions"), digits = 0)
+      DT::formatRound(columns = c("mutation_positions", "z_score"), digits = c(0, 2))
   })
 
   # =========================================================================
