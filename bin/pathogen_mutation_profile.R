@@ -541,6 +541,7 @@ write_mqc_tsv(
 # Position-specific amino acid frequencies from aligned translations
 # ---------------------------------------------------------------------------
 translations_dir <- opts$`translations-dir`
+aa_frequencies <- NULL
 
 if (!is.null(translations_dir) && dir.exists(translations_dir)) {
   log_info("Computing position-specific AA frequencies from translations")
@@ -629,6 +630,87 @@ if (!is.null(translations_dir) && dir.exists(translations_dir)) {
 }
 
 # ---------------------------------------------------------------------------
+# Per-position mutation summary — drives the cleaner Mutation Landscape
+# ---------------------------------------------------------------------------
+compute_position_summary <- function(aa_freq, mut_long, n_total_samples) {
+  # Count mutations per position from long mutation table
+  mut_counts <- if (nrow(mut_long) > 0) {
+    mut_long |>
+      group_by(protein_name, position) |>
+      summarise(
+        reference_aa = dplyr::first(ref_aa, default = NA_character_),
+        n_distinct_alt = dplyr::n_distinct(alt_aa[!is.na(alt_aa)]),
+        n_mutated = dplyr::n_distinct(sample_id),
+        n_query_mutated = dplyr::n_distinct(sample_id[is_query]),
+        n_bg_mutated = dplyr::n_distinct(sample_id[!is_query]),
+        .groups = "drop"
+      )
+  } else {
+    tibble(
+      protein_name = character(), position = integer(), reference_aa = character(),
+      n_distinct_alt = integer(), n_mutated = integer(),
+      n_query_mutated = integer(), n_bg_mutated = integer()
+    )
+  }
+
+  if (!is.null(aa_freq) && nrow(aa_freq) > 0) {
+    aa_valid <- aa_freq |>
+      filter(!amino_acid %in% c("X", "-", "*", "x"))
+
+    aa_summary <- aa_valid |>
+      group_by(protein_name, position) |>
+      summarise(
+        reference_aa = amino_acid[is_reference][1],
+        total_valid = max(total_valid, na.rm = TRUE),
+        n_distinct_aa = sum(count > 0, na.rm = TRUE),
+        reference_count = count[amino_acid == amino_acid[is_reference][1]][1],
+        shannon_entropy = -sum(frequency[count > 0] * log2(frequency[count > 0]), na.rm = TRUE),
+        .groups = "drop"
+      ) |>
+      mutate(
+        reference_count = tidyr::replace_na(reference_count, 0L),
+        n_mutated = total_valid - reference_count,
+        mutated_fraction = if_else(total_valid > 0, n_mutated / total_valid, 0)
+      )
+
+    out <- aa_summary |>
+      left_join(
+        mut_counts |>
+          dplyr::select(protein_name, position, n_query_mutated, n_bg_mutated),
+        by = c("protein_name", "position")
+      ) |>
+      mutate(
+        n_query_mutated = tidyr::replace_na(n_query_mutated, 0L),
+        n_bg_mutated = tidyr::replace_na(n_bg_mutated, 0L)
+      )
+  } else {
+    out <- mut_counts |>
+      mutate(
+        total_valid = n_total_samples,
+        n_distinct_aa = n_distinct_alt + 1L,
+        mutated_fraction = if_else(total_valid > 0, n_mutated / total_valid, 0),
+        shannon_entropy = NA_real_
+      )
+  }
+
+  out |>
+    mutate(
+      has_query_mutation = n_query_mutated > 0,
+      shannon_entropy = tidyr::replace_na(shannon_entropy, 0)
+    ) |>
+    dplyr::select(
+      protein_name, position, reference_aa, total_valid, n_distinct_aa,
+      n_mutated, n_query_mutated, n_bg_mutated, mutated_fraction,
+      shannon_entropy, has_query_mutation
+    )
+}
+
+log_info("Computing per-position mutation summary")
+position_summary <- compute_position_summary(aa_frequencies, mutations_long, nrow(samples))
+write_tsv(position_summary, "01_position_summary.tsv", subdir = "mutation_profile")
+log_info("Wrote position summary: ", nrow(position_summary), " rows")
+
+# ---------------------------------------------------------------------------
 # Per-sample mutation detail (long format) — drives the dashboard Mutation
 # Landscape, catalogue, trajectory and related views.
 # ---------------------------------------------------------------------------
@@ -657,5 +739,106 @@ mutation_detail <- if (nrow(mutations_long) > 0) {
   )
 }
 write_tsv(mutation_detail, "01_mutation_detail.tsv", subdir = "mutation_profile")
+
+# ---------------------------------------------------------------------------
+# Mutation phenotype annotations — drives the dashboard phenotype filtering
+# and Mutation Intelligence Card phenotype panel.
+# ---------------------------------------------------------------------------
+log_info("Querying phenotype annotations")
+mutation_phenotypes <- dbGetQuery(con,
+  "SELECT DISTINCT
+          m.mutation_id,
+          m.mutation_label,
+          m.ref_aa, m.position, m.alt_aa,
+          COALESCE(g.gene_name, p.protein_name, 'unknown') AS protein_name,
+          mp.phenotype, mp.effect, mp.evidence, mp.source
+   FROM mutations m
+   JOIN mutation_phenotypes mp ON m.mutation_id = mp.mutation_id
+   LEFT JOIN proteins p ON m.protein_id = p.protein_id
+   LEFT JOIN genes g ON m.gene_id = g.gene_id
+   WHERE m.mutation_id IN (
+         SELECT sm.mutation_id
+         FROM sample_mutation sm
+         JOIN samples s ON sm.sample_id = s.sample_id
+         WHERE LOWER(s.species) = ? AND s.run_id = ?)",
+  params = list(sp_lower, run_id)
+)
+
+if (nrow(mutation_phenotypes) > 0) {
+  mutation_phenotypes <- mutation_phenotypes |>
+    mutate(mutation_uid = paste0(protein_name, "_", mutation_label))
+} else {
+  mutation_phenotypes <- tibble(
+    mutation_id = integer(), mutation_label = character(),
+    ref_aa = character(), position = integer(), alt_aa = character(),
+    protein_name = character(), phenotype = character(),
+    effect = character(), evidence = character(), source = character(),
+    mutation_uid = character()
+  )
+}
+write_tsv(mutation_phenotypes, "01_mutation_phenotypes.tsv", subdir = "mutation_profile")
+
+# ---------------------------------------------------------------------------
+# Mutation functional / domain context — HMMER/Pfam domains, UniProt
+# functions, GO terms and other protein-level annotations overlapping the
+# mutation position or attached to the protein.
+# ---------------------------------------------------------------------------
+log_info("Querying mutation context")
+mutation_context <- dbGetQuery(con,
+  "WITH current_mutations AS (
+     SELECT m.mutation_id, m.mutation_label, m.ref_aa, m.position, m.alt_aa,
+            m.protein_id, m.gene_id
+     FROM mutations m
+     WHERE m.mutation_id IN (
+       SELECT sm.mutation_id
+       FROM sample_mutation sm
+       JOIN samples s ON sm.sample_id = s.sample_id
+       WHERE LOWER(s.species) = ? AND s.run_id = ?
+     )
+   )
+   SELECT DISTINCT cm.mutation_id,
+          cm.mutation_label,
+          cm.ref_aa, cm.position, cm.alt_aa,
+          COALESCE(g.gene_name, p.protein_name, 'unknown') AS protein_name,
+          'domain' AS context_type,
+          pd.domain_name AS context_label,
+          CAST(NULL AS TEXT) AS context_description,
+          pd.source,
+          pd.env_start AS start_pos,
+          pd.env_end AS end_pos,
+          pd.evalue
+   FROM current_mutations cm
+   LEFT JOIN proteins p ON cm.protein_id = p.protein_id
+   LEFT JOIN genes g ON cm.gene_id = g.gene_id
+   JOIN protein_domains pd ON cm.protein_id = pd.protein_id
+   WHERE cm.position BETWEEN pd.env_start AND pd.env_end
+   UNION ALL
+   SELECT DISTINCT cm.mutation_id, cm.mutation_label, cm.ref_aa, cm.position, cm.alt_aa,
+          COALESCE(g.gene_name, p.protein_name, 'unknown'),
+          'function', pf.source, pf.function_text, pf.source,
+          CAST(NULL AS INTEGER) AS start_pos,
+          CAST(NULL AS INTEGER) AS end_pos,
+          CAST(NULL AS REAL) AS evalue
+   FROM current_mutations cm
+   LEFT JOIN proteins p ON cm.protein_id = p.protein_id
+   LEFT JOIN genes g ON cm.gene_id = g.gene_id
+   JOIN protein_functions pf ON cm.protein_id = pf.protein_id",
+  params = list(sp_lower, run_id)
+)
+
+if (nrow(mutation_context) > 0) {
+  mutation_context <- mutation_context |>
+    mutate(mutation_uid = paste0(protein_name, "_", mutation_label))
+} else {
+  mutation_context <- tibble(
+    mutation_id = integer(), mutation_label = character(),
+    ref_aa = character(), position = integer(), alt_aa = character(),
+    protein_name = character(), context_type = character(),
+    context_label = character(), context_description = character(),
+    source = character(), start_pos = integer(), end_pos = integer(),
+    evalue = numeric(), mutation_uid = character()
+  )
+}
+write_tsv(mutation_context, "01_mutation_context.tsv", subdir = "mutation_profile")
 
 log_info("Done. Outputs in ", file.path(outdir, "mutation_profile"))
