@@ -43,7 +43,7 @@ The pipeline is organised as a **pathogen router**: samples are grouped by the s
 3. **Bioinformatics** — Nextstrain/Augur build per species ([`nextstrain/ebola`](https://github.com/nextstrain/ebola)), plus a model-aware maximum-likelihood tree from the subsampled sequences ([`MAFFT`](https://mafft.cbrc.jp/alignment/software/) + [`IQ-TREE 2`](http://www.iqtree.org/))
 4. **Epidemiological data** — search and download matching disease datasets from the Humanitarian Data Exchange (`rhdx`)
 5. **Literature retrieval** — Europe PMC search per species and evidence domain, PubMed metadata fetch, deduplication, [`ASReview`](https://asreview.nl/) title/abstract screening, open-access PDF download, PDF-to-text conversion, rule-based structured evidence extraction, and evidence QC
-6. **Phenotype annotation** — discover UniProt accessions for the query samples' proteins and annotate them with [`UniprotR`](https://github.com/Proteomicslab57357/UniprotR), `UniProtExtractR`, [`rbioapi`](https://cran.r-project.org/package=rbioapi), and Pfam HMM scans ([`HMMER`](http://hmmer.org/))
+6. **Phenotype annotation** — discover UniProt accessions for the query samples' proteins and annotate them with `UniProtExtractR`, [`rbioapi`](https://cran.r-project.org/package=rbioapi), and Pfam HMM scans ([`HMMER`](http://hmmer.org/))
 7. **Knowledge warehouse** — start a shared PostgreSQL instance, ingest every species' outputs into the schema defined by `database/knowledge_schema.sql`, then stop the server
 
 Most stages can be turned off individually (for example `--skip_literature_search`, `--skip_phenotype_annotation`, `--skip_hmm_annotation`, `--skip_iqtree`, `--skip_epi_data`, `--skip_knowledge_warehouse`); see `nextflow.config` for the full parameter list.
@@ -132,7 +132,7 @@ Results are published under `--outdir` (default `results/`), mostly one subdirec
 | `results/epidemiological_data/{species}/` | HDX search summary and downloaded epidemiological records. |
 | `results/literature_retrieval/` | One subdirectory per stage: `literature_search`, `literature_metadata`, `literature_deduplicated`, `literature_screened`, `literature_pdfs`, `literature_text`, `literature_evidence`. |
 | `results/evidence_qc/{species}/` | QC report plus `clean/` and `failed/` evidence JSON sets. |
-| `results/phenotype_annotation/{pathogen}_{species}/` | Accession discovery tables, query protein FASTA/mutations, and UniprotR / UniProtExtractR / rbioapi / HMM annotation results. |
+| `results/phenotype_annotation/{pathogen}_{species}/` | Accession discovery tables, query protein FASTA/mutations, and UniProtExtractR / rbioapi / HMM annotation results. |
 | `results/knowledge_warehouse/` | Per-species ingestion logs, the shared PostgreSQL data directory, and a SQL dump of the run's database. |
 
 Additionally, `results/pipeline_info/pipeline_metro_map_*.html` — an auto-generated [nf-metro](https://github.com/seqeralabs/nf-metro) metro-map diagram of the run's actual Nextflow task graph (skipped with a warning if `nf-metro` is unavailable; see Prerequisites).
@@ -168,7 +168,7 @@ Post-run visualisation:
 | `start_shared_db.py` / `stop_shared_db.py` | Start and stop the shared PostgreSQL server. |
 | `run_schemaspy.py` | Generate a SchemaSpy HTML report of the warehouse schema. |
 | `extract_query_proteins.py` | Discover UniProt accessions and extract query proteins/mutations for phenotype annotation. |
-| `annotate_uniprotr.R` / `annotate_uniprotextractr.R` / `annotate_rbioapi.R` | Annotate the discovered proteins with function, GO, pathway, and interaction data. |
+| `annotate_uniprotextractr.R` / `annotate_rbioapi.R` | Annotate the discovered proteins with function, GO, pathway, and interaction data. |
 | `parse_hmmscan.py` | Parse `hmmscan` output into Pfam domain, sequence, and summary tables. |
 | `literature_search.py` / `fetch_pubmed_metadata.py` | Search Europe PMC and fetch PubMed metadata per species and evidence domain. |
 | `deduplicate_literature.R` / `screen_literature.R` | Deduplicate records and run ASReview title/abstract screening. |

@@ -59,6 +59,7 @@ source("modules/pathogen_genomics.R")
 source("modules/pathogen_mutation_profile.R")
 source("modules/assessment.R")
 source("modules/placeholder.R")
+source("modules/pathogen_transmission.R")
 source("modules/home.R")
 
 # Serve repo-root assets (GIF logo, institution logos) without copying them
@@ -71,6 +72,19 @@ list_species <- function(outdir) {
   base <- file.path(outdir, "pathogen_identification")
   if (!dir.exists(base)) return(character())
   basename(list.dirs(base, recursive = FALSE))
+}
+
+# Resolve the pipeline --outdir the user typed into a real path. Accepts an
+# absolute path, a path relative to dashboard/, or a bare directory name that
+# lives at the repo root (e.g. "results" -> "../results").
+resolve_outdir <- function(x) {
+  if (is.null(x) || !nzchar(trimws(x))) return("../results")
+  x <- trimws(x)
+  if (grepl("^(/|~)", x)) return(path.expand(x))
+  if (dir.exists(x)) return(x)
+  cand <- file.path("..", x)
+  if (dir.exists(cand)) return(cand)
+  x
 }
 
 # Per-logo pixel heights, tuned per source image (WHO_Hub.png and UVRI.jpg
@@ -413,6 +427,15 @@ ui <- bs4DashPage(
   ),
   sidebar = bs4DashSidebar(
     status = "primary",
+    div(
+      style = "padding: 10px 12px 0 12px;",
+      textInput(
+        inputId = "outdir",
+        label = "Pipeline --outdir",
+        value = "results",
+        placeholder = "e.g. results"
+      )
+    ),
     sidebarMenuOutput("sidebarmenu")
   ),
   body = bs4DashBody(
@@ -461,7 +484,7 @@ ui <- bs4DashPage(
 # -----------------------------------------------------------------------------
 server <- function(input, output, session) {
 
-  outdir_r <- reactive({ "../results" })
+  outdir_r <- reactive({ resolve_outdir(input$outdir) })
   species_rv <- reactive({ list_species(outdir_r()) })
 
   # -- Sidebar: Intelligence Overview + Biological Threat (species submenu,
@@ -576,6 +599,8 @@ server <- function(input, output, session) {
     roadmap_tabs <- lapply(ROADMAP_OBJECTIVES, function(obj) {
       tab_ui <- if (identical(obj$id, "intelligence_brief")) {
         intelligence_brief_roadmap_ui(obj)
+      } else if (identical(obj$id, "transmission_spread")) {
+        transmission_ui()
       } else {
         roadmap_ui(obj)
       }
@@ -623,6 +648,9 @@ server <- function(input, output, session) {
     sel <- input$overview_species
     if (is.null(sel) || !(sel %in% species)) species[1] else sel
   })
+
+  # Register Transmission & Spread outputs for the currently selected species.
+  transmission_register(input, output, session, outdir_r, current_species, species_rv)
 
   output$overview_body <- renderUI({
     overview_body_ui(!is.null(current_species()))
