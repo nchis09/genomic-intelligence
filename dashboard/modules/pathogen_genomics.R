@@ -241,12 +241,14 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
     trees_df <- data$trees
     tips_df <- data$tips
 
-    selected_tree <- trees_df[!grepl("iqtree", tolower(trees_df$tree_method)), ]
-
-    if (nrow(selected_tree) == 0) {
-      selected_tree <- trees_df[1, , drop = FALSE]
+    # Prefer the Nextstrain/Augur tree (it has full metadata); fall back to nextclade
+    non_iq <- trees_df[!grepl("iqtree", tolower(trees_df$tree_method)), , drop = FALSE]
+    priority <- c("nextstrain", "augur", "nextclade")
+    ranks <- match(tolower(non_iq$tree_method), priority, nomatch = 99)
+    selected_tree <- if (nrow(non_iq) == 0) {
+      trees_df[1, , drop = FALSE]
     } else {
-      selected_tree <- selected_tree[1, , drop = FALSE]
+      non_iq[order(ranks), ][1, , drop = FALSE]
     }
 
     newick <- selected_tree$newick
@@ -320,7 +322,7 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
       tip_meta <- tips_df[!duplicated(tips_df$label), ]
     }
     keep_cols <- intersect(
-      c("label", "is_query", "clade", "outbreak", "country",
+      c("label", "is_query", "clade", "outbreak", "country", "tip_date",
         "genome_coverage", "nuc_mutation_count", "aa_mutation_count"),
       names(tip_meta)
     )
@@ -459,7 +461,7 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
 
     tips_df <- data$tips
     display_cols <- intersect(
-      c("label", "is_query", "clade", "outbreak", "country", "div",
+      c("label", "is_query", "clade", "outbreak", "country", "tip_date", "div",
         "genome_coverage", "nextclade_qc", "nuc_mutation_count", "aa_mutation_count"),
       names(tips_df)
     )

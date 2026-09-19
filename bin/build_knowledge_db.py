@@ -655,12 +655,14 @@ def _update_samples_from_metadata(conn, run_id, metadata_path):
         return
     with conn.cursor() as cur:
         for row in rows:
-            sample = normalize_text(row.get("accession") or row.get("sample") or row.get("sample_name"))
+            sample = normalize_text(
+                row.get("accession") or row.get("sample_id") or row.get("sample") or row.get("sample_name")
+            )
             if not sample:
                 continue
             collection_date = normalize_date(row.get("date") or row.get("collection_date"))
             country = normalize_country(row.get("country"))
-            admin1 = normalize_text(row.get("region"))
+            admin1 = normalize_text(row.get("region") or row.get("division") or row.get("geo_loc_name"))
             admin2 = normalize_text(row.get("division"))
             locality = normalize_text(row.get("location"))
             host = normalize_text(row.get("host"))
@@ -993,7 +995,9 @@ def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
                         if not label:
                             continue
                         node_attrs = tip.get("node_attrs", {})
-                        tip_sample_id = sample_id_by_name.get(normalize_text(raw_name))
+                        # Try raw auspice name, then cleaned newick label against sample names
+                        clean_name = normalize_text(_clean_newick_name(raw_name))
+                        tip_sample_id = sample_id_by_name.get(normalize_text(raw_name)) or sample_id_by_name.get(clean_name)
                         is_query = bool(tip_sample_id)
                         tip_clade = normalize_text(_get_node_value(node_attrs, "clade"))
                         tip_outbreak = normalize_text(_get_node_value(node_attrs, "outbreak"))
@@ -1013,21 +1017,33 @@ def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
                             tip_nuc = nuc_substitutions if nuc_substitutions is not None else tip_nuc
                             tip_aa = aa_substitutions if aa_substitutions is not None else tip_aa
 
+                        tip_country = normalize_country(_get_node_value(node_attrs, "country"))
+                        tip_admin1 = normalize_text(_get_node_value(node_attrs, "division"))
+                        tip_date = normalize_date(_get_node_value(node_attrs, "date"))
+                        tip_host = normalize_text(_get_node_value(node_attrs, "host"))
                         cur.execute(
                             """
-                            INSERT INTO tree_tips (tree_id, sample_id, label, is_query, clade, outbreak, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            INSERT INTO tree_tips (
+                                tree_id, sample_id, label, is_query, clade, outbreak, country, admin1,
+                                tip_date, host, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
-                            (tree_id, tip_sample_id, label, is_query, tip_clade, tip_outbreak, tip_div, tip_cov, tip_qc, tip_nuc, tip_aa),
+                            (tree_id, tip_sample_id, label, is_query, tip_clade, tip_outbreak, tip_country, tip_admin1,
+                             tip_date, tip_host, tip_div, tip_cov, tip_qc, tip_nuc, tip_aa),
                         )
                 elif tree_id:
                     # No Auspice tree available: at least record the query tip
                     cur.execute(
                         """
-                        INSERT INTO tree_tips (tree_id, sample_id, label, is_query, clade, outbreak, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO tree_tips (
+                            tree_id, sample_id, label, is_query, clade, outbreak, country, admin1,
+                            tip_date, host, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (tree_id, sample_id, _clean_newick_name(sample_name), True, clade, outbreak, divergence, coverage, nextclade_qc, nuc_substitutions, aa_substitutions),
+                        (tree_id, sample_id, _clean_newick_name(sample_name), True, clade, outbreak, country, admin1,
+                         collection_date, host, divergence, coverage, nextclade_qc, nuc_substitutions, aa_substitutions),
                     )
 
             # Register the TSV, NWK, and aligned FASTA in pipeline_outputs
@@ -1993,6 +2009,10 @@ def _load_epi_row(cur, dataset_id, row, dataset_type):
                 else:
                     record_date = d
 
+    # Some long-format datasets only carry a reference_date
+    if record_date is None and reference_date is not None:
+        record_date = reference_date
+
     # Location
     country = normalize_country(row.get("Country") or row.get("country") or row.get("COUNTRY") or row.get("location_country"))
     admin1 = normalize_text(row.get("region") or row.get("division") or row.get("REGION") or row.get("location_name"))
@@ -2047,6 +2067,13 @@ def _load_epi_row(cur, dataset_id, row, dataset_type):
         subtype = normalize_text(row.get("Ebola subtype"))
         if subtype:
             indicator_label = subtype
+
+        # The summary files use a Year(s) range; record the start year
+        years = normalize_text(row.get("Year(s)") or row.get("Year"))
+        if years and record_date is None:
+            m = re.search(r"\d{4}", years)
+            if m:
+                record_date = f"{m.group(0)}-01-01"
 
     cur.execute(
         """
@@ -2342,6 +2369,127 @@ def load_literature_evidence(conn, run_id, evidence_qc_dir):
     print(f"  Loaded literature evidence from {len(report_files)} domain report(s)", file=sys.stderr)
 
 
+def _ebov_clade_from_year_country(year, country, admin1=None, outbreak=None):
+    """Return a literature-based EBOV clade name from sampling metadata."""
+    if not year or year in (None, ""):
+        return None
+    try:
+        year = int(year)
+    except (ValueError, TypeError):
+        return None
+    country_norm = (country or "").lower().strip()
+    admin1_norm = (admin1 or "").lower().strip()
+    outbreak_norm = (outbreak or "").lower().strip()
+
+    drc = country_norm in {
+        "democratic republic of the congo",
+        "democratic republic of congo",
+        "drc",
+        "zaire",
+        "congo, dem republic",
+        "congo-kinshasa",
+        "congo",
+    }
+    west_africa = country_norm in {"guinea", "liberia", "sierra leone"}
+    if not (drc or west_africa):
+        return None
+
+    if drc:
+        if 1976 <= year <= 1977:
+            return "EBOV-Clade-1 (1976-1977)"
+        # Specific locations tied to Clade 3 (Boende/Bikoro, Equateur province)
+        clade3_tokens = ["bikoro", "boende", "equateur", "mondombe"]
+        if any(tok in admin1_norm for tok in clade3_tokens) or any(tok in outbreak_norm for tok in clade3_tokens):
+            return "EBOV-Clade-3 (2014/2018)"
+        if year == 2014:
+            return "EBOV-Clade-3 (2014/2018)"
+        # Specific locations tied to Clade 2 (Likati, Ituri, North Kivu)
+        clade2_tokens = ["likati", "ituri", "north kivu", "kivu", "mambasa", "mandima"]
+        if any(tok in admin1_norm for tok in clade2_tokens) or any(tok in outbreak_norm for tok in clade2_tokens):
+            return "EBOV-Clade-2 (2017-2020)"
+        if 2017 <= year <= 2020:
+            return "EBOV-Clade-2 (2017-2020)"
+        return None
+    if west_africa and 2013 <= year <= 2016:
+        return "EBOV-Clade-4 (Makona, 2013-2016)"
+    return None
+
+
+def _refine_ebov_clades(conn, run_id=None):
+    """Re-assign EBOV clades in samples, tree_tips, clades, and sample_clade."""
+    with conn.cursor() as cur:
+        # Reassign samples
+        cur.execute(
+            """
+            SELECT sample_id, collection_date, country, admin1, outbreak
+            FROM samples
+            WHERE species = %s
+            """,
+            ("ebov",),
+        )
+        sample_rows = cur.fetchall()
+        clade_ids = {}
+        for sample_id, collection_date, country, admin1, outbreak in sample_rows:
+            year = collection_date.year if collection_date else None
+            new_clade = _ebov_clade_from_year_country(year, country, admin1, outbreak)
+            if not new_clade:
+                continue
+            cur.execute(
+                "UPDATE samples SET clade = %s WHERE sample_id = %s",
+                (new_clade, sample_id),
+            )
+            # ensure the clade is present in the clades table
+            key = (run_id, "orthoebolavirus", "ebov", new_clade)
+            clade_id = clade_ids.get(key)
+            if clade_id is None:
+                cur.execute(
+                    """
+                    INSERT INTO clades (run_id, pathogen, species, clade_name)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (run_id, species, clade_name) DO UPDATE
+                    SET pathogen = EXCLUDED.pathogen
+                    RETURNING clade_id
+                    """,
+                    (run_id, "orthoebolavirus", "ebov", new_clade),
+                )
+                clade_id = cur.fetchone()[0]
+                clade_ids[key] = clade_id
+            cur.execute(
+                """
+                INSERT INTO sample_clade (sample_id, clade_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (sample_id, clade_id),
+            )
+
+        # Reassign tree tips
+        cur.execute(
+            """
+            SELECT t.tip_id, t.sample_id, t.tip_date, t.country, t.admin1, t.outbreak
+            FROM tree_tips t
+            JOIN phylogenetic_trees pt ON t.tree_id = pt.tree_id
+            WHERE pt.species = %s
+            """,
+            ("ebov",),
+        )
+        for tip_id, sample_id, tip_date, country, admin1, outbreak in cur.fetchall():
+            year = tip_date.year if tip_date else None
+            new_clade = _ebov_clade_from_year_country(year, country, admin1, outbreak)
+            if not new_clade:
+                continue
+            cur.execute(
+                "UPDATE tree_tips SET clade = %s WHERE tip_id = %s",
+                (new_clade, tip_id),
+            )
+            if sample_id:
+                cur.execute(
+                    "UPDATE samples SET clade = %s WHERE sample_id = %s",
+                    (new_clade, sample_id),
+                )
+    conn.commit()
+
+
 def main():
     args = parse_args()
     outdir = Path(args.outdir).resolve()
@@ -2466,6 +2614,9 @@ def main():
                 print("Loading literature evidence...", file=sys.stderr)
                 if args.evidence_qc_dir:
                     load_literature_evidence(conn, args.meta_id, args.evidence_qc_dir)
+
+                print("Refining EBOV clades...", file=sys.stderr)
+                _refine_ebov_clades(conn, args.meta_id)
 
             print("Writing MultiQC summary...", file=sys.stderr)
             write_mqc_summary(conn, args.meta_id, outdir, args.prefix)

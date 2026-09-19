@@ -1,31 +1,31 @@
-sample_id	quality	file_name	seq_length	n_count	n_percent
-UG_01	85	UG_01.fasta	18942	911	4.81
-UG_02	87	UG_02.fasta	18954	773	4.08
-UG_03	88	UG_03.fasta	18914	720	3.81
-UG_04	90	UG_04.fasta	18926	631	3.33
-UG_05	91	UG_05.fasta	18970	548	2.89
-UG_06	93	UG_06.fasta	18962	438	2.31
-UG_07	94	UG_07.fasta	18947	367	1.94
-UG_08	96	UG_08.fasta	18949	252	1.33
-UG_09	97	UG_09.fasta	18915	172	0.91
-UG_10	99	UG_10.fasta	18933	63	0.33
-UG_11	85	UG_11.fasta	18856	947	5.02
-UG_12	87	UG_12.fasta	18837	804	4.27
-UG_13	88	UG_13.fasta	18959	811	4.28
-UG_14	90	UG_14.fasta	18882	625	3.31
-UG_15	91	UG_15.fasta	18898	575	3.04
-UG_16	93	UG_16.fasta	18893	424	2.24
-UG_17	94	UG_17.fasta	18883	380	2.01
-UG_18	96	UG_18.fasta	18886	242	1.28
-UG_19	97	UG_19.fasta	18832	212	1.13
-UG_20	99	UG_20.fasta	18874	80	0.42
-UG_21	85	UG_21.fasta	18974	953	5.02
-UG_22	87	UG_22.fasta	18912	814	4.30
-UG_23	88	UG_23.fasta	19015	749	3.94
-UG_24	90	UG_24.fasta	18968	609	3.21
-UG_25	91	UG_25.fasta	18928	608	3.21
-UG_26	93	UG_26.fasta	18929	423	2.23
-UG_27	94	UG_27.fasta	18959	362	1.91
-UG_28	96	UG_28.fasta	18973	257	1.35
-UG_29	97	UG_29.fasta	18926	180	0.95
-UG_30	99	UG_30.fasta	18969	69	0.36
+sample_id	accession	collection_date	geo_loc_name	country	sample_type	host
+UG_01	UG_01	2026-03-05	Hoima	Uganda	Human Plasma Sample	Human
+UG_02	UG_02	2026-07-05	Mubende	Uganda	Human Plasma Sample	Human
+UG_03	UG_03	2026-04-28	Kasese	Uganda	Human Plasma Sample	Human
+UG_04	UG_04	2026-08-02	Hoima	Uganda	Human Plasma Sample	Human
+UG_05	UG_05	2026-04-16	Mubende	Uganda	Human Plasma Sample	Human
+UG_06	UG_06	2026-01-24	Kasese	Uganda	Human Plasma Sample	Human
+UG_07	UG_07	2026-07-20	Hoima	Uganda	Human Plasma Sample	Human
+UG_08	UG_08	2026-12-22	Mubende	Uganda	Human Plasma Sample	Human
+UG_09	UG_09	2026-03-11	Kasese	Uganda	Human Plasma Sample	Human
+UG_10	UG_10	2026-06-17	Hoima	Uganda	Human Plasma Sample	Human
+UG_11	UG_11	2026-07-13	Mubende	Uganda	Human Plasma Sample	Human
+UG_12	UG_12	2026-04-06	Kasese	Uganda	Human Plasma Sample	Human
+UG_13	UG_13	2026-11-21	Hoima	Uganda	Human Plasma Sample	Human
+UG_14	UG_14	2026-10-15	Mubende	Uganda	Human Plasma Sample	Human
+UG_15	UG_15	2026-05-05	Kasese	Uganda	Human Plasma Sample	Human
+UG_16	UG_16	2026-10-29	Hoima	Uganda	Human Plasma Sample	Human
+UG_17	UG_17	2026-11-26	Mubende	Uganda	Human Plasma Sample	Human
+UG_18	UG_18	2026-09-09	Kasese	Uganda	Human Plasma Sample	Human
+UG_19	UG_19	2026-05-06	Hoima	Uganda	Human Plasma Sample	Human
+UG_20	UG_20	2026-10-07	Mubende	Uganda	Human Plasma Sample	Human
+UG_21	UG_21	2026-09-18	Kasese	Uganda	Human Plasma Sample	Human
+UG_22	UG_22	2026-12-12	Hoima	Uganda	Human Plasma Sample	Human
+UG_23	UG_23	2026-03-10	Mubende	Uganda	Human Plasma Sample	Human
+UG_24	UG_24	2026-11-30	Kasese	Uganda	Human Plasma Sample	Human
+UG_25	UG_25	2026-12-17	Hoima	Uganda	Human Plasma Sample	Human
+UG_26	UG_26	2026-04-28	Mubende	Uganda	Human Plasma Sample	Human
+UG_27	UG_27	2026-07-27	Kasese	Uganda	Human Plasma Sample	Human
+UG_28	UG_28	2026-12-21	Hoima	Uganda	Human Plasma Sample	Human
+UG_29	UG_29	2026-01-01	Mubende	Uganda	Human Plasma Sample	Human
+UG_30	UG_30	2026-08-18	Kasese	Uganda	Human Plasma Sample	Human
