@@ -10,7 +10,7 @@
 
 ROADMAP_OBJECTIVES <- list(
   list(id = "transmission_spread", label = "Transmission & Spread",
-       icon = "share-nodes",
+       icon = "share-nodes", status = "Live",
        desc = "Estimated transmissibility and spread indicators from phylogenetic and epidemiological linkage."),
   list(id = "geographic_temporal", label = "Geographic & Temporal Context",
        icon = "earth-africa",
@@ -56,10 +56,15 @@ roadmap_ui <- function(objective) {
 # Small, quiet tile used in the Intelligence Overview's de-emphasized
 # roadmap strip. Clicking it jumps the sidebar to the objective's own tab.
 roadmap_tile_ui <- function(objective) {
+  is_live <- !is.null(objective$status) && objective$status == "Live"
+  color <- if (is_live) "#4A6C8C" else "#6c757d"
+  border <- if (is_live) "#4A6C8C" else "#e9ecef"
+  badge_class <- if (is_live) "badge badge-primary" else "badge badge-light"
+  badge_text <- if (is_live) "Live" else "Planned"
   div(
-    style = paste(
-      "cursor: pointer; border: 1px solid #e9ecef; border-radius: 6px;",
-      "padding: 10px 12px; text-align: center; color: #6c757d;",
+    style = paste0(
+      "cursor: pointer; border: 1px solid ", border, "; border-radius: 6px;",
+      "padding: 10px 12px; text-align: center; color: ", color, ";",
       "background: #fff; height: 100%;"
     ),
     onclick = sprintf(
@@ -67,8 +72,8 @@ roadmap_tile_ui <- function(objective) {
       roadmap_tab_name(objective$id)
     ),
     icon(objective$icon),
-    div(style = "font-size: 0.78rem; margin-top: 4px;", objective$label),
-    span(class = "badge badge-light", style = "font-size: 0.65rem; margin-top: 2px;", "Planned")
+    div(style = paste0("font-size: 0.78rem; margin-top: 4px;", if (is_live) " font-weight: 600;" else ""), objective$label),
+    span(class = badge_class, style = "font-size: 0.65rem; margin-top: 2px;", badge_text)
   )
 }
 

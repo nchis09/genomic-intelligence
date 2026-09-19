@@ -10,6 +10,7 @@ include { PATHOGEN_IDENTIFICATION_WF } from '../subworkflows/local/pathogen_iden
 include { MUTATION_PROFILE_WF    } from '../subworkflows/local/mutation_profile/main'
 
 include { REPORTING              } from '../subworkflows/local/reporting/main'
+include { COMPUTE_TRANSMISSION_CONTEXT } from '../modules/local/compute_transmission_context/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -128,6 +129,13 @@ workflow GENOMIC_INTELLIGENCE {
             MUTATION_PROFILE_WF(ch_mutation_profile, ch_translations)
             ch_mutation_profile_tsv = MUTATION_PROFILE_WF.out.tsv
             ch_mutation_profile_mqc = MUTATION_PROFILE_WF.out.mqc_tsv
+        }
+
+        if (!params.skip_transmission_context) {
+            ch_transmission_input = ch_knowledge_db
+                .combine(ch_duckdb_dump)
+                .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
+            COMPUTE_TRANSMISSION_CONTEXT(ch_transmission_input)
         }
 
     }
