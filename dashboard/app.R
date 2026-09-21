@@ -531,7 +531,19 @@ server <- function(input, output, session) {
     }
 
     roadmap_items <- lapply(ROADMAP_OBJECTIVES, function(obj) {
-      menuItem(obj$label, tabName = roadmap_tab_name(obj$id), icon = icon(obj$icon))
+      if (identical(obj$id, "transmission_spread") && length(species) > 0) {
+        do.call(menuItem, c(
+          list(text = obj$label, icon = icon(obj$icon), startExpanded = FALSE),
+          lapply(species, function(sp) menuSubItem(text = toupper(sp), tabName = paste0("ts_", sp)))
+        ))
+      } else if (identical(obj$id, "geographic_temporal") && length(species) > 0) {
+        do.call(menuItem, c(
+          list(text = obj$label, icon = icon(obj$icon), startExpanded = FALSE),
+          lapply(species, function(sp) menuSubItem(text = toupper(sp), tabName = paste0("gt_", sp)))
+        ))
+      } else {
+        menuItem(obj$label, tabName = roadmap_tab_name(obj$id), icon = icon(obj$icon))
+      }
     })
 
     do.call(sidebarMenu, c(
@@ -601,19 +613,28 @@ server <- function(input, output, session) {
       tab_ui <- if (identical(obj$id, "intelligence_brief")) {
         intelligence_brief_roadmap_ui(obj)
       } else if (identical(obj$id, "transmission_spread")) {
-        transmission_ui()
+        uiOutput("ts_roadmap_body")
       } else if (identical(obj$id, "geographic_temporal")) {
-        geographic_temporal_ui()
+        uiOutput("gt_roadmap_body")
       } else {
         roadmap_ui(obj)
       }
       tabItem(tabName = roadmap_tab_name(obj$id), tab_ui)
     })
 
+    ts_tabs <- lapply(species, function(sp) {
+      tabItem(tabName = paste0("ts_", sp), transmission_ui(sp))
+    })
+    gt_tabs <- lapply(species, function(sp) {
+      tabItem(tabName = paste0("gt_", sp), geographic_temporal_ui(sp, species))
+    })
+
     do.call(tabItems, c(
       list(tabItem(tabName = "home", overview_ui())),
       pi_tabs,
       pg_tabs,
+      ts_tabs,
+      gt_tabs,
       roadmap_tabs
     ))
   })
@@ -624,6 +645,8 @@ server <- function(input, output, session) {
       pathogen_identification_register(input, output, session, sp, outdir_r)
       pathogen_genomics_register(input, output, session, sp, outdir_r)
       pathogen_mutation_profile_register(input, output, session, sp, outdir_r)
+      transmission_register(input, output, session, sp, outdir_r)
+      geographic_temporal_register(input, output, session, sp, outdir_r)
 
       local({
         s <- sp
@@ -652,10 +675,18 @@ server <- function(input, output, session) {
     if (is.null(sel) || !(sel %in% species)) species[1] else sel
   })
 
-  # Register Transmission & Spread outputs for the currently selected species.
-  transmission_register(input, output, session, outdir_r, current_species, species_rv)
-  # Register Geographic & Temporal Context outputs for the currently selected species.
-  geographic_temporal_register(input, output, session, outdir_r, current_species)
+  # Roadmap "Transmission & Spread" tile tab -> shows the currently selected
+  # species' transmission module (per-species instances are registered above).
+  output$ts_roadmap_body <- renderUI({
+    sp <- current_species(); if (is.null(sp)) return(NULL)
+    transmission_ui(sp)
+  })
+  # Roadmap "Geographic & Temporal Context" tile tab -> shows the currently
+  # selected species' geographic module (per-species instances registered above).
+  output$gt_roadmap_body <- renderUI({
+    sp <- current_species(); if (is.null(sp)) return(NULL)
+    geographic_temporal_ui(sp, species_rv())
+  })
 
   output$overview_body <- renderUI({
     overview_body_ui(!is.null(current_species()))
@@ -685,7 +716,16 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$overview_nav_click, {
-    updateTabItems(session, "sidebarmenu", selected = input$overview_nav_click)
+    tab <- input$overview_nav_click
+    sp <- current_species()
+    # transmission/geographic are now per-species expandable menus -> route the
+    # roadmap tile to the current species' subitem tab.
+    if (identical(tab, roadmap_tab_name("transmission_spread")) && !is.null(sp)) {
+      tab <- paste0("ts_", sp)
+    } else if (identical(tab, roadmap_tab_name("geographic_temporal")) && !is.null(sp)) {
+      tab <- paste0("gt_", sp)
+    }
+    updateTabItems(session, "sidebarmenu", selected = tab)
   })
 
   # -- Intelligence Brief "preview & edit before export" scaffold (UI only).

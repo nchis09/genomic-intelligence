@@ -9,8 +9,9 @@
 #   (Geographic & Temporal Context lives in its own module/tab: pathogen_geographic.R)
 #   Secondary tab: Surveillance Data (raw burden / anomaly audit tables)
 
-transmission_ui <- function() {
-  uiOutput("transmission_body")
+transmission_ui <- function(sp) {
+  ns <- function(id) paste0(sp, "_", id)
+  uiOutput(ns("transmission_body"))
 }
 
 # ---- Data helpers ----
@@ -212,70 +213,71 @@ transmission_ui <- function() {
 }
 
 # ---- UI ----
-transmission_content_ui <- function(species, outdir, all_species) {
-  if (is.null(species)) {
+transmission_content_ui <- function(sp, outdir) {
+  ns <- function(id) paste0(sp, "_", id)
+  if (is.null(sp)) {
     return(div(style = "text-align:center; padding:40px 0; color:#888;",
                icon("share-nodes", class = "fa-3x"), h4("No species selected"),
                p("Select a species from the Intelligence Overview dropdown.")))
   }
-  has_data <- dir.exists(file.path(outdir, "transmission_context", species))
+  has_data <- dir.exists(file.path(outdir, "transmission_context", sp))
   tagList(
     bs4Dash::bs4Card(
       title = tagList(icon("share-nodes"), " Transmission & Spread Intelligence"),
       width = 12, status = "primary",
       fluidRow(
-        column(3, selectInput("transmission_species", "Species:", choices = all_species, selected = species, selectize = FALSE)),
-        column(4, uiOutput("ts_query_select_ui")),
-        column(5, uiOutput("transmission_status"))
+        column(3, div(style = "padding-top:8px;", tags$small(class = "text-muted", "Species"), div(style = "font-size:1.1rem;font-weight:700;", toupper(sp)))),
+        column(4, uiOutput(ns("ts_query_select_ui"))),
+        column(5, uiOutput(ns("transmission_status")))
       ),
-      uiOutput("ts_header_facts")
+      uiOutput(ns("ts_header_facts"))
     ),
     if (has_data) {
       bs4Dash::bs4Card(
         width = 12, status = "primary", solidHeader = FALSE,
         tabsetPanel(
-          id = "ts_tabs",
+          id = ns("ts_tabs"),
           tabPanel(
             "Intelligence Brief", br(),
             h4(icon("route"), " A. Genomic relationship & how it spread ", tags$small(class = "text-muted", "observed history")),
             p(class = "text-muted", style = "font-size:0.85rem;",
               "The new genome and its closest historical relatives (tree), where each strain was first detected, and how far/fast it moved."),
-            fluidRow(column(5, plotOutput("ts_tree", height = "440px")),
-                     column(7, plotly::plotlyOutput("ts_outbreak_plot", height = "440px"),
-                            uiOutput("ts_outbreak_takeaways"))),
-            uiOutput("ts_spread_stats"), br(),
+            fluidRow(column(5, plotOutput(ns("ts_tree"), height = "440px")),
+                     column(7, plotly::plotlyOutput(ns("ts_outbreak_plot"), height = "440px"),
+                            uiOutput(ns("ts_outbreak_takeaways")))),
+            uiOutput(ns("ts_spread_stats")), br(),
             h4(icon("chart-line"), " B. Closest relatives — outbreak impact over time ", tags$small(class = "text-muted", "observed history")),
             p(class = "text-muted", style = "font-size:0.85rem;",
               "Monthly reported cases and deaths per country — the epidemiological footprint of the lineages closest to the new genome."),
-            plotly::plotlyOutput("ts_neighbors_plot", height = "460px"),
+            plotly::plotlyOutput(ns("ts_neighbors_plot"), height = "460px"),
             hr(),
             h4(icon("chart-line"), " C. How did it behave historically? ", tags$small(class = "text-muted", "observed history")),
-            fluidRow(column(3, uiOutput("ts_strain_sel_ui")), column(9, uiOutput("ts_behavior_boxes"))), br(),
+            fluidRow(column(3, uiOutput(ns("ts_strain_sel_ui"))), column(9, uiOutput(ns("ts_behavior_boxes")))), br(),
             h4(icon("chart-area"), " D. What might happen next? ", tags$small(class = "badge badge-warning", "MODEL-DERIVED PROJECTION")),
             div(class = "alert alert-warning", style = "font-size:0.82rem; padding:8px 12px;",
                 icon("triangle-exclamation"), strong(" Model-derived projection. "),
                 "A logistic growth model is fitted to the linked strain's observed historical epidemic curve, then projected forward under the selected scenario. The shaded band is the 95% uncertainty interval; it widens with lead time. This is a model-derived estimate, not a validated forecast."),
-            uiOutput("ts_model_cards"),
+            uiOutput(ns("ts_model_cards")),
             fluidRow(column(4,
-                            selectInput("ts_scenario", "Scenario:",
+                            selectInput(ns("ts_scenario"), "Scenario:",
                                         choices = c("Baseline (as observed)" = "baseline",
                                                     "Contained (rapid control)" = "contained",
                                                     "Expanded (sustained spread)" = "expanded"),
                                         selected = "baseline", selectize = FALSE),
-                            sliderInput("ts_horizon", "Projection horizon (days):", min = 60, max = 365, value = 180, step = 30)),
-                     column(8, plotly::plotlyOutput("ts_projection", height = "320px"))),
+                            sliderInput(ns("ts_horizon"), "Projection horizon (days):", min = 60, max = 365, value = 180, step = 30)),
+                     column(8, plotly::plotlyOutput(ns("ts_projection"), height = "320px"))),
             hr(),
             h4(icon("magnifying-glass-chart"), " E. Why this assessment? ", tags$small(class = "text-muted", "drivers")),
-            uiOutput("ts_drivers"), br(),
+            uiOutput(ns("ts_drivers")), br(),
             h4(icon("file-medical"), " F. Transmission & Spread Assessment"),
-            uiOutput("ts_assessment")
+            uiOutput(ns("ts_assessment"))
           ),
           tabPanel(
             "Surveillance Data", br(),
             p(class = "text-muted", style = "font-size:0.85rem;",
               "Raw weekly epidemiological burden and anomaly flags for transparency and auditability."),
-            h5("Flagged anomalous weeks"), DT::DTOutput("ts_anomaly_table"),
-            br(), h5("Weekly burden table"), DT::DTOutput("ts_burden_table")
+            h5("Flagged anomalous weeks"), DT::DTOutput(ns("ts_anomaly_table")),
+            br(), h5("Weekly burden table"), DT::DTOutput(ns("ts_burden_table"))
           )
         )
       )
@@ -288,11 +290,11 @@ transmission_content_ui <- function(species, outdir, all_species) {
 }
 
 # ---- Server ----
-transmission_register <- function(input, output, session, outdir_r, current_species, all_species) {
-  selected_species <- reactive(if (is.null(input$transmission_species)) current_species() else input$transmission_species)
-  output$transmission_body <- renderUI(transmission_content_ui(selected_species(), outdir_r(), all_species()))
-  observeEvent(current_species(), updateSelectInput(session, "transmission_species", selected = current_species()))
-  output$transmission_status <- renderUI({
+transmission_register <- function(input, output, session, sp, outdir_r) {
+  ns <- function(id) paste0(sp, "_", id)
+  selected_species <- reactive(sp)
+  output[[ns("transmission_body")]] <- renderUI(transmission_content_ui(sp, outdir_r()))
+  output[[ns("transmission_status")]] <- renderUI({
     sp <- selected_species(); if (is.null(sp)) return(NULL)
     ok <- file.exists(file.path(outdir_r(), "transmission_context", sp, "transmission_potential.tsv"))
     div(style = paste0("padding-top:6px;color:", if (ok) "#198754" else "#dc3545"),
@@ -309,11 +311,11 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   anomaly_r <- reactive({ df <- .ts_read(outdir_r(), selected_species(), "transmission_anomaly.tsv"); if (!is.null(df) && "week_start" %in% names(df)) df$week_start <- as.Date(df$week_start); df })
 
   query_samples_r <- reactive({ p <- potential_r(); if (is.null(p)) NULL else sort(unique(stats::na.omit(p$query_sample))) })
-  output$ts_query_select_ui <- renderUI({
+  output[[ns("ts_query_select_ui")]] <- renderUI({
     qs <- query_samples_r(); if (is.null(qs)) return(div(style = "color:#888;", "No query samples."))
-    selectInput("ts_query", "Query genome:", choices = qs, selected = qs[1], selectize = FALSE)
+    selectInput(ns("ts_query"), "Query genome:", choices = qs, selected = qs[1], selectize = FALSE)
   })
-  selected_query <- reactive({ qs <- query_samples_r(); if (is.null(qs)) NULL else if (is.null(input$ts_query) || !(input$ts_query %in% qs)) qs[1] else input$ts_query })
+  selected_query <- reactive({ qs <- query_samples_r(); if (is.null(qs)) NULL else if (is.null(input[[ns("ts_query")]]) || !(input[[ns("ts_query")]] %in% qs)) qs[1] else input[[ns("ts_query")]] })
   links_r <- reactive({ p <- potential_r(); sq <- selected_query(); if (is.null(p) || is.null(sq)) NULL else dplyr::filter(p, query_sample == sq) })
   query_row_r <- reactive({ df <- links_r(); if (is.null(df) || !nrow(df)) NULL else df[1, ] })
   score_row_r <- reactive({ sc <- score_r(); sq <- selected_query(); if (is.null(sc) || is.null(sq)) NULL else { d <- dplyr::filter(sc, query_sample == sq); if (nrow(d)) d[1, ] else NULL } })
@@ -322,13 +324,13 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   observeEvent(selected_query(), {
     q <- query_row_r(); st <- if (!is.null(q) && !is.na(q$query_strain) && q$query_strain != "") q$query_strain else NULL
     focus_strain(st)
-    sp <- strain_profile_r(); if (!is.null(sp) && nrow(sp)) { if (is.null(st) || !(st %in% sp$strain)) st <- sp$strain[1]; updateSelectizeInput(session, "ts_strain_sel", selected = st) }
+    sp <- strain_profile_r(); if (!is.null(sp) && nrow(sp)) { if (is.null(st) || !(st %in% sp$strain)) st <- sp$strain[1]; updateSelectizeInput(session, ns("ts_strain_sel"), selected = st) }
   })
-  observeEvent(input$ts_strain_sel, {
-    s <- input$ts_strain_sel; if (length(s)) focus_strain(as.character(s[1]))
+  observeEvent(input[[ns("ts_strain_sel")]], {
+    s <- input[[ns("ts_strain_sel")]]; if (length(s)) focus_strain(as.character(s[1]))
   }, ignoreNULL = TRUE)
   current_strain <- reactive({ fs <- focus_strain(); if (!is.null(fs) && !is.na(fs) && fs != "") return(fs); q <- query_row_r(); if (!is.null(q)) q$query_strain else NULL })
-  selected_strains <- reactive({ s <- input$ts_strain_sel; if (!is.null(s) && length(s)) as.character(s) else { cs <- current_strain(); if (!is.null(cs)) cs else character(0) } })
+  selected_strains <- reactive({ s <- input[[ns("ts_strain_sel")]]; if (!is.null(s) && length(s)) as.character(s) else { cs <- current_strain(); if (!is.null(cs)) cs else character(0) } })
   strain_row_r <- reactive({ sp <- strain_profile_r(); st <- current_strain(); if (is.null(sp) || is.null(st)) NULL else { d <- dplyr::filter(sp, strain == st); if (nrow(d)) d[1, ] else NULL } })
   strain_links_r <- reactive({ df <- links_r(); st <- current_strain(); if (is.null(df)) NULL else { d <- if (is.null(st)) df else dplyr::filter(df, background_strain == st); if (nrow(d)) d else df } })
 
@@ -340,7 +342,7 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
     .ts_fit_logistic(epi)
   })
 
-  output$ts_header_facts <- renderUI({
+  output[[ns("ts_header_facts")]] <- renderUI({
     q <- query_row_r(); if (is.null(q)) return(NULL)
     cell <- function(l, v) column(2, tags$small(class = "text-muted", l), div(strong(v)))
     div(style = "margin-top:8px;padding:10px;background:#f8f9fa;border-radius:6px;", fluidRow(
@@ -357,7 +359,7 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
     nb <- df %>% dplyr::filter(!is.na(background_sample)) %>% dplyr::arrange(background_div_diff) %>% dplyr::pull(background_sample)
     .ts_query_tree(outdir_r(), selected_species(), q$query_sample, nb)
   })
-  output$ts_tree <- renderPlot({
+  output[[ns("ts_tree")]] <- renderPlot({
     t <- tree_r()
     if (is.null(t) || !requireNamespace("ggtree", quietly = TRUE)) { plot.new(); text(0.5, 0.5, "Subtree unavailable", col = "#6c757d"); return() }
     tr <- t$tree; q <- query_row_r(); df <- links_r(); qlab <- .ts_clean_label(q$query_sample)
@@ -374,7 +376,7 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
       theme(legend.position = "right", legend.text = element_text(size = 8)) + labs(title = "Query + closest historical genomes")
     xr <- layer_scales(p)$x$range$range; if (length(xr) == 2) p <- p + xlim(NA, xr[2] * 1.6); p
   })
-  output$ts_neighbors_plot <- plotly::renderPlotly({
+  output[[ns("ts_neighbors_plot")]] <- plotly::renderPlotly({
     br <- burden_r(); if (is.null(br) || !nrow(br)) return(NULL)
     d <- br %>% dplyr::filter(!is.na(country), !is.na(week_start)) %>%
       dplyr::mutate(month = as.Date(format(as.Date(week_start), "%Y-%m-01"))) %>%
@@ -401,14 +403,14 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   })
 
   # C. behavior + outbreaks — compare the selected strain(s) side by side
-  output$ts_strain_sel_ui <- renderUI({
+  output[[ns("ts_strain_sel_ui")]] <- renderUI({
     sp <- strain_profile_r(); if (is.null(sp) || !nrow(sp)) return(div(class = "text-muted", "No strains."))
     sel0 <- isolate(current_strain()); if (is.null(sel0) || is.na(sel0) || !nzchar(sel0) || !(sel0 %in% sp$strain)) sel0 <- sp$strain[1]
-    selectizeInput("ts_strain_sel", "Compare strains (pick one or more):",
+    selectizeInput(ns("ts_strain_sel"), "Compare strains (pick one or more):",
                    choices = sp$strain, selected = sel0, multiple = TRUE,
                    options = list(maxItems = 4, placeholder = "Choose strains..."))
   })
-  output$ts_behavior_boxes <- renderUI({
+  output[[ns("ts_behavior_boxes")]] <- renderUI({
     sp <- strain_profile_r(); sel <- selected_strains()
     if (is.null(sp) || !length(sel)) return(div(class = "text-muted", "Select strain(s) to compare."))
     chip <- function(l, v) column(2, div(style = "padding:8px;background:#f8f9fa;border-radius:6px;text-align:center;min-height:58px;",
@@ -427,14 +429,14 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
     }))
   })
   # D. spread
-  output$ts_spread_stats <- renderUI({
+  output[[ns("ts_spread_stats")]] <- renderUI({
     s <- strain_row_r(); if (is.null(s)) return(div(class = "text-muted", "No spread metrics."))
     st <- function(l, v) column(3, div(style = "padding:8px;background:#f8f9fa;border-radius:6px;margin-bottom:8px;", tags$small(class = "text-muted", l), div(style = "font-size:1.1rem;font-weight:600;", v)))
     fluidRow(st("Spread rate", ifelse(is.na(s$spread_rate_km_per_year), "-", paste0(round(as.numeric(s$spread_rate_km_per_year), 1), " km/yr"))),
              st("Max extent", ifelse(is.na(s$max_spread_km), "-", paste0(round(as.numeric(s$max_spread_km), 0), " km"))),
              st("Countries", s$n_countries), st("Origin", ifelse(is.na(s$origin_country), "-", s$origin_country)))
   })
-  output$ts_outbreak_plot <- plotly::renderPlotly({
+  output[[ns("ts_outbreak_plot")]] <- plotly::renderPlotly({
     df <- outbreak_r(); if (is.null(df) || !nrow(df)) return(NULL)
     d <- df %>% dplyr::filter(!is.na(start_year), !is.na(country)) %>%
       dplyr::mutate(country = .ts_norm_country(country),
@@ -483,7 +485,7 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   })
 
   # auto-generated key takeaways for the outbreaks panel
-  output$ts_outbreak_takeaways <- renderUI({
+  output[[ns("ts_outbreak_takeaways")]] <- renderUI({
     df <- outbreak_r(); if (is.null(df) || !nrow(df)) return(NULL)
     d <- df %>% dplyr::filter(!is.na(start_year), !is.na(country)) %>%
       dplyr::mutate(country = .ts_norm_country(country),
@@ -504,7 +506,7 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   })
 
   # D. model
-  output$ts_model_cards <- renderUI({
+  output[[ns("ts_model_cards")]] <- renderUI({
     fit <- fit_r(); sc <- score_row_r()
     if (is.null(fit)) return(div(class = "text-muted", "Insufficient epi history to fit a growth model for this strain."))
     cd <- function(l, v, c) column(3, div(style = paste0("padding:10px;background:#fff;border-left:4px solid ", c, ";border-radius:4px;margin-bottom:8px;"), tags$small(class = "text-muted", l), div(style = "font-size:1.15rem;font-weight:700;", v)))
@@ -514,10 +516,10 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
       cd("Est. outbreak size", format(round(fit$K), big.mark = ","), "#6f42c1"),
       cd("Model", fit$method, "#198754"))
   })
-  output$ts_projection <- plotly::renderPlotly({
+  output[[ns("ts_projection")]] <- plotly::renderPlotly({
     fit <- fit_r(); if (is.null(fit)) return(NULL)
-    hz <- if (is.null(input$ts_horizon)) 180 else input$ts_horizon
-    scn <- if (is.null(input$ts_scenario)) "baseline" else input$ts_scenario
+    hz <- if (is.null(input[[ns("ts_horizon")]])) 180 else input[[ns("ts_horizon")]]
+    scn <- if (is.null(input[[ns("ts_scenario")]])) "baseline" else input[[ns("ts_scenario")]]
     pr <- .ts_project(fit, hz, scn); if (is.null(pr)) return(NULL)
     p <- plotly::plot_ly() %>%
       plotly::add_ribbons(data = pr, x = ~t, ymin = ~lower, ymax = ~upper, name = "95% band",
@@ -531,7 +533,7 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   })
 
   # H. drivers
-  output$ts_drivers <- renderUI({
+  output[[ns("ts_drivers")]] <- renderUI({
     sc <- score_row_r(); s <- strain_row_r(); fit <- fit_r()
     if (is.null(sc) && is.null(s) && is.null(fit)) return(div(class = "text-muted", "No drivers."))
     dr <- function(l, v) div(style = "padding:8px;border-left:3px solid #4A6C8C;margin-bottom:6px;background:#f8f9fa;", div(style = "font-weight:600;", l), div(style = "font-size:0.9rem;", v))
@@ -546,7 +548,7 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   })
 
   # I. assessment
-  output$ts_assessment <- renderUI({
+  output[[ns("ts_assessment")]] <- renderUI({
     q <- query_row_r(); sc <- score_row_r(); s <- strain_row_r(); fit <- fit_r(); if (is.null(q)) return(div(class = "text-muted", "No assessment."))
     strain <- ifelse(is.na(q$query_strain), "an uncharacterized strain", q$query_strain)
     risk <- if (!is.null(sc) && !is.na(sc$risk_label)) toupper(sc$risk_label) else "UNKNOWN"
@@ -560,8 +562,8 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   })
 
   # Surveillance tab
-  output$ts_anomaly_table <- DT::renderDT({ df <- anomaly_r(); if (is.null(df) || !nrow(df)) nd("No anomalous weeks") else DT::datatable(df, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE) })
-  output$ts_burden_table <- DT::renderDT({
+  output[[ns("ts_anomaly_table")]] <- DT::renderDT({ df <- anomaly_r(); if (is.null(df) || !nrow(df)) nd("No anomalous weeks") else DT::datatable(df, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE) })
+  output[[ns("ts_burden_table")]] <- DT::renderDT({
     df <- burden_r(); if (is.null(df) || !nrow(df)) return(nd("No burden data"))
     s <- df %>% dplyr::select(country, admin1, week_start, cases_cum, deaths_cum, new_cases, new_deaths, cfr_cum, cfr_new, growth_rate, trend_cases, alert, n_genomes, dominant_strain) %>%
       dplyr::mutate(cfr_cum = round(cfr_cum, 3), cfr_new = round(cfr_new, 3), growth_rate = round(growth_rate, 3), trend_cases = as.character(trend_cases))
