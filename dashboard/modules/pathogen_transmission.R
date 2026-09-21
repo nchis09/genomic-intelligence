@@ -4,9 +4,9 @@
 # results/transmission_context/<species>/ and the DuckDB knowledge warehouse.
 #
 # Visual hierarchy (evidence -> interpretation -> projection):
-#   GENOME -> A. Genomic relationship -> B. Where found before ->
-#   C. Historical behavior -> D. How it spread -> E. Temporal pattern ->
-#   F. Geographic expansion -> G. What might happen next -> H. Why -> I. Assessment
+#   GENOME -> A. Genomic relationship & spread -> B. Outbreak impact over time ->
+#   C. Historical behavior -> D. What might happen next -> E. Why -> F. Assessment
+#   (Geographic & Temporal Context lives in its own module/tab: pathogen_geographic.R)
 #   Secondary tab: Surveillance Data (raw burden / anomaly audit tables)
 
 transmission_ui <- function() {
@@ -33,6 +33,21 @@ transmission_ui <- function() {
   base <- RColorBrewer::brewer.pal(8, "Set2")
   cols <- if (n <= 8) base[1:n] else grDevices::colorRampPalette(base)(n)
   stats::setNames(cols, strains)
+}
+
+# Consolidate historical country-name variants into short acronyms so the same
+# country isn't split into multiple colors/labels. All Zaire / DRC spellings ->
+# "DRC". Republic of the Congo is a DIFFERENT country (Congo-Brazzaville) and is
+# kept separate as "Rep. Congo".
+.ts_norm_country <- function(x) {
+  x <- trimws(as.character(x))
+  dplyr::case_when(
+    grepl("zaire|democratic republic of the congo|\\bdrc\\b", x, ignore.case = TRUE) ~ "DRC",
+    grepl("republic of the congo|congo-brazzaville|\\broc\\b", x, ignore.case = TRUE) ~ "Rep. Congo",
+    grepl("united states", x, ignore.case = TRUE) ~ "USA",
+    grepl("united kingdom", x, ignore.case = TRUE) ~ "UK",
+    TRUE ~ x
+  )
 }
 
 # ---- Dynamic country centroids ----
@@ -222,29 +237,21 @@ transmission_content_ui <- function(species, outdir, all_species) {
           id = "ts_tabs",
           tabPanel(
             "Intelligence Brief", br(),
-            h4(icon("chart-line"), " A. Closest relatives — outbreak impact over time ", tags$small(class = "text-muted", "observed history")),
+            h4(icon("route"), " A. Genomic relationship & how it spread ", tags$small(class = "text-muted", "observed history")),
+            p(class = "text-muted", style = "font-size:0.85rem;",
+              "The new genome and its closest historical relatives (tree), where each strain was first detected, and how far/fast it moved."),
+            fluidRow(column(5, plotOutput("ts_tree", height = "440px")),
+                     column(7, plotly::plotlyOutput("ts_outbreak_plot", height = "440px"),
+                            uiOutput("ts_outbreak_takeaways"))),
+            uiOutput("ts_spread_stats"), br(),
+            h4(icon("chart-line"), " B. Closest relatives — outbreak impact over time ", tags$small(class = "text-muted", "observed history")),
             p(class = "text-muted", style = "font-size:0.85rem;",
               "Monthly reported cases and deaths per country — the epidemiological footprint of the lineages closest to the new genome."),
             plotly::plotlyOutput("ts_neighbors_plot", height = "460px"),
             hr(),
-            h4(icon("map-location-dot"), " B. Genomic relationship & where it has been found ", tags$small(class = "text-muted", "observed history")),
-            p(class = "text-muted", style = "font-size:0.85rem;",
-              "The new genome and its closest historical relatives (tree) and the countries where they were detected (map)."),
-            fluidRow(column(5, plotOutput("ts_tree", height = "440px")),
-                     column(7, leaflet::leafletOutput("ts_detect_map", height = "440px"))), br(),
             h4(icon("chart-line"), " C. How did it behave historically? ", tags$small(class = "text-muted", "observed history")),
-            uiOutput("ts_behavior_boxes"),
-            h5("Historical outbreaks for this strain / species"), DT::DTOutput("ts_outbreak_table"), br(),
-            h4(icon("route"), " D. How did it spread? ", tags$small(class = "text-muted", "observed history")),
-            uiOutput("ts_spread_stats"),
-            fluidRow(column(6, plotly::plotlyOutput("ts_timeline", height = "300px")),
-                     column(6, h5("Strain comparison — click a row to re-scope history panels"), DT::DTOutput("ts_strain_table"))),
-            hr(),
-            h4(icon("wave-square"), " E. Temporal transmission pattern ", tags$small(class = "text-muted", "observed history")),
-            plotly::plotlyOutput("ts_epi_curve", height = "340px"), br(),
-            h4(icon("earth-africa"), " F. Geographic expansion over time ", tags$small(class = "text-muted", "observed history")),
-            uiOutput("ts_expansion_slider_ui"), leaflet::leafletOutput("ts_expansion_map", height = "360px"), hr(),
-            h4(icon("chart-area"), " G. What might happen next? ", tags$small(class = "badge badge-warning", "MODEL-DERIVED PROJECTION")),
+            fluidRow(column(3, uiOutput("ts_strain_sel_ui")), column(9, uiOutput("ts_behavior_boxes"))), br(),
+            h4(icon("chart-area"), " D. What might happen next? ", tags$small(class = "badge badge-warning", "MODEL-DERIVED PROJECTION")),
             div(class = "alert alert-warning", style = "font-size:0.82rem; padding:8px 12px;",
                 icon("triangle-exclamation"), strong(" Model-derived projection. "),
                 "A logistic growth model is fitted to the linked strain's observed historical epidemic curve, then projected forward under the selected scenario. The shaded band is the 95% uncertainty interval; it widens with lead time. This is a model-derived estimate, not a validated forecast."),
@@ -258,19 +265,16 @@ transmission_content_ui <- function(species, outdir, all_species) {
                             sliderInput("ts_horizon", "Projection horizon (days):", min = 60, max = 365, value = 180, step = 30)),
                      column(8, plotly::plotlyOutput("ts_projection", height = "320px"))),
             hr(),
-            h4(icon("magnifying-glass-chart"), " H. Why this assessment? ", tags$small(class = "text-muted", "drivers")),
+            h4(icon("magnifying-glass-chart"), " E. Why this assessment? ", tags$small(class = "text-muted", "drivers")),
             uiOutput("ts_drivers"), br(),
-            h4(icon("file-medical"), " I. Transmission & Spread Assessment"),
+            h4(icon("file-medical"), " F. Transmission & Spread Assessment"),
             uiOutput("ts_assessment")
           ),
           tabPanel(
             "Surveillance Data", br(),
             p(class = "text-muted", style = "font-size:0.85rem;",
               "Raw weekly epidemiological burden and anomaly flags for transparency and auditability."),
-            fluidRow(column(8, plotly::plotlyOutput("ts_burden_curve", height = "320px")),
-                     column(4, leaflet::leafletOutput("ts_hotspot_map", height = "320px"))),
-            br(), h5("EWMA control chart"), plotly::plotlyOutput("ts_control_chart", height = "300px"),
-            br(), h5("Flagged anomalous weeks"), DT::DTOutput("ts_anomaly_table"),
+            h5("Flagged anomalous weeks"), DT::DTOutput("ts_anomaly_table"),
             br(), h5("Weekly burden table"), DT::DTOutput("ts_burden_table")
           )
         )
@@ -315,12 +319,16 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   score_row_r <- reactive({ sc <- score_r(); sq <- selected_query(); if (is.null(sc) || is.null(sq)) NULL else { d <- dplyr::filter(sc, query_sample == sq); if (nrow(d)) d[1, ] else NULL } })
 
   focus_strain <- reactiveVal(NULL)
-  observeEvent(selected_query(), { q <- query_row_r(); focus_strain(if (!is.null(q) && !is.na(q$query_strain) && q$query_strain != "") q$query_strain else NULL) })
-  observeEvent(input$ts_strain_table_rows_selected, {
-    sp <- strain_profile_r(); i <- input$ts_strain_table_rows_selected
-    if (!is.null(sp) && length(i)) focus_strain(as.character(sp$strain[i[1]]))
+  observeEvent(selected_query(), {
+    q <- query_row_r(); st <- if (!is.null(q) && !is.na(q$query_strain) && q$query_strain != "") q$query_strain else NULL
+    focus_strain(st)
+    sp <- strain_profile_r(); if (!is.null(sp) && nrow(sp)) { if (is.null(st) || !(st %in% sp$strain)) st <- sp$strain[1]; updateSelectizeInput(session, "ts_strain_sel", selected = st) }
   })
+  observeEvent(input$ts_strain_sel, {
+    s <- input$ts_strain_sel; if (length(s)) focus_strain(as.character(s[1]))
+  }, ignoreNULL = TRUE)
   current_strain <- reactive({ fs <- focus_strain(); if (!is.null(fs) && !is.na(fs) && fs != "") return(fs); q <- query_row_r(); if (!is.null(q)) q$query_strain else NULL })
+  selected_strains <- reactive({ s <- input$ts_strain_sel; if (!is.null(s) && length(s)) as.character(s) else { cs <- current_strain(); if (!is.null(cs)) cs else character(0) } })
   strain_row_r <- reactive({ sp <- strain_profile_r(); st <- current_strain(); if (is.null(sp) || is.null(st)) NULL else { d <- dplyr::filter(sp, strain == st); if (nrow(d)) d[1, ] else NULL } })
   strain_links_r <- reactive({ df <- links_r(); st <- current_strain(); if (is.null(df)) NULL else { d <- if (is.null(st)) df else dplyr::filter(df, background_strain == st); if (nrow(d)) d else df } })
 
@@ -392,42 +400,32 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
                      legend = list(orientation = "h", y = -0.18))
   })
 
-  # B. map
-  output$ts_detect_map <- leaflet::renderLeaflet({
-    df <- strain_links_r(); q <- query_row_r(); m <- leaflet::leaflet() %>% leaflet::addTiles()
-    if (is.null(df) || !nrow(df)) return(m)
-    df <- .ts_fill_coords(df, "background_latitude", "background_longitude", "background_country")
-    d <- dplyr::filter(df, !is.na(background_latitude), !is.na(background_longitude))
-    pal <- leaflet::colorFactor(.ts_strain_pal(d$background_strain), domain = d$background_strain)
-    if (nrow(d)) m <- m %>% leaflet::addCircleMarkers(data = d, ~background_longitude, ~background_latitude,
-      radius = ~pmax(4, log10(as.numeric(background_annual_cases) + 1) * 3), color = ~pal(background_strain), fillOpacity = 0.7, weight = 1,
-      popup = ~paste0("<b>", background_sample, "</b><br>", background_strain, "<br>", background_country, "<br>", background_collection_date, "<br>Cases: ", background_annual_cases))
-    qlat <- if (!is.null(q)) q$query_latitude else NA; qlon <- if (!is.null(q)) q$query_longitude else NA
-    if (!is.null(q) && (is.na(qlat) || is.na(qlon)) && !is.na(q$query_country)) {
-      cc <- .ts_country_centroid(q$query_country); qlat <- cc$lat[1]; qlon <- cc$lon[1]
-    }
-    if (!is.null(q) && !is.na(qlat) && !is.na(qlon)) m <- m %>% leaflet::addAwesomeMarkers(lng = qlon, lat = qlat,
-      icon = leaflet::awesomeIcons(icon = "star", library = "fa", markerColor = "red"), popup = paste0("<b>Query: ", q$query_sample, "</b><br>", q$query_country))
-    m %>% leaflet::addLegend(position = "bottomright", pal = pal, values = d$background_strain, title = "Strain")
+  # C. behavior + outbreaks — compare the selected strain(s) side by side
+  output$ts_strain_sel_ui <- renderUI({
+    sp <- strain_profile_r(); if (is.null(sp) || !nrow(sp)) return(div(class = "text-muted", "No strains."))
+    sel0 <- isolate(current_strain()); if (is.null(sel0) || is.na(sel0) || !nzchar(sel0) || !(sel0 %in% sp$strain)) sel0 <- sp$strain[1]
+    selectizeInput("ts_strain_sel", "Compare strains (pick one or more):",
+                   choices = sp$strain, selected = sel0, multiple = TRUE,
+                   options = list(maxItems = 4, placeholder = "Choose strains..."))
   })
-
-  # C. behavior + outbreaks
   output$ts_behavior_boxes <- renderUI({
-    s <- strain_row_r(); if (is.null(s)) return(div(class = "text-muted", "No strain profile."))
-    vb <- function(v, sub, ic, col) column(2, bs4Dash::bs4ValueBox(value = v, subtitle = sub, icon = icon(ic), color = col, width = 12))
-    fluidRow(
-      vb(format(as.numeric(s$linked_cases), big.mark = ","), "Linked cases", "head-side-cough", "primary"),
-      vb(format(as.numeric(s$linked_deaths), big.mark = ","), "Linked deaths", "skull", "danger"),
-      vb(ifelse(is.na(s$mean_cfr), "-", paste0(round(as.numeric(s$mean_cfr) * 100, 1), "%")), "Mean CFR", "percent", "warning"),
-      vb(s$n_countries, "Countries", "flag", "info"), vb(s$active_years, "Years active", "clock", "secondary"),
-      vb(ifelse(is.na(s$behavior_label), "-", gsub("_", " ", s$behavior_label)), "Behavior", "diagram-project", "success"))
+    sp <- strain_profile_r(); sel <- selected_strains()
+    if (is.null(sp) || !length(sel)) return(div(class = "text-muted", "Select strain(s) to compare."))
+    chip <- function(l, v) column(2, div(style = "padding:8px;background:#f8f9fa;border-radius:6px;text-align:center;min-height:58px;",
+      tags$small(class = "text-muted", l), div(style = "font-weight:600;font-size:0.95rem;", v)))
+    tagList(lapply(sel, function(st) {
+      s <- sp[sp$strain == st, ]; if (!nrow(s)) return(NULL); s <- s[1, ]
+      div(style = "margin-bottom:12px;",
+        div(style = "font-weight:600;margin-bottom:4px;", s$strain, tags$small(class = "text-muted", paste0("  ", s$strain_level))),
+        fluidRow(
+          chip("Linked cases", format(as.numeric(s$linked_cases), big.mark = ",")),
+          chip("Linked deaths", format(as.numeric(s$linked_deaths), big.mark = ",")),
+          chip("Mean CFR", ifelse(is.na(s$mean_cfr), "-", paste0(round(as.numeric(s$mean_cfr) * 100, 1), "%"))),
+          chip("Countries", s$n_countries),
+          chip("Years active", s$active_years),
+          chip("Behavior", ifelse(is.na(s$behavior_label), "-", gsub("_", " ", s$behavior_label)))))
+    }))
   })
-  output$ts_outbreak_table <- DT::renderDT({
-    df <- outbreak_r(); if (is.null(df) || !nrow(df)) return(nd("No outbreak data"))
-    DT::datatable(df %>% dplyr::mutate(cfr = round(as.numeric(cfr), 3)) %>% dplyr::arrange(dplyr::desc(start_year)) %>%
-      dplyr::select(start_year, country, admin1, cases, deaths, cfr, source_dataset), options = list(pageLength = 8, scrollX = TRUE), rownames = FALSE)
-  })
-
   # D. spread
   output$ts_spread_stats <- renderUI({
     s <- strain_row_r(); if (is.null(s)) return(div(class = "text-muted", "No spread metrics."))
@@ -436,58 +434,76 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
              st("Max extent", ifelse(is.na(s$max_spread_km), "-", paste0(round(as.numeric(s$max_spread_km), 0), " km"))),
              st("Countries", s$n_countries), st("Origin", ifelse(is.na(s$origin_country), "-", s$origin_country)))
   })
-  output$ts_timeline <- plotly::renderPlotly({
-    df <- strain_links_r(); if (is.null(df) || !nrow(df)) return(NULL)
-    d <- df %>% dplyr::filter(!is.na(background_collection_date), !is.na(background_country)) %>%
-      dplyr::mutate(yr = as.numeric(format(as.Date(background_collection_date), "%Y"))) %>%
-      dplyr::group_by(country = background_country, strain = background_strain) %>% dplyr::summarise(first = min(yr), n = dplyr::n(), .groups = "drop")
+  output$ts_outbreak_plot <- plotly::renderPlotly({
+    df <- outbreak_r(); if (is.null(df) || !nrow(df)) return(NULL)
+    d <- df %>% dplyr::filter(!is.na(start_year), !is.na(country)) %>%
+      dplyr::mutate(country = .ts_norm_country(country),
+                    cases = as.numeric(cases), deaths = as.numeric(deaths), cfr = as.numeric(cfr),
+                    mid = (cases + deaths) / 2,
+                    hover = paste0("<b>", country, "</b> ", start_year, "<br>Cases: ", cases, "  Deaths: ", deaths,
+                                   "<br>CFR: ", round(cfr * 100, 1), "%")) %>%
+      dplyr::arrange(start_year)
     if (!nrow(d)) return(NULL)
-    plotly::plot_ly(d, x = ~first, y = ~reorder(country, first), type = "scatter", mode = "markers", color = ~strain,
-                    colors = .ts_strain_pal(d$strain), marker = list(size = ~pmax(8, n * 4), opacity = 0.8),
-                    text = ~paste0(country, "<br>First: ", first, "<br>n=", n), hoverinfo = "text") %>%
-      plotly::layout(title = "First detection per country", xaxis = list(title = "Year"), yaxis = list(title = ""))
-  })
-  output$ts_strain_table <- DT::renderDT({
-    sp <- strain_profile_r(); if (is.null(sp) || !nrow(sp)) return(nd("No strain profiles"))
-    s <- sp %>% dplyr::select(strain, strain_level, n_genomes, n_countries, active_years, spread_rate_km_per_year, linked_cases, mean_cfr, behavior_label) %>%
-      dplyr::mutate(spread_rate_km_per_year = round(as.numeric(spread_rate_km_per_year), 1),
-                    mean_cfr = ifelse(is.na(mean_cfr), NA, paste0(round(as.numeric(mean_cfr) * 100, 1), "%"))) %>%
-      dplyr::arrange(dplyr::desc(as.numeric(linked_cases)))
-    DT::datatable(s, selection = "single", options = list(pageLength = 8, scrollX = TRUE), rownames = FALSE)
+    pal <- .ts_strain_pal(d$country)
+    xr <- range(d$start_year, na.rm = TRUE)
+
+    # dumbbell connectors (deaths -> cases), NA-separated so each is its own segment
+    seg <- do.call(rbind, lapply(seq_len(nrow(d)), function(i) {
+      r <- d[i, ]; data.frame(year = c(r$start_year, r$start_year, NA), n = c(r$deaths, r$cases, NA), country = r$country)
+    }))
+
+    dumb <- plotly::plot_ly() %>%
+      plotly::add_lines(data = seg, x = ~year, y = ~n, color = ~country, colors = pal,
+                        line = list(width = 1.4), showlegend = FALSE, hoverinfo = "none") %>%
+      plotly::add_markers(data = d, x = ~start_year, y = ~cases, color = ~country, colors = pal,
+                          marker = list(symbol = "circle", size = 10, line = list(width = 1, color = "#ffffff")),
+                          text = ~hover, hoverinfo = "text", showlegend = FALSE) %>%
+      plotly::add_markers(data = d, x = ~start_year, y = ~deaths, color = ~country, colors = pal,
+                          marker = list(symbol = "circle-open", size = 10, line = list(width = 2)),
+                          text = ~hover, hoverinfo = "text", showlegend = FALSE) %>%
+      plotly::add_text(data = d, x = ~start_year, y = ~mid, text = ~paste0("CFR ", round(cfr * 100), "%"),
+                       textposition = "middle right", textfont = list(size = 8, color = "#868e96"),
+                       showlegend = FALSE, hoverinfo = "none") %>%
+      plotly::layout(xaxis = list(range = c(xr[1] - 1, xr[2] + 1)),
+                     yaxis = list(title = "Cases / deaths", rangemode = "tozero"))
+
+    tl <- plotly::plot_ly(d, x = ~start_year, y = ~reorder(country, start_year), type = "scatter", mode = "markers",
+                          color = ~country, colors = pal,
+                          marker = list(size = ~pmax(7, sqrt(cases) * 1.3), opacity = 0.85,
+                                        line = list(width = 1, color = "#ffffff")),
+                          text = ~hover, hoverinfo = "text", showlegend = FALSE) %>%
+      plotly::layout(xaxis = list(title = "Year", range = c(xr[1] - 1, xr[2] + 1)),
+                     yaxis = list(title = ""))
+
+    plotly::subplot(dumb, tl, nrows = 2, shareX = TRUE, titleY = TRUE, heights = c(0.66, 0.34), margin = 0.05) %>%
+      plotly::layout(title = "Historical outbreaks — cases vs deaths (top) and outbreaks by country (bottom)",
+                     annotations = list(list(x = 0, y = 1.07, xref = "paper", yref = "paper", showarrow = FALSE,
+                                             xanchor = "left", font = list(size = 11, color = "#6c757d"),
+                                             text = "\u25CF cases   \u25CB deaths   \u2502 connected pair")))
   })
 
-  # E. epi curve
-  output$ts_epi_curve <- plotly::renderPlotly({
-    br <- burden_r(); st <- current_strain(); if (is.null(br) || !nrow(br)) return(NULL)
-    df <- br
-    if (!is.null(st) && "dominant_strain" %in% names(df)) { m <- dplyr::filter(df, dominant_strain == st | grepl(st, genome_strains, fixed = TRUE)); if (nrow(m)) df <- m }
-    df <- dplyr::filter(df, !is.na(week_start), !is.na(new_cases)); if (!nrow(df)) return(NULL)
-    plotly::plot_ly(df, x = ~week_start, y = ~new_cases, type = "bar", color = ~country,
-                    text = ~paste0(country, "/", admin1, "<br>", week_start, "<br>", new_cases), hoverinfo = "text") %>%
-      plotly::layout(barmode = "stack", title = paste("Weekly new cases", if (!is.null(st)) paste("-", st)), xaxis = list(title = "Week"), yaxis = list(title = "New cases"))
+  # auto-generated key takeaways for the outbreaks panel
+  output$ts_outbreak_takeaways <- renderUI({
+    df <- outbreak_r(); if (is.null(df) || !nrow(df)) return(NULL)
+    d <- df %>% dplyr::filter(!is.na(start_year), !is.na(country)) %>%
+      dplyr::mutate(country = .ts_norm_country(country),
+                    cases = as.numeric(cases), deaths = as.numeric(deaths), cfr = as.numeric(cfr))
+    if (!nrow(d)) return(NULL)
+    big <- d[which.max(d$cases), ]
+    cnt <- sort(table(d$country), decreasing = TRUE)
+    most <- names(cnt)[1]
+    hi_cfr <- round(100 * mean(d$cfr >= 0.7, na.rm = TRUE))
+    yrs <- range(d$start_year, na.rm = TRUE)
+    div(style = "background:#f8f9fa;border-left:4px solid #4A6C8C;border-radius:4px;padding:8px 12px;font-size:0.82rem;margin-top:6px;",
+        tags$strong("Key takeaways"),
+        tags$ul(style = "margin:4px 0 0 16px;padding:0;",
+                tags$li(paste0("Largest outbreak: ", big$country, " ", big$start_year, " — ", big$cases, " cases, ", big$deaths, " deaths (CFR ", round(big$cfr * 100), "%).")),
+                tags$li(paste0(most, " recorded the most outbreaks (", cnt[1], ").")),
+                tags$li(paste0(hi_cfr, "% of outbreaks had CFR \u2265 70%.")),
+                tags$li(paste0("Outbreaks span ", yrs[1], "\u2013", yrs[2], " across ", length(unique(d$country)), " countries."))))
   })
 
-  # F. expansion
-  output$ts_expansion_slider_ui <- renderUI({
-    df <- strain_links_r(); if (is.null(df) || !nrow(df)) return(NULL)
-    y <- suppressWarnings(as.numeric(format(as.Date(df$background_collection_date), "%Y"))); y <- y[!is.na(y)]
-    if (!length(y)) return(NULL)
-    sliderInput("ts_expansion_year", "Detections up to year:", min = min(y), max = max(y), value = max(y), step = 1, sep = "", animate = TRUE)
-  })
-  output$ts_expansion_map <- leaflet::renderLeaflet({
-    df <- strain_links_r(); m <- leaflet::leaflet() %>% leaflet::addTiles(); if (is.null(df) || !nrow(df)) return(m)
-    df <- .ts_fill_coords(df, "background_latitude", "background_longitude", "background_country")
-    d <- df %>% dplyr::filter(!is.na(background_latitude), !is.na(background_collection_date)) %>% dplyr::mutate(yr = as.numeric(format(as.Date(background_collection_date), "%Y")))
-    if (!nrow(d)) return(m)
-    if (!is.null(input$ts_expansion_year)) d <- dplyr::filter(d, yr <= input$ts_expansion_year)
-    if (!nrow(d)) return(m)
-    pal <- leaflet::colorFactor(.ts_strain_pal(d$background_strain), domain = d$background_strain)
-    m %>% leaflet::addCircleMarkers(data = d, ~background_longitude, ~background_latitude, radius = 6, color = ~pal(background_strain), fillOpacity = 0.7,
-      popup = ~paste0("<b>", background_sample, "</b><br>", background_country, "<br>", background_collection_date)) %>%
-      leaflet::addLegend(position = "bottomright", pal = pal, values = d$background_strain, title = "Strain")
-  })
-
-  # G. model
+  # D. model
   output$ts_model_cards <- renderUI({
     fit <- fit_r(); sc <- score_row_r()
     if (is.null(fit)) return(div(class = "text-muted", "Insufficient epi history to fit a growth model for this strain."))
@@ -544,30 +560,6 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   })
 
   # Surveillance tab
-  output$ts_burden_curve <- plotly::renderPlotly({
-    df <- burden_r(); if (is.null(df) || !nrow(df)) return(NULL)
-    df <- dplyr::filter(df, !is.na(new_cases), !is.na(week_start))
-    top <- df %>% dplyr::group_by(admin1) %>% dplyr::summarise(t = sum(new_cases, na.rm = TRUE), .groups = "drop") %>% dplyr::arrange(dplyr::desc(t)) %>% dplyr::slice_head(n = 8) %>% dplyr::pull(admin1)
-    df <- dplyr::filter(df, admin1 %in% top); if (!nrow(df)) return(NULL)
-    plotly::plot_ly(df, x = ~week_start, y = ~new_cases, type = "bar", color = ~admin1) %>% plotly::layout(barmode = "stack", title = "Weekly new cases", xaxis = list(title = "Week"), yaxis = list(title = "New cases"))
-  })
-  output$ts_hotspot_map <- leaflet::renderLeaflet({
-    df <- spatial_r(); m <- leaflet::leaflet() %>% leaflet::addTiles(); if (is.null(df) || !nrow(df)) return(m)
-    df <- .ts_fill_coords(df, "latitude", "longitude", "country")
-    d <- dplyr::filter(df, !is.na(latitude), !is.na(longitude)); if (!nrow(d)) return(m)
-    pal <- leaflet::colorNumeric("YlOrRd", domain = d$cases)
-    m %>% leaflet::addCircleMarkers(data = d, ~longitude, ~latitude, radius = ~pmax(4, log10(cases + 1) * 4), color = ~pal(cases), fillOpacity = 0.7,
-      popup = ~paste0("<b>", admin1, ", ", country, "</b><br>Cases: ", round(cases, 1), "<br>CFR: ", round(cfr * 100, 1), "%")) %>%
-      leaflet::addLegend(position = "bottomright", pal = pal, values = d$cases, title = "Cases")
-  })
-  output$ts_control_chart <- plotly::renderPlotly({
-    df <- burden_r(); if (is.null(df) || !nrow(df)) return(NULL)
-    top <- df %>% dplyr::group_by(admin1) %>% dplyr::summarise(t = sum(new_cases, na.rm = TRUE), .groups = "drop") %>% dplyr::arrange(dplyr::desc(t)) %>% dplyr::slice_head(n = 6) %>% dplyr::pull(admin1)
-    df <- dplyr::filter(df, admin1 %in% top, !is.na(new_cases), !is.na(ewma_ucl)); if (!nrow(df)) return(NULL)
-    plotly::plot_ly(df, x = ~week_start) %>% plotly::add_bars(y = ~new_cases, name = "New cases", marker = list(color = "rgba(74,108,140,0.4)")) %>%
-      plotly::add_lines(y = ~ewma, name = "EWMA", line = list(color = "#4A6C8C")) %>% plotly::add_lines(y = ~ewma_ucl, name = "UCL", line = list(color = "#dc3545", dash = "dot")) %>%
-      plotly::layout(title = "EWMA vs new cases + UCL", xaxis = list(title = "Week"), yaxis = list(title = "New cases"))
-  })
   output$ts_anomaly_table <- DT::renderDT({ df <- anomaly_r(); if (is.null(df) || !nrow(df)) nd("No anomalous weeks") else DT::datatable(df, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE) })
   output$ts_burden_table <- DT::renderDT({
     df <- burden_r(); if (is.null(df) || !nrow(df)) return(nd("No burden data"))
