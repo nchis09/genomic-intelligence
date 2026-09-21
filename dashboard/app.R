@@ -60,6 +60,7 @@ source("modules/pathogen_mutation_profile.R")
 source("modules/assessment.R")
 source("modules/placeholder.R")
 source("modules/pathogen_transmission.R")
+source("modules/pathogen_geographic.R")
 source("modules/home.R")
 
 # Serve repo-root assets (GIF logo, institution logos) without copying them
@@ -539,9 +540,9 @@ server <- function(input, output, session) {
       list(sidebarHeader("INTELLIGENCE OBJECTIVES")),
       list(pi_item),
       pg_items,
-      roadmap_items[1:6],
+      roadmap_items[1:4],
       list(sidebarHeader("EVIDENCE & REPORTING")),
-      roadmap_items[7:8]
+      roadmap_items[5:6]
     ))
   })
 
@@ -601,6 +602,8 @@ server <- function(input, output, session) {
         intelligence_brief_roadmap_ui(obj)
       } else if (identical(obj$id, "transmission_spread")) {
         transmission_ui()
+      } else if (identical(obj$id, "geographic_temporal")) {
+        geographic_temporal_ui()
       } else {
         roadmap_ui(obj)
       }
@@ -651,6 +654,8 @@ server <- function(input, output, session) {
 
   # Register Transmission & Spread outputs for the currently selected species.
   transmission_register(input, output, session, outdir_r, current_species, species_rv)
+  # Register Geographic & Temporal Context outputs for the currently selected species.
+  geographic_temporal_register(input, output, session, outdir_r, current_species)
 
   output$overview_body <- renderUI({
     overview_body_ui(!is.null(current_species()))
