@@ -222,14 +222,16 @@ transmission_content_ui <- function(species, outdir, all_species) {
           id = "ts_tabs",
           tabPanel(
             "Intelligence Brief", br(),
-            h4(icon("dna"), " A. Genomic relationship ", tags$small(class = "text-muted", "observed genomic evidence")),
+            h4(icon("chart-line"), " A. Closest relatives — outbreak impact over time ", tags$small(class = "text-muted", "observed history")),
             p(class = "text-muted", style = "font-size:0.85rem;",
-              "The new genome and its closest historical relatives — the genomic evidence behind the historical linkage."),
-            fluidRow(column(7, plotOutput("ts_tree", height = "420px")),
-                     column(5, h5("Closest historical genomes"), DT::DTOutput("ts_neighbors_table"))),
+              "Monthly reported cases and deaths per country — the epidemiological footprint of the lineages closest to the new genome."),
+            plotly::plotlyOutput("ts_neighbors_plot", height = "460px"),
             hr(),
-            h4(icon("map-location-dot"), " B. Where has it been found before? ", tags$small(class = "text-muted", "observed history")),
-            leaflet::leafletOutput("ts_detect_map", height = "380px"), br(),
+            h4(icon("map-location-dot"), " B. Genomic relationship & where it has been found ", tags$small(class = "text-muted", "observed history")),
+            p(class = "text-muted", style = "font-size:0.85rem;",
+              "The new genome and its closest historical relatives (tree) and the countries where they were detected (map)."),
+            fluidRow(column(5, plotOutput("ts_tree", height = "440px")),
+                     column(7, leaflet::leafletOutput("ts_detect_map", height = "440px"))), br(),
             h4(icon("chart-line"), " C. How did it behave historically? ", tags$small(class = "text-muted", "observed history")),
             uiOutput("ts_behavior_boxes"),
             h5("Historical outbreaks for this strain / species"), DT::DTOutput("ts_outbreak_table"), br(),
@@ -331,17 +333,14 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
   })
 
   output$ts_header_facts <- renderUI({
-    q <- query_row_r(); sc <- score_row_r(); if (is.null(q)) return(NULL)
-    risk <- if (!is.null(sc) && !is.na(sc$risk_label)) as.character(sc$risk_label) else "unknown"
-    rc <- switch(tolower(risk), high = "#dc3545", medium = "#fd7e14", low = "#198754", "#6c757d")
+    q <- query_row_r(); if (is.null(q)) return(NULL)
     cell <- function(l, v) column(2, tags$small(class = "text-muted", l), div(strong(v)))
     div(style = "margin-top:8px;padding:10px;background:#f8f9fa;border-radius:6px;", fluidRow(
       cell("Strain", ifelse(is.na(q$query_strain), "-", q$query_strain)),
       cell("Clade", ifelse(is.na(q$query_clade), "-", q$query_clade)),
       cell("Lineage", ifelse(is.na(q$query_lineage), "-", q$query_lineage)),
       cell("Outbreak", ifelse(is.na(q$query_outbreak), "-", q$query_outbreak)),
-      cell("Location", paste(ifelse(is.na(q$query_country), "-", q$query_country), ifelse(is.na(q$query_collection_date), "", q$query_collection_date))),
-      column(2, tags$small(class = "text-muted", "Risk"), div(tags$span(style = paste0("background:", rc, ";color:#fff;padding:2px 8px;border-radius:10px;font-weight:600;"), toupper(risk))))))
+      cell("Location", paste(ifelse(is.na(q$query_country), "-", q$query_country), ifelse(is.na(q$query_collection_date), "", q$query_collection_date)))))
   })
 
   # A. tree + neighbors
@@ -367,15 +366,30 @@ transmission_register <- function(input, output, session, outdir_r, current_spec
       theme(legend.position = "right", legend.text = element_text(size = 8)) + labs(title = "Query + closest historical genomes")
     xr <- layer_scales(p)$x$range$range; if (length(xr) == 2) p <- p + xlim(NA, xr[2] * 1.6); p
   })
-  output$ts_neighbors_table <- DT::renderDT({
-    df <- links_r(); if (is.null(df) || !nrow(df)) return(nd("No linked genomes"))
-    s <- df %>% dplyr::filter(!is.na(background_sample)) %>% dplyr::arrange(background_div_diff) %>%
-      dplyr::select(Sample = background_sample, Strain = background_strain, Country = background_country,
-                    Date = background_collection_date, `Div diff` = background_div_diff, `Dist km` = geo_distance_km,
-                    `Annual cases` = background_annual_cases, CFR = background_annual_cfr) %>%
-      dplyr::mutate(`Div diff` = round(as.numeric(`Div diff`), 4), `Dist km` = round(as.numeric(`Dist km`), 0),
-                    CFR = ifelse(is.na(CFR), NA, paste0(round(as.numeric(CFR) * 100, 1), "%")))
-    DT::datatable(s, options = list(pageLength = 8, scrollX = TRUE), rownames = FALSE)
+  output$ts_neighbors_plot <- plotly::renderPlotly({
+    br <- burden_r(); if (is.null(br) || !nrow(br)) return(NULL)
+    d <- br %>% dplyr::filter(!is.na(country), !is.na(week_start)) %>%
+      dplyr::mutate(month = as.Date(format(as.Date(week_start), "%Y-%m-01"))) %>%
+      dplyr::group_by(country, month) %>%
+      dplyr::summarise(cases = sum(as.numeric(new_cases), na.rm = TRUE),
+                       deaths = sum(as.numeric(new_deaths), na.rm = TRUE), .groups = "drop") %>%
+      dplyr::arrange(country, month)
+    if (!nrow(d)) return(NULL)
+    pal <- .ts_strain_pal(d$country)
+    mk <- function(metric, ttl) {
+      plotly::plot_ly(d, x = ~month, y = ~d[[metric]], color = ~country, colors = pal,
+                      type = "scatter", mode = "lines+markers",
+                      marker = list(size = 6), line = list(width = 1.8),
+                      text = ~paste0("<b>", country, "</b> — ", format(month, "%b %Y"),
+                                     "<br>", ttl, ": ", format(d[[metric]], big.mark = ",")),
+                      hoverinfo = "text", showlegend = (metric == "cases")) %>%
+        plotly::layout(xaxis = list(title = "", tickformat = "%b %Y"),
+                       yaxis = list(title = ttl, rangemode = "tozero"))
+    }
+    plotly::subplot(mk("cases", "Monthly cases"), mk("deaths", "Monthly deaths"),
+                    shareX = TRUE, titleY = TRUE, margin = 0.04) %>%
+      plotly::layout(title = "Reported cases & deaths by country over time",
+                     legend = list(orientation = "h", y = -0.18))
   })
 
   # B. map
