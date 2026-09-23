@@ -133,11 +133,17 @@ pathogen_genomics_ui <- function(species) {
             selected = "rectangular"
           ),
           hr(),
+          checkboxInput(
+            inputId = pg_id(species, "fit_view"),
+            label = "Fit tree to view",
+            value = TRUE
+          ),
           sliderInput(
             inputId = pg_id(species, "tip_height"),
-            label = "Tip spacing (px):",
+            label = "Tip spacing / vertical zoom (px):",
             min = 6, max = 30, value = 12, step = 2
           ),
+          tags$small(class = "text-muted", "Tip spacing applies when 'Fit tree to view' is off."),
           sliderInput(
             inputId = pg_id(species, "zoom"),
             label = "Horizontal zoom:",
@@ -151,6 +157,7 @@ pathogen_genomics_ui <- function(species) {
           width = 12,
           status = "primary",
           solidHeader = TRUE,
+          uiOutput(pg_id(species, "tree_note")),
           div(style = "min-height: 500px; overflow-y: auto;",
             uiOutput(pg_id(species, "interactive_tree_ui"))
           )
@@ -188,38 +195,171 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
     )
   })
 
-  # Dynamic plot height: scale with number of tips so annotations stay readable
-  output[[pg_id(sp, "interactive_tree_ui")]] <- renderUI({
+  # Parsed tree + joined tip metadata, shared by the plot and the LLM note.
+  # Only invalidates when the underlying DuckDB data changes.
+  tree_obj_r <- reactive({
     data <- tree_data_rv()
-    n_tips <- 30  # default
-    if (!is.null(data$trees) && is.null(data$error)) {
-      newick <- data$trees$newick[1]
-      if (!is.null(newick) && !is.na(newick) && nchar(newick) > 0) {
-        tmp <- tempfile(fileext = ".nwk")
-        writeLines(newick, tmp)
-        tr <- tryCatch(ape::read.tree(tmp), error = function(e) NULL)
-        unlink(tmp)
-        if (!is.null(tr)) n_tips <- length(tr$tip.label)
-      }
+    if (!is.null(data$error)) return(list(error = data$error))
+    if (is.null(data$trees)) return(list(error = "No tree data returned (unexpected NULL)."))
+    if (!requireNamespace("ape", quietly = TRUE))
+      return(list(error = "R package 'ape' is not installed."))
+
+    trees_df <- data$trees
+    tips_df <- data$tips
+
+    # Prefer the Nextstrain/Augur tree (full metadata); fall back to nextclade
+    non_iq <- trees_df[!grepl("iqtree", tolower(trees_df$tree_method)), , drop = FALSE]
+    priority <- c("nextstrain", "augur", "nextclade")
+    ranks <- match(tolower(non_iq$tree_method), priority, nomatch = 99)
+    selected_tree <- if (nrow(non_iq) == 0) {
+      trees_df[1, , drop = FALSE]
+    } else {
+      non_iq[order(ranks), ][1, , drop = FALSE]
     }
+
+    newick <- selected_tree$newick
+    if (is.na(newick) || nchar(trimws(newick)) == 0)
+      return(list(error = "Tree newick is empty."))
+
+    tmp <- tempfile(fileext = ".nwk")
+    writeLines(newick, tmp)
+    tr <- tryCatch(ape::read.tree(tmp), error = function(e) NULL)
+    unlink(tmp)
+    if (is.null(tr)) return(list(error = "Failed to parse tree newick."))
+
+    # Normalize tip labels to match the database's _clean_newick_name() format
+    tr$tip.label <- gsub("[,;():\\[\\] ]", "_", tr$tip.label)
+
+    # Ladderize + truncate extreme branch lengths so one long branch
+    # doesn't compress all other tips into a sliver
+    tr <- ape::ladderize(tr)
+    if (!is.null(tr$edge.length) && length(tr$edge.length) > 0) {
+      q95 <- quantile(tr$edge.length[tr$edge.length > 0], 0.95, na.rm = TRUE)
+      tr$edge.length[tr$edge.length > 3 * q95] <- 3 * q95
+    }
+
+    # Tip metadata for the selected tree; fall back to any tips of this species
+    tip_meta <- tips_df[tips_df$tree_id == selected_tree$tree_id, ]
+    if (nrow(tip_meta) == 0 && nrow(tips_df) > 0) {
+      tip_meta <- tips_df[!duplicated(tips_df$label), ]
+    }
+    keep_cols <- intersect(
+      c("label", "is_query", "clade", "outbreak", "country", "tip_date",
+        "genome_coverage", "nuc_mutation_count", "aa_mutation_count"),
+      names(tip_meta)
+    )
+    tip_meta <- tip_meta[, keep_cols, drop = FALSE]
+    tip_meta$label <- gsub("[,;():\\[\\] ]", "_", tip_meta$label)
+    tip_meta <- tip_meta[!duplicated(tip_meta$label), ]
+
+    message(sprintf("[pg] Tip join: %d/%d tree labels matched (%s, tree_id=%s)",
+                    sum(tr$tip.label %in% tip_meta$label), length(tr$tip.label),
+                    sp, selected_tree$tree_id))
+
+    tip_meta$clade[is.na(tip_meta$clade) | tip_meta$clade == ""] <- "Unknown"
+    tip_meta$outbreak[is.na(tip_meta$outbreak) | tip_meta$outbreak == ""] <- "Unknown"
+    tip_meta$country[is.na(tip_meta$country) | tip_meta$country == ""] <- "Unknown"
+    tip_meta$is_query[is.na(tip_meta$is_query)] <- FALSE
+    tip_meta$genome_coverage[is.na(tip_meta$genome_coverage)] <- 0
+    tip_meta$nuc_mutation_count[is.na(tip_meta$nuc_mutation_count)] <- 0
+
+    list(tr = tr, tree_id = selected_tree$tree_id,
+         tree_method = selected_tree$tree_method, tip_meta = tip_meta)
+  })
+
+  # -- LLM interpretation note (local Ollama, deterministic template fallback) --
+  evo_summary_r <- reactive({
+    obj <- tree_obj_r()
+    if (!is.null(obj$error) || is.null(obj$tr)) return(NULL)
+    tryCatch(.pg_evo_summary(obj$tr, obj$tip_meta), error = function(e) {
+      message("[pg] evo summary failed: ", e$message)
+      NULL
+    })
+  })
+
+  note_rv <- reactiveVal(NULL)
+  note_busy <- reactiveVal(FALSE)
+
+  # Pre-generated note written by the pipeline's GENERATE_TREE_NOTES step
+  # (results/pathogen_genomics/<species>/tree_note.json). Read once — the
+  # dashboard prefers it so no live Ollama call is needed at view time.
+  pregen_note <- reactive({
+    f <- file.path(outdir(), "pathogen_genomics", sp, "tree_note.json")
+    if (!file.exists(f) || !requireNamespace("jsonlite", quietly = TRUE))
+      return(NULL)
+    tryCatch({
+      j <- jsonlite::fromJSON(readLines(f, warn = FALSE), simplifyVector = FALSE)
+      if (is.null(j$text) || !nzchar(j$text)) return(NULL)
+      list(text = j$text, source = j$source %||% "template",
+           model = j$model, error = j$error)
+    }, error = function(e) NULL)
+  })
+
+  gen_note <- function(live_only = FALSE) {
+    s <- evo_summary_r()
+    if (is.null(s)) return()
+    if (!live_only) {
+      pg <- pregen_note()
+      if (!is.null(pg)) { note_rv(pg); return() }
+    }
+    note_busy(TRUE)
+    on.exit(note_busy(FALSE), add = TRUE)
+    note_rv(tryCatch(.pg_tree_note(s), error = function(e)
+      list(text = .pg_note_template(s), source = "template",
+           model = NULL, error = e$message)))
+  }
+
+  # Auto-generate once per tree load (summary only invalidates on data change)
+  observeEvent(evo_summary_r(), gen_note())
+  # Regenerate always calls the LLM live, bypassing the pre-generated file
+  observeEvent(input[[pg_id(sp, "regen_note")]], gen_note(live_only = TRUE),
+               ignoreInit = TRUE)
+
+  output[[pg_id(sp, "tree_note")]] <- renderUI({
+    if (is.null(evo_summary_r())) return(NULL)
+    n <- note_rv()
+    regen <- actionLink(pg_id(sp, "regen_note"), "Regenerate",
+                        style = "font-size:0.75rem;")
+    if (is.null(n)) {
+      return(div(style = "background:#f8f9fa;border-left:4px solid #4A6C8C;border-radius:4px;padding:8px 12px;font-size:0.85rem;margin-bottom:8px;",
+        tags$em(class = "text-muted",
+                if (isTRUE(note_busy())) "Generating interpretation\u2026" else "Interpretation pending\u2026"),
+        " ", regen))
+    }
+    badge <- if (identical(n$source, "ollama")) {
+      tags$span(class = "badge badge-info", style = "margin-right:6px;",
+                paste0("AI \u00b7 ", n$model))
+    } else {
+      tags$span(class = "badge badge-secondary", style = "margin-right:6px;",
+                "Auto-summary")
+    }
+    div(style = "background:#eef4f8;border-left:4px solid #4A6C8C;border-radius:4px;padding:10px 12px;font-size:0.85rem;margin-bottom:8px;",
+      div(style = "margin-bottom:4px;", badge, regen),
+      div(n$text),
+      if (!is.null(n$error)) {
+        tags$small(class = "text-muted", style = "display:block;margin-top:4px;",
+                   paste0("LLM note: ", n$error))
+      })
+  })
+
+  # Dynamic plot height: fit-to-view compresses the whole tree into the
+  # visible panel; otherwise scale with tip count so annotations stay readable
+  output[[pg_id(sp, "interactive_tree_ui")]] <- renderUI({
+    obj <- tree_obj_r()
+    n_tips <- if (!is.null(obj$tr)) length(obj$tr$tip.label) else 30
     tip_h <- input[[pg_id(sp, "tip_height")]]
     if (is.null(tip_h)) tip_h <- 12
-    plot_h <- max(500, n_tips * tip_h)
+    fit <- isTRUE(input[[pg_id(sp, "fit_view")]])
+    plot_h <- if (fit) 700 else min(20000, max(500, n_tips * tip_h))
     plotOutput(pg_id(sp, "interactive_tree"), height = paste0(plot_h, "px"))
   })
 
   output[[pg_id(sp, "interactive_tree")]] <- renderPlot({
     tryCatch({
-    data <- tree_data_rv()
-    if (!is.null(data$error)) {
+    obj <- tree_obj_r()
+    if (!is.null(obj$error)) {
       plot.new()
-      text(0.5, 0.5, paste0("No tree data available.\n\n", data$error),
-           cex = 1.1, col = "#6c757d")
-      return()
-    }
-    if (is.null(data$trees)) {
-      plot.new()
-      text(0.5, 0.5, "No tree data returned (unexpected NULL).",
+      text(0.5, 0.5, paste0("No tree data available.\n\n", obj$error),
            cex = 1.1, col = "#6c757d")
       return()
     }
@@ -236,53 +376,8 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
     library(ape)
     library(ggtree)
 
-    # Select tree based on user choice
-    tree_choice <- input[[pg_id(sp, "tree_select")]]
-    trees_df <- data$trees
-    tips_df <- data$tips
-
-    # Prefer the Nextstrain/Augur tree (it has full metadata); fall back to nextclade
-    non_iq <- trees_df[!grepl("iqtree", tolower(trees_df$tree_method)), , drop = FALSE]
-    priority <- c("nextstrain", "augur", "nextclade")
-    ranks <- match(tolower(non_iq$tree_method), priority, nomatch = 99)
-    selected_tree <- if (nrow(non_iq) == 0) {
-      trees_df[1, , drop = FALSE]
-    } else {
-      non_iq[order(ranks), ][1, , drop = FALSE]
-    }
-
-    newick <- selected_tree$newick
-    tree_id <- selected_tree$tree_id
-
-    if (is.na(newick) || nchar(trimws(newick)) == 0) {
-      plot.new()
-      text(0.5, 0.5, "Tree newick is empty.", cex = 1.2, col = "#6c757d")
-      return()
-    }
-
-    # Parse newick
-    tmp <- tempfile(fileext = ".nwk")
-    writeLines(newick, tmp)
-    tr <- tryCatch(ape::read.tree(tmp), error = function(e) NULL)
-    unlink(tmp)
-
-    if (is.null(tr)) {
-      plot.new()
-      text(0.5, 0.5, "Failed to parse tree newick.", cex = 1.2, col = "#6c757d")
-      return()
-    }
-
-    # Normalize tip labels: replace Newick metacharacters and spaces with _
-    # so they match the _clean_newick_name() format used by the database.
-    tr$tip.label <- gsub("[,;():\\[\\] ]", "_", tr$tip.label)
-
-    # Ladderize for cleaner layout, and truncate extreme branch lengths
-    # so one long branch doesn't compress all other tips into a sliver.
-    tr <- ape::ladderize(tr)
-    if (!is.null(tr$edge.length) && length(tr$edge.length) > 0) {
-      q95 <- quantile(tr$edge.length[tr$edge.length > 0], 0.95, na.rm = TRUE)
-      tr$edge.length[tr$edge.length > 3 * q95] <- 3 * q95
-    }
+    tr <- obj$tr
+    tip_meta <- obj$tip_meta
 
     # Get annotations selection
     annotations <- input[[pg_id(sp, "annotations")]]
@@ -315,35 +410,6 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
     }
 
     # Join tip metadata — prefix columns to avoid ggtree name collisions.
-    # If the selected tree has no tips (e.g. IQ-TREE trees don't store tips
-    # separately), fall back to tips from another tree of the same species.
-    tip_meta <- tips_df[tips_df$tree_id == tree_id, ]
-    if (nrow(tip_meta) == 0 && nrow(tips_df) > 0) {
-      tip_meta <- tips_df[!duplicated(tips_df$label), ]
-    }
-    keep_cols <- intersect(
-      c("label", "is_query", "clade", "outbreak", "country", "tip_date",
-        "genome_coverage", "nuc_mutation_count", "aa_mutation_count"),
-      names(tip_meta)
-    )
-    tip_meta <- tip_meta[, keep_cols, drop = FALSE]
-    # Also normalize database labels to match the tree tip cleaning
-    tip_meta$label <- gsub("[,;():\\[\\] ]", "_", tip_meta$label)
-    tip_meta <- tip_meta[!duplicated(tip_meta$label), ]
-
-    # Log match rate for debugging
-    tree_labels <- tr$tip.label
-    matched <- sum(tree_labels %in% tip_meta$label)
-    message(sprintf("[pg] Tip join: %d/%d tree labels matched (%s, tree_id=%s)",
-                    matched, length(tree_labels), sp, tree_id))
-
-    tip_meta$clade[is.na(tip_meta$clade) | tip_meta$clade == ""] <- "Unknown"
-    tip_meta$outbreak[is.na(tip_meta$outbreak) | tip_meta$outbreak == ""] <- "Unknown"
-    tip_meta$country[is.na(tip_meta$country) | tip_meta$country == ""] <- "Unknown"
-    tip_meta$is_query[is.na(tip_meta$is_query)] <- FALSE
-    tip_meta$genome_coverage[is.na(tip_meta$genome_coverage)] <- 0
-    tip_meta$nuc_mutation_count[is.na(tip_meta$nuc_mutation_count)] <- 0
-
     if (nrow(tip_meta) > 0) {
       # Prefix non-label columns to avoid collision with ggtree internal data
       ann <- tip_meta
@@ -427,7 +493,7 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
       }
 
       # Bootstrap support (IQ-TREE only)
-      if ("bootstrap" %in% annotations && grepl("iqtree", tolower(selected_tree$tree_method))) {
+      if ("bootstrap" %in% annotations && grepl("iqtree", tolower(obj$tree_method))) {
         n_tips <- length(tr$tip.label)
         if (!is.null(tr$node.label) && length(tr$node.label) > 0) {
           bs_vals <- suppressWarnings(as.numeric(tr$node.label))

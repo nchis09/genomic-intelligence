@@ -21,7 +21,7 @@
 local({
   cran_pkgs <- c("shiny", "bs4Dash", "fresh", "DT", "readr", "dplyr", "tidyr",
                  "ggplot2", "ggrepel", "gridExtra", "scales", "plotly", "yaml",
-                 "DBI", "duckdb", "leaflet",
+                 "DBI", "duckdb", "leaflet", "httr", "jsonlite",
                  "RColorBrewer", "ape", "ggnewscale")
   bioc_pkgs <- c("treeio", "ggtree")
 
@@ -55,6 +55,7 @@ suppressPackageStartupMessages({
 })
 
 source("modules/pathogen_identification.R")
+source("modules/llm_note.R")
 source("modules/pathogen_genomics.R")
 source("modules/pathogen_mutation_profile.R")
 source("modules/assessment.R")
