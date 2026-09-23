@@ -11,6 +11,7 @@ include { MUTATION_PROFILE_WF    } from '../subworkflows/local/mutation_profile/
 
 include { REPORTING              } from '../subworkflows/local/reporting/main'
 include { COMPUTE_TRANSMISSION_CONTEXT } from '../modules/local/compute_transmission_context/main'
+include { GENERATE_TREE_NOTES          } from '../modules/local/generate_tree_notes/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -136,6 +137,19 @@ workflow GENOMIC_INTELLIGENCE {
                 .combine(ch_duckdb_dump)
                 .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
             COMPUTE_TRANSMISSION_CONTEXT(ch_transmission_input)
+        }
+
+        // Pre-generate the LLM tree-interpretation note per species so the
+        // dashboard renders it instantly (falls back to a template note when
+        // Ollama is unreachable — the JSON is always written).
+        if (!params.skip_tree_notes) {
+            ch_tree_notes_input = ch_knowledge_db
+                .combine(ch_duckdb_dump)
+                .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
+            GENERATE_TREE_NOTES(
+                ch_tree_notes_input,
+                file("${projectDir}/dashboard/modules/llm_note.R")
+            )
         }
 
     }

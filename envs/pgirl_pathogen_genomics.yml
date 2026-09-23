@@ -14,6 +14,7 @@ dependencies:
   - r-tidyr
   - r-readr
   - r-jsonlite
+  - r-httr
   - r-ape
   - r-betapart
   - r-vegan
