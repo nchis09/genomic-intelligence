@@ -18,7 +18,7 @@ process PATHOGEN_MUTATION_PROFILE {
     path translations_dir, stageAs: 'translations'
 
     output:
-    path "mutation_profile/*.tsv",         emit: tsv
+    tuple val(meta), path("mutation_profile"),         emit: tsv
     path "mutation_profile/mqc/*_mqc.tsv", emit: mqc_tsv
 
     script:

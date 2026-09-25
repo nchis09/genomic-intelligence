@@ -317,7 +317,9 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
 # ---------------------------------------------------------------------------
 # Ollama call
 # ---------------------------------------------------------------------------
-.ollama_note <- function(summary, timeout = 60) {
+# Generic Ollama /api/generate call: resolves the model (first installed when
+# PG_OLLAMA_MODEL is unset), posts the prompt, returns list(text, source, model, error).
+.ollama_generate <- function(prompt, num_predict = 350, timeout = 60) {
   fail <- function(e) list(text = NULL, source = "none", model = NULL, error = e)
   if (!requireNamespace("httr", quietly = TRUE) || !requireNamespace("jsonlite", quietly = TRUE))
     return(fail("httr/jsonlite not installed"))
@@ -341,6 +343,29 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
     if (!length(models)) return(fail("No Ollama models installed (ollama pull <model>)"))
     model <- models[1]
   }
+
+  body <- list(model = model, prompt = prompt, stream = FALSE,
+               options = list(temperature = 0.3, num_predict = num_predict))
+  resp <- tryCatch(
+    httr::POST(paste0(host, "/api/generate"),
+               body = jsonlite::toJSON(body, auto_unbox = TRUE),
+               httr::content_type_json(), httr::timeout(timeout)),
+    error = function(e) e
+  )
+  if (inherits(resp, "error")) return(fail(paste0("Ollama request failed: ", resp$message)))
+  if (httr::status_code(resp) != 200)
+    return(fail(paste0("Ollama HTTP ", httr::status_code(resp))))
+
+  txt <- tryCatch(
+    jsonlite::fromJSON(httr::content(resp, "text", encoding = "UTF-8"))$response,
+    error = function(e) NULL
+  )
+  if (is.null(txt) || !nzchar(trimws(txt))) return(fail("Empty Ollama response"))
+  list(text = trimws(txt), source = "ollama", model = model, error = NULL)
+}
+
+.ollama_note <- function(summary, timeout = 60) {
+  fail <- function(e) list(text = NULL, source = "none", model = NULL, error = e)
 
   # Send the grouped view only — per-query neighbour lists duplicate the same
   # records and push the LLM towards one repetitive sentence per genome.
@@ -368,24 +393,7 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
     "SUMMARY:\n", facts
   )
 
-  body <- list(model = model, prompt = prompt, stream = FALSE,
-               options = list(temperature = 0.3, num_predict = 350))
-  resp <- tryCatch(
-    httr::POST(paste0(host, "/api/generate"),
-               body = jsonlite::toJSON(body, auto_unbox = TRUE),
-               httr::content_type_json(), httr::timeout(timeout)),
-    error = function(e) e
-  )
-  if (inherits(resp, "error")) return(fail(paste0("Ollama request failed: ", resp$message)))
-  if (httr::status_code(resp) != 200)
-    return(fail(paste0("Ollama HTTP ", httr::status_code(resp))))
-
-  txt <- tryCatch(
-    jsonlite::fromJSON(httr::content(resp, "text", encoding = "UTF-8"))$response,
-    error = function(e) NULL
-  )
-  if (is.null(txt) || !nzchar(trimws(txt))) return(fail("Empty Ollama response"))
-  list(text = trimws(txt), source = "ollama", model = model, error = NULL)
+  .ollama_generate(prompt, num_predict = 350, timeout = timeout)
 }
 
 # ---------------------------------------------------------------------------
@@ -397,5 +405,81 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
   r <- .ollama_note(summary)
   if (!is.null(r$text) && nzchar(r$text)) return(r)
   list(text = .pg_note_template(summary), source = "template",
+       model = r$model, error = r$error)
+}
+
+# ---------------------------------------------------------------------------
+# Transmission & Spread assessment (per query genome)
+# ---------------------------------------------------------------------------
+# `facts` is a flat named list assembled by the caller from the transmission
+# context tables: identity, historical strain profile, epi context (R(t),
+# growth phase, sampling fraction), genetic cluster, inferred origin,
+# branching-process projection and growth-model fit. NULL/NA entries are
+# dropped before serialization.
+
+# Deterministic fallback — mirrors the dashboard's observed/model-derived text.
+.pg_spread_facts_template <- function(facts) {
+  f <- function(k) facts[[k]] %||% NULL
+  strain <- if (is.null(f("query_strain")) || is.na(f("query_strain")))
+    "an uncharacterized strain" else f("query_strain")
+  obs <- if (!is.null(f("strain_linked_cases")))
+    sprintf("Historically, %s caused %s cases and %s deaths across %s countries over %s year(s), classified as %s.",
+            strain, format(as.numeric(f("strain_linked_cases")), big.mark = ","),
+            format(as.numeric(f("strain_linked_deaths")), big.mark = ","),
+            f("strain_n_countries"), f("strain_active_years"),
+            gsub("_", " ", f("strain_behavior_label") %||% "unknown"))
+    else "No historical strain profile is available."
+  mdl <- if (!is.null(f("fit_r_week")))
+    sprintf("Fitting a growth model to %s's observed epidemic curve gives a growth rate of %.2f cases/week (doubling every %.1f days) and an estimated outbreak size of ~%s cases; projected forward under the selected scenario.",
+            strain, as.numeric(f("fit_r_week")), as.numeric(f("fit_doubling_days")),
+            format(round(as.numeric(f("fit_K"))), big.mark = ","))
+    else if (!is.null(f("proj_r_used")))
+      sprintf("A branching-process projection for %s uses R = %.2f under the baseline scenario.",
+              f("proj_country") %||% "the query's inferred origin", as.numeric(f("proj_r_used")))
+    else "No model projection is available."
+  # Labels let the dashboard render the same OBSERVED/MODEL-DERIVED badges as LLM output.
+  paste0("OBSERVED — Query ", f("query_sample"), " is strain ", strain, ". ", obs,
+         "\nMODEL-DERIVED — ", mdl)
+}
+
+.ollama_spread_assessment <- function(facts, timeout = 60) {
+  fail <- function(e) list(text = NULL, source = "none", model = NULL, error = e)
+  facts <- facts[!vapply(facts, function(x) is.null(x) || (length(x) == 1 && is.na(x)), logical(1))]
+  facts_json <- tryCatch(
+    jsonlite::toJSON(facts, auto_unbox = TRUE, na = "null", pretty = FALSE),
+    error = function(e) NULL
+  )
+  if (is.null(facts_json)) return(fail("Could not serialize facts"))
+
+  prompt <- paste0(
+    "You are a genomic epidemiologist writing a Transmission & Spread ",
+    "Assessment of a query pathogen genome for a public-health reader. ",
+    "Below is a JSON object of computed facts about the query.\n\n",
+    "Write exactly two short paragraphs, each starting with the label shown:\n",
+    "OBSERVED — what the historical/genomic evidence shows: the strain's past ",
+    "burden (cases, deaths, countries, years active, behaviour class), the ",
+    "query's genetic cluster membership, and its inferred geographic origin.\n",
+    "MODEL-DERIVED — what the models project: the estimated R at sampling, ",
+    "growth phase, projected weekly cases under the baseline scenario, and ",
+    "the growth-model fit, with one sentence on the uncertainty.\n\n",
+    "Rules: use ONLY the numbers given — never invent figures. If a field is ",
+    "absent, do not mention it. When the historical record is sparse (e.g. ",
+    "zero recorded cases), say the projection is unreliable rather than ",
+    "stating it confidently. Plain language, no jargon, no markdown, no ",
+    "bullet points.\n\n",
+    "FACTS:\n", facts_json
+  )
+
+  .ollama_generate(prompt, num_predict = 400, timeout = timeout)
+}
+
+# Orchestrator: LLM first, deterministic template fallback.
+.pg_spread_assessment <- function(facts) {
+  if (is.null(facts) || is.null(facts$query_sample))
+    return(list(text = "No assessment data available.", source = "none",
+                model = NULL, error = NULL))
+  r <- .ollama_spread_assessment(facts)
+  if (!is.null(r$text) && nzchar(r$text)) return(r)
+  list(text = .pg_spread_facts_template(facts), source = "template",
        model = r$model, error = r$error)
 }

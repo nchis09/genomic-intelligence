@@ -25,7 +25,7 @@ ROADMAP_OBJECTIVES <- list(
        icon = "magnifying-glass",
        desc = "Supporting literature, evidence strength, and open knowledge gaps behind the current assessment."),
   list(id = "intelligence_brief", label = "Intelligence Brief",
-       icon = "file-lines",
+       icon = "file-lines", status = "Live",
        desc = "A concise, standardized brief communicating the assessment, confidence, key findings and priority actions to decision-makers.")
 )
 
@@ -71,27 +71,7 @@ roadmap_tile_ui <- function(objective) {
   )
 }
 
-# Intelligence Brief's own roadmap tab: same "Planned" framing as the other
-# objectives, but with an added UI-only scaffold for the intended "preview &
-# edit before export" flow -- no real brief content or PDF rendering yet
-# (there's no data source behind it), just the interaction pattern in place
-# so it's easy to wire up later. The button opens a modalDialog (see
-# app.R's observeEvent(input$brief_preview_open, ...)).
-intelligence_brief_roadmap_ui <- function(objective) {
-  tagList(
-    roadmap_ui(objective),
-    bs4Dash::bs4Card(
-      title = "Export", width = 12, status = "secondary",
-      p(
-        style = "color: #6c757d;",
-        "Once the Intelligence Brief has real content, exporting will open an",
-        "editable preview so the brief can be reviewed and adjusted before it's",
-        "printed or shared. The button below previews that interaction pattern."
-      ),
-      actionButton("brief_preview_open", "Preview & Edit Brief", icon = icon("file-lines"))
-    )
-  )
-}
+
 
 # The one "Live" tile in the Intelligence Overview's roadmap strip --
 # Biological Threat, the only objective with a wired data source today.
@@ -128,34 +108,39 @@ pathogen_genomics_tile_ui <- function() {
   )
 }
 
-# Placeholder skeleton shown inside the preview/edit modal -- editable, but
-# not backed by real data yet.
-intelligence_brief_preview_modal <- function() {
+# Preview/edit modal for the Intelligence Brief. The textarea is pre-filled
+# with the generated brief text (brief_markdown()); edits are what get
+# exported — the pipeline JSON stays untouched. "Download .md" saves the
+# current textarea content; "Print / Save as PDF" opens a minimal window
+# containing just the brief text and triggers the browser print dialog.
+intelligence_brief_preview_modal <- function(content = NULL) {
   modalDialog(
     title = "Preview & Edit Brief",
     size = "l",
     easyClose = TRUE,
     p(
       style = "color: #6c757d; font-size: 0.85rem;",
-      "This is a placeholder preview \u2014 content will be generated from the",
-      "assessment once the Intelligence Brief objective is wired in."
+      "Generated from the pipeline's intelligence_brief.json — edit freely",
+      "before exporting; the underlying file is not modified."
     ),
     textAreaInput(
       "brief_preview_text", label = NULL, width = "100%", height = "320px",
-      value = paste(
-        "SPECIES / ASSESSMENT\n[to be filled in]\n\n",
-        "CONFIDENCE\n[to be filled in]\n\n",
-        "KEY FINDINGS\n[to be filled in]\n\n",
-        "RECOMMENDED ACTIONS\n[to be filled in]",
-        sep = ""
-      )
+      value = content %||% "No intelligence brief content available."
     ),
     footer = tagList(
       modalButton("Close"),
+      downloadButton("brief_download", "Download .md",
+                     class = "btn-outline-secondary"),
       actionButton(
         "brief_export_pdf", "Print / Save as PDF",
-        icon = icon("file-pdf"), class = "btn-secondary disabled",
-        title = "Available once Intelligence Brief content is wired in"
+        icon = icon("file-pdf"), class = "btn-secondary",
+        onclick = paste(
+          "var t=document.getElementById('brief_preview_text').value;",
+          "var w=window.open('','_blank');",
+          "w.document.write('<pre style=\"font-family:monospace;white-space:pre-wrap\">'",
+          "+ t.replace(/&/g,'&amp;').replace(/</g,'&lt;') +'</pre>');",
+          "w.document.close(); w.print();"
+        )
       )
     )
   )
