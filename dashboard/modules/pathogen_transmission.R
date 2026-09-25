@@ -251,33 +251,36 @@ transmission_content_ui <- function(sp, outdir) {
               "Monthly reported cases and deaths per country — the epidemiological footprint of the lineages closest to the new genome."),
             plotly::plotlyOutput(ns("ts_neighbors_plot"), height = "460px"),
             hr(),
-            h4(icon("chart-line"), " C. How did it behave historically? ", tags$small(class = "text-muted", "observed history")),
+            h4(icon("wave-square"), " C. Transmission intensity where this genome sits ", tags$small(class = "text-muted", "estimated R(t)")),
+            p(class = "text-muted", style = "font-size:0.85rem;",
+              "Time-varying reproduction number in the query's location — whether the outbreak it belongs to was growing or fading when sampled."),
+            plotly::plotlyOutput(ns("ts_rt_plot"), height = "300px"),
+            uiOutput(ns("ts_rt_takeaway")),
+            hr(),
+            h4(icon("people-group"), " D. Genetic transmission cluster ", tags$small(class = "text-muted", "tree-derived")),
+            p(class = "text-muted", style = "font-size:0.85rem;",
+              "Genomes sharing the query's transmission cluster (patristic-distance threshold on the tree)."),
+            uiOutput(ns("ts_cluster_panel")),
+            hr(),
+            h4(icon("chart-line"), " E. How did it behave historically? ", tags$small(class = "text-muted", "observed history")),
             fluidRow(column(3, uiOutput(ns("ts_strain_sel_ui"))), column(9, uiOutput(ns("ts_behavior_boxes")))), br(),
-            h4(icon("chart-area"), " D. What might happen next? ", tags$small(class = "badge badge-warning", "MODEL-DERIVED PROJECTION")),
+            h4(icon("chart-area"), " F. What might happen next? ", tags$small(class = "badge badge-warning", "MODEL-DERIVED PROJECTION")),
             div(class = "alert alert-warning", style = "font-size:0.82rem; padding:8px 12px;",
                 icon("triangle-exclamation"), strong(" Model-derived projection. "),
-                "A logistic growth model is fitted to the linked strain's observed historical epidemic curve, then projected forward under the selected scenario. The shaded band is the 95% uncertainty interval; it widens with lead time. This is a model-derived estimate, not a validated forecast."),
+                "A branching-process model projects weekly cases in the query's location 8 weeks ahead using the estimated reproduction number and the serial interval. The shaded band is the 95% prediction interval. This is a model-derived estimate, not a validated forecast."),
             uiOutput(ns("ts_model_cards")),
             fluidRow(column(4,
                             selectInput(ns("ts_scenario"), "Scenario:",
                                         choices = c("Baseline (as observed)" = "baseline",
                                                     "Contained (rapid control)" = "contained",
                                                     "Expanded (sustained spread)" = "expanded"),
-                                        selected = "baseline", selectize = FALSE),
-                            sliderInput(ns("ts_horizon"), "Projection horizon (days):", min = 60, max = 365, value = 180, step = 30)),
+                                        selected = "baseline", selectize = FALSE)),
                      column(8, plotly::plotlyOutput(ns("ts_projection"), height = "320px"))),
             hr(),
-            h4(icon("magnifying-glass-chart"), " E. Why this assessment? ", tags$small(class = "text-muted", "drivers")),
+            h4(icon("magnifying-glass-chart"), " G. Why this assessment? ", tags$small(class = "text-muted", "drivers")),
             uiOutput(ns("ts_drivers")), br(),
-            h4(icon("file-medical"), " F. Transmission & Spread Assessment"),
+            h4(icon("file-medical"), " H. Transmission & Spread Assessment"),
             uiOutput(ns("ts_assessment"))
-          ),
-          tabPanel(
-            "Surveillance Data", br(),
-            p(class = "text-muted", style = "font-size:0.85rem;",
-              "Raw weekly epidemiological burden and anomaly flags for transparency and auditability."),
-            h5("Flagged anomalous weeks"), DT::DTOutput(ns("ts_anomaly_table")),
-            br(), h5("Weekly burden table"), DT::DTOutput(ns("ts_burden_table"))
           )
         )
       )
@@ -309,6 +312,17 @@ transmission_register <- function(input, output, session, sp, outdir_r) {
   outbreak_r <- rd("transmission_outbreak_summary.tsv")
   burden_r <- reactive({ df <- .ts_read(outdir_r(), selected_species(), "transmission_burden.tsv"); if (!is.null(df)) df$week_start <- as.Date(df$week_start); df })
   anomaly_r <- reactive({ df <- .ts_read(outdir_r(), selected_species(), "transmission_anomaly.tsv"); if (!is.null(df) && "week_start" %in% names(df)) df$week_start <- as.Date(df$week_start); df })
+  rt_r <- reactive({ df <- .ts_read(outdir_r(), selected_species(), "transmission_rt.tsv"); if (!is.null(df) && "week_start" %in% names(df)) df$week_start <- as.Date(df$week_start); df })
+  qctx_r <- rd("query_epi_context.tsv"); clusters_r <- rd("genetic_clusters.tsv")
+  cprofile_r <- rd("query_cluster_profile.tsv"); proj_r <- rd("query_projection.tsv")
+  source_r <- rd("query_source_inference.tsv")
+  # Pre-generated per-query LLM assessment (spread_assessment.json)
+  assessment_r <- reactive({
+    sp <- selected_species(); if (is.null(sp)) return(NULL)
+    p <- file.path(outdir_r(), "transmission_context", sp, "spread_assessment.json")
+    if (!file.exists(p) || !requireNamespace("jsonlite", quietly = TRUE)) return(NULL)
+    tryCatch(jsonlite::fromJSON(p, simplifyVector = FALSE)$assessments, error = function(e) NULL)
+  })
 
   query_samples_r <- reactive({ p <- potential_r(); if (is.null(p)) NULL else sort(unique(stats::na.omit(p$query_sample))) })
   output[[ns("ts_query_select_ui")]] <- renderUI({
@@ -319,6 +333,9 @@ transmission_register <- function(input, output, session, sp, outdir_r) {
   links_r <- reactive({ p <- potential_r(); sq <- selected_query(); if (is.null(p) || is.null(sq)) NULL else dplyr::filter(p, query_sample == sq) })
   query_row_r <- reactive({ df <- links_r(); if (is.null(df) || !nrow(df)) NULL else df[1, ] })
   score_row_r <- reactive({ sc <- score_r(); sq <- selected_query(); if (is.null(sc) || is.null(sq)) NULL else { d <- dplyr::filter(sc, query_sample == sq); if (nrow(d)) d[1, ] else NULL } })
+  qctx_row_r <- reactive({ df <- qctx_r(); sq <- selected_query(); if (is.null(df) || is.null(sq)) NULL else { d <- dplyr::filter(df, query_sample == sq); if (nrow(d)) d[1, ] else NULL } })
+  cprofile_row_r <- reactive({ df <- cprofile_r(); sq <- selected_query(); if (is.null(df) || is.null(sq)) NULL else { d <- dplyr::filter(df, query_sample == sq); if (nrow(d)) d[1, ] else NULL } })
+  source_row_r <- reactive({ df <- source_r(); sq <- selected_query(); if (is.null(df) || is.null(sq)) NULL else { d <- dplyr::filter(df, query_sample == sq); if (nrow(d)) d[1, ] else NULL } })
 
   focus_strain <- reactiveVal(NULL)
   observeEvent(selected_query(), {
@@ -345,12 +362,21 @@ transmission_register <- function(input, output, session, sp, outdir_r) {
   output[[ns("ts_header_facts")]] <- renderUI({
     q <- query_row_r(); if (is.null(q)) return(NULL)
     cell <- function(l, v) column(2, tags$small(class = "text-muted", l), div(strong(v)))
-    div(style = "margin-top:8px;padding:10px;background:#f8f9fa;border-radius:6px;", fluidRow(
-      cell("Strain", ifelse(is.na(q$query_strain), "-", q$query_strain)),
-      cell("Clade", ifelse(is.na(q$query_clade), "-", q$query_clade)),
-      cell("Lineage", ifelse(is.na(q$query_lineage), "-", q$query_lineage)),
-      cell("Outbreak", ifelse(is.na(q$query_outbreak), "-", q$query_outbreak)),
-      cell("Location", paste(ifelse(is.na(q$query_country), "-", q$query_country), ifelse(is.na(q$query_collection_date), "", q$query_collection_date)))))
+    qc <- qctx_row_r(); src <- source_row_r()
+    frac_txt <- if (!is.null(qc) && !is.na(qc$sampling_fraction)) paste0(round(as.numeric(qc$sampling_fraction) * 100, 1), "%") else "-"
+    origin_txt <- if (!is.null(src) && !is.na(src$likely_origin_country)) src$likely_origin_country else "-"
+    r_txt <- if (!is.null(qc) && !is.na(qc$r_at_sampling)) sprintf("R\u2248%.2f", as.numeric(qc$r_at_sampling)) else "-"
+    div(style = "margin-top:8px;padding:10px;background:#f8f9fa;border-radius:6px;",
+        fluidRow(
+          cell("Strain", ifelse(is.na(q$query_strain), "-", q$query_strain)),
+          cell("Clade", ifelse(is.na(q$query_clade), "-", q$query_clade)),
+          cell("Lineage", ifelse(is.na(q$query_lineage), "-", q$query_lineage)),
+          cell("Outbreak", ifelse(is.na(q$query_outbreak), "-", q$query_outbreak)),
+          cell("Location", paste(ifelse(is.na(q$query_country), "-", q$query_country), ifelse(is.na(q$query_collection_date), "", q$query_collection_date)))),
+        fluidRow(style = "margin-top:6px;",
+          cell("Likely origin", origin_txt),
+          cell("R at sampling", r_txt),
+          cell("Cluster = cases", frac_txt)))
   })
 
   # A. tree + neighbors
@@ -505,31 +531,158 @@ transmission_register <- function(input, output, session, sp, outdir_r) {
                 tags$li(paste0("Outbreaks span ", yrs[1], "\u2013", yrs[2], " across ", length(unique(d$country)), " countries."))))
   })
 
-  # D. model
+  # C. R(t) — query's location, else inferred-origin country, else top-data location
+  rt_loc_r <- reactive({
+    rt <- rt_r(); q <- query_row_r(); src <- source_row_r()
+    if (is.null(rt) || !nrow(rt) || is.null(q)) return(NULL)
+    loc <- q$query_country
+    if (is.na(loc) || !nrow(dplyr::filter(rt, .data$country == loc))) {
+      loc <- if (!is.null(src) && !is.na(src$likely_origin_country) &&
+                 nrow(dplyr::filter(rt, .data$country == src$likely_origin_country)))
+        src$likely_origin_country else {
+          tc <- rt %>% dplyr::count(.data$country, sort = TRUE)
+          if (nrow(tc)) tc$country[1] else NA
+        }
+    }
+    if (is.na(loc)) return(NULL)
+    list(country = loc, is_fallback = !is.na(q$query_country) && loc != q$query_country)
+  })
+  output[[ns("ts_rt_plot")]] <- plotly::renderPlotly({
+    rt <- rt_r(); q <- query_row_r(); loc <- rt_loc_r()
+    if (is.null(rt) || !nrow(rt) || is.null(q) || is.null(loc)) return(NULL)
+    d <- rt %>% dplyr::filter(.data$country == loc$country)
+    adm <- d %>% dplyr::filter(.data$admin1 == q$query_admin1)
+    if (!loc$is_fallback && nrow(adm) >= 3) d <- adm
+    if (!nrow(d)) return(NULL)
+    d <- d %>% dplyr::filter(!is.na(.data$week_start)) %>% dplyr::arrange(.data$week_start)
+    shapes <- list(list(type = "line", x0 = 0, x1 = 1, xref = "paper",
+                        y0 = 1, y1 = 1, line = list(dash = "dash", color = "#dc3545", width = 1)))
+    qdate <- suppressWarnings(as.Date(q$query_collection_date))
+    if (!is.na(qdate) && !loc$is_fallback) {
+      shapes[[2]] <- list(type = "line", x0 = qdate, x1 = qdate, y0 = 0, y1 = 1, yref = "paper",
+                          line = list(dash = "dot", color = "#6f42c1", width = 1.5))
+    }
+    plotly::plot_ly(d, x = ~week_start) %>%
+      plotly::add_ribbons(ymin = ~r_lower, ymax = ~r_upper, name = "95% CrI",
+                          fillcolor = "rgba(74,108,140,0.18)", line = list(width = 0)) %>%
+      plotly::add_lines(y = ~r_mean, name = "R(t)", line = list(color = "#4A6C8C", width = 2.2),
+                        text = ~paste0(format(week_start, "%d %b %Y"), "<br>R = ", round(r_mean, 2),
+                                       " (", round(r_lower, 2), "\u2013", round(r_upper, 2), ")"),
+                        hoverinfo = "text") %>%
+      plotly::layout(shapes = shapes,
+                     title = list(text = paste0("R(t) — ", loc$country,
+                                                if (loc$is_fallback) " (inferred origin)" else ""),
+                                  font = list(size = 12)),
+                     yaxis = list(title = "R(t)", rangemode = "tozero"),
+                     xaxis = list(title = ""),
+                     legend = list(orientation = "h"),
+                     annotations = if (!is.na(qdate) && !loc$is_fallback) list(list(x = qdate, y = 1, yref = "paper",
+                       text = "query sampled", showarrow = FALSE, xanchor = "left",
+                       font = list(size = 9, color = "#6f42c1"))) else NULL)
+  })
+  output[[ns("ts_rt_takeaway")]] <- renderUI({
+    qc <- qctx_row_r(); loc <- rt_loc_r()
+    if (is.null(loc)) {
+      return(div(class = "text-muted", style = "font-size:0.82rem;margin-top:4px;",
+                 "No epidemiological time series available — R(t) cannot be estimated."))
+    }
+    if (is.null(qc) || is.na(qc$r_at_sampling)) {
+      return(div(style = "background:#fff8e6;border-left:4px solid #fd7e14;border-radius:4px;padding:8px 12px;font-size:0.85rem;margin-top:6px;",
+                 icon("circle-info"), sprintf(" No epi time series for the query's location — showing R(t) for %s, the inferred source of this genome.", loc$country)))
+    }
+    phase <- switch(as.character(qc$growth_phase),
+                    growing = "growing", declining = "declining", "stable or uncertain")
+    col <- switch(as.character(qc$growth_phase),
+                  growing = "#dc3545", declining = "#198754", "#868e96")
+    div(style = paste0("background:#f8f9fa;border-left:4px solid ", col, ";border-radius:4px;padding:8px 12px;font-size:0.85rem;margin-top:6px;"),
+        sprintf("At sampling, R \u2248 %.2f (95%% CrI %.2f\u2013%.2f) in %s — the outbreak was %s.",
+                as.numeric(qc$r_at_sampling), as.numeric(qc$r_lower), as.numeric(qc$r_upper),
+                qc$query_country, phase))
+  })
+
+  # D. genetic transmission cluster
+  output[[ns("ts_cluster_panel")]] <- renderUI({
+    cp <- cprofile_row_r(); cl <- clusters_r()
+    if (is.null(cp)) return(div(class = "text-muted", "No cluster data for this query."))
+    chip <- function(l, v) column(2, div(style = "padding:8px;background:#f8f9fa;border-radius:6px;text-align:center;min-height:58px;",
+      tags$small(class = "text-muted", l), div(style = "font-weight:600;font-size:0.95rem;", v)))
+    if (is.na(cp$cluster_size) || cp$cluster_size <= 1) {
+      return(tagList(
+        div(style = "background:#fff8e6;border-left:4px solid #fd7e14;border-radius:4px;padding:8px 12px;font-size:0.85rem;",
+            icon("circle-info"), " Query is genetically distinct — no background genome falls within the transmission-cluster threshold, so it likely represents a separate introduction or an unsampled lineage.")))
+    }
+    members <- if (!is.null(cl)) dplyr::filter(cl, .data$cluster_id == cp$cluster_id) else NULL
+    tagList(
+      fluidRow(
+        chip("Cluster size", cp$cluster_size),
+        chip("Countries", cp$n_countries),
+        chip("Span", ifelse(is.na(cp$span_days), "-", paste0(cp$span_days, " d"))),
+        chip("Queries in cluster", cp$n_query_in_cluster),
+        chip("Linked cases", format(as.numeric(cp$linked_cases), big.mark = ",")),
+        chip("Linked deaths", format(as.numeric(cp$linked_deaths), big.mark = ","))),
+      if (!is.null(members) && nrow(members)) {
+        div(style = "margin-top:8px;font-size:0.82rem;",
+            tags$strong("Cluster members"),
+            tags$ul(style = "margin:4px 0 0 16px;padding:0;max-height:140px;overflow-y:auto;",
+                    lapply(seq_len(nrow(members)), function(i) {
+                      m <- members[i, ]
+                      tags$li(paste0(m$tip_label,
+                                     if (isTRUE(m$is_query)) " (query)" else "",
+                                     " — ", ifelse(is.na(m$country) || m$country == "", "?", m$country),
+                                     ifelse(is.na(m$admin1) || m$admin1 %in% c("", "National"), "", paste0(", ", m$admin1)),
+                                     ifelse(is.na(m$tip_date), "", paste0("  ", m$tip_date))))
+                    })))
+      })
+  })
+
+  # F. model — branching-process projection per query location
   output[[ns("ts_model_cards")]] <- renderUI({
-    fit <- fit_r(); sc <- score_row_r()
-    if (is.null(fit)) return(div(class = "text-muted", "Insufficient epi history to fit a growth model for this strain."))
+    qc <- qctx_row_r(); pr <- proj_r(); sq <- selected_query()
+    if (is.null(qc) || is.null(pr)) return(div(class = "text-muted", "Insufficient epi history to project for this query's location."))
+    d <- dplyr::filter(pr, .data$query_sample == sq)
+    if (!nrow(d)) return(div(class = "text-muted", "No projection available — the query's location has no epidemiological time series."))
     cd <- function(l, v, c) column(3, div(style = paste0("padding:10px;background:#fff;border-left:4px solid ", c, ";border-radius:4px;margin-bottom:8px;"), tags$small(class = "text-muted", l), div(style = "font-size:1.15rem;font-weight:700;", v)))
+    r_use <- d$r_used[1]
+    phase <- if (!is.na(qc$growth_phase)) gsub("_", " ", qc$growth_phase) else "unknown"
+    frac <- if (!is.na(qc$sampling_fraction)) paste0(round(as.numeric(qc$sampling_fraction) * 100, 1), "%") else "-"
     fluidRow(
-      cd("Growth rate", paste0(round(fit$r_week, 2), " /wk"), "#4A6C8C"),
-      cd("Doubling time", paste0(round(fit$doubling_days, 1), " days"), "#fd7e14"),
-      cd("Est. outbreak size", format(round(fit$K), big.mark = ","), "#6f42c1"),
-      cd("Model", fit$method, "#198754"))
+      cd("R used", sprintf("%.2f", as.numeric(r_use)), "#4A6C8C"),
+      cd("Projected for", d$country[1], "#fd7e14"),
+      cd("Cluster = cases", frac, "#6f42c1"),
+      cd("Method", "branching process", "#198754"))
   })
   output[[ns("ts_projection")]] <- plotly::renderPlotly({
-    fit <- fit_r(); if (is.null(fit)) return(NULL)
-    hz <- if (is.null(input[[ns("ts_horizon")]])) 180 else input[[ns("ts_horizon")]]
+    pr <- proj_r(); sq <- selected_query(); q <- query_row_r()
+    if (is.null(pr) || is.null(sq) || is.null(q)) return(NULL)
     scn <- if (is.null(input[[ns("ts_scenario")]])) "baseline" else input[[ns("ts_scenario")]]
-    pr <- .ts_project(fit, hz, scn); if (is.null(pr)) return(NULL)
+    d <- pr %>% dplyr::filter(.data$query_sample == sq, .data$scenario == scn) %>% dplyr::arrange(.data$week_ahead)
+    if (!nrow(d)) return(NULL)
+    d$wk <- as.numeric(d$week_ahead)
+    proj_ctry <- d$country[1]
+    # recent observed weekly incidence for context (negative x = weeks before projection)
+    obs <- NULL
+    br <- burden_r()
+    if (!is.null(br) && nrow(br) && !is.na(proj_ctry)) {
+      o <- br %>% dplyr::filter(.data$country == proj_ctry) %>%
+        dplyr::filter(!is.na(.data$week_start)) %>% dplyr::arrange(.data$week_start) %>%
+        dplyr::summarise(new_cases = sum(as.numeric(.data$new_cases), na.rm = TRUE), .by = .data$week_start) %>%
+        utils::tail(6)
+      if (nrow(o)) { o$wk <- seq(-nrow(o) + 1, 0); obs <- o }
+    }
     p <- plotly::plot_ly() %>%
-      plotly::add_ribbons(data = pr, x = ~t, ymin = ~lower, ymax = ~upper, name = "95% band",
-                          fillcolor = "rgba(74,108,140,0.18)", line = list(width = 0)) %>%
-      plotly::add_lines(data = pr, x = ~t, y = ~cum, name = "Projected outbreak", line = list(color = "#4A6C8C", width = 2.5))
-    if (!is.null(fit$obs)) p <- p %>% plotly::add_lines(data = fit$obs, x = ~t, y = ~cum, name = "Historical (observed)",
-                          line = list(color = "#2c3e50", dash = "dot", width = 1.5))
-    p %>% plotly::layout(title = paste0("Model-derived projection — ", scn, " scenario"),
-                   xaxis = list(title = "Days since introduction"),
-                   yaxis = list(title = "Cumulative cases"), legend = list(orientation = "h"))
+      plotly::add_ribbons(data = d, x = ~wk, ymin = ~proj_lower95, ymax = ~proj_upper95,
+                          name = "95% PI", fillcolor = "rgba(74,108,140,0.18)", line = list(width = 0)) %>%
+      plotly::add_lines(data = d, x = ~wk, y = ~proj_median, name = "Projected weekly cases",
+                        line = list(color = "#4A6C8C", width = 2.5),
+                        text = ~paste0("Week +", wk, "<br>median ", round(proj_median),
+                                       " (", round(proj_lower95), "\u2013", round(proj_upper95), ")"),
+                        hoverinfo = "text")
+    if (!is.null(obs)) p <- p %>% plotly::add_lines(data = obs, x = ~wk, y = ~new_cases,
+                        name = "Observed (recent)", line = list(color = "#2c3e50", dash = "dot", width = 1.5))
+    p %>% plotly::layout(title = paste0("Weekly case projection — ", proj_ctry, " — ", scn, " scenario"),
+                   xaxis = list(title = "Weeks ahead"),
+                   yaxis = list(title = "Weekly cases", rangemode = "tozero"),
+                   legend = list(orientation = "h"))
   })
 
   # H. drivers
@@ -547,26 +700,47 @@ transmission_register <- function(input, output, session, sp, outdir_r) {
       if (!is.null(fit)) dr("Fitted growth", paste0(round(fit$r_week, 2), " cases/wk growth, doubling every ", round(fit$doubling_days, 1), " days (", fit$method, ")")))
   })
 
-  # I. assessment
+  # I. assessment — pre-generated LLM narrative (spread_assessment.json) first,
+  # deterministic text as fallback when the file/entry is absent.
   output[[ns("ts_assessment")]] <- renderUI({
-    q <- query_row_r(); sc <- score_row_r(); s <- strain_row_r(); fit <- fit_r(); if (is.null(q)) return(div(class = "text-muted", "No assessment."))
+    q <- query_row_r(); sc <- score_row_r(); s <- strain_row_r(); fit <- fit_r()
+    if (is.null(q)) return(div(class = "text-muted", "No assessment."))
+    legend <- p(class = "text-muted", style = "font-size:0.82rem;margin-bottom:0;",
+                "Observed = historical evidence. Model-derived = projection under stated assumptions with uncertainty.")
+
+    sq <- selected_query(); am <- assessment_r()
+    entry <- if (!is.null(am) && !is.null(sq)) am[[sq]] else NULL
+    if (!is.null(entry) && !is.null(entry$text) && nzchar(entry$text)) {
+      paras <- trimws(strsplit(entry$text, "\n+")[[1]])
+      paras <- paras[nzchar(paras)]
+      body <- lapply(paras, function(pt) {
+        badge <- if (grepl("^OBSERVED", pt, ignore.case = TRUE)) list("OBSERVED", "badge-secondary")
+                 else if (grepl("^MODEL", pt, ignore.case = TRUE)) list("MODEL-DERIVED", "badge-warning")
+                 else NULL
+        if (!is.null(badge)) {
+          pt <- sub("^(OBSERVED|MODEL[- ]DERIVED)\\s*[:—–-]?\\s*", "", pt, ignore.case = TRUE)
+          tags$p(tags$span(class = paste("badge", badge[[2]]), badge[[1]]), " ", pt)
+        } else tags$p(pt)
+      })
+      mdl_nm <- if (!is.null(entry$model) && is.character(entry$model) && nzchar(entry$model)) entry$model else ""
+      src_tag <- if (!is.null(entry$source) && entry$source == "ollama")
+        paste0("AI-generated", if (nzchar(mdl_nm)) paste0(" · ", mdl_nm) else "")
+        else "Generated from template"
+      return(div(style = "padding:14px;background:#eef4f8;border-left:4px solid #4A6C8C;border-radius:6px;",
+          h5("Transmission & Spread Assessment"),
+          body,
+          p(class = "text-muted", style = "font-size:0.78rem;margin:6px 0 4px;", icon("robot"), " ", src_tag),
+          legend))
+    }
+
     strain <- ifelse(is.na(q$query_strain), "an uncharacterized strain", q$query_strain)
-    risk <- if (!is.null(sc) && !is.na(sc$risk_label)) toupper(sc$risk_label) else "UNKNOWN"
     hist <- if (!is.null(s)) paste0("Historically, ", strain, " caused ", format(as.numeric(s$linked_cases), big.mark = ","), " cases and ", format(as.numeric(s$linked_deaths), big.mark = ","), " deaths across ", s$n_countries, " countries over ", s$active_years, " year(s), classified as ", gsub("_", " ", s$behavior_label), ".") else "No historical strain profile."
     mdl <- if (!is.null(fit)) paste0("Fitting a growth model to ", strain, "'s observed epidemic curve gives a growth rate of ", round(fit$r_week, 2), " cases/week (doubling every ", round(fit$doubling_days, 1), " days) and an estimated outbreak size of ~", format(round(fit$K), big.mark = ","), " cases; projected forward under the selected scenario.") else if (!is.null(sc)) paste0("Predicted behavior '", gsub("_", " ", sc$predicted_behavior), "'; insufficient epi history for a fitted projection.") else "No model projection."
     div(style = "padding:14px;background:#eef4f8;border-left:4px solid #4A6C8C;border-radius:6px;",
         h5("Transmission & Spread Assessment"),
         p(tags$span(class = "badge badge-secondary", "OBSERVED"), " Query ", strong(q$query_sample), " is strain ", strong(strain), ". ", hist),
         p(tags$span(class = "badge badge-warning", "MODEL-DERIVED"), " ", mdl),
-        p(class = "text-muted", style = "font-size:0.82rem;margin-bottom:0;", "Observed = historical evidence. Model-derived = projection under stated assumptions with uncertainty."))
+        legend)
   })
 
-  # Surveillance tab
-  output[[ns("ts_anomaly_table")]] <- DT::renderDT({ df <- anomaly_r(); if (is.null(df) || !nrow(df)) nd("No anomalous weeks") else DT::datatable(df, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE) })
-  output[[ns("ts_burden_table")]] <- DT::renderDT({
-    df <- burden_r(); if (is.null(df) || !nrow(df)) return(nd("No burden data"))
-    s <- df %>% dplyr::select(country, admin1, week_start, cases_cum, deaths_cum, new_cases, new_deaths, cfr_cum, cfr_new, growth_rate, trend_cases, alert, n_genomes, dominant_strain) %>%
-      dplyr::mutate(cfr_cum = round(cfr_cum, 3), cfr_new = round(cfr_new, 3), growth_rate = round(growth_rate, 3), trend_cases = as.character(trend_cases))
-    DT::datatable(s, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE)
-  })
 }

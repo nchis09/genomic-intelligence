@@ -26,7 +26,10 @@ process COMPUTE_TRANSMISSION_CONTEXT {
     python3 ${projectDir}/bin/compute_transmission_context.py \
         --db ${duckdb_file} \
         --species ${species} \
-        --outdir transmission_context
+        --outdir transmission_context \
+        --si-mean ${params.si_mean} \
+        --si-sd ${params.si_sd} \
+        --cluster-threshold ${params.cluster_threshold}
 
     python3 ${projectDir}/bin/model_transmission_potential.py \
         --input transmission_context/${species}/transmission_potential.tsv \

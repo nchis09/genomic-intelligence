@@ -62,6 +62,7 @@ source("modules/assessment.R")
 source("modules/placeholder.R")
 source("modules/pathogen_transmission.R")
 source("modules/pathogen_geographic.R")
+source("modules/intelligence_brief.R")
 source("modules/home.R")
 
 # Serve repo-root assets (GIF logo, institution logos) without copying them
@@ -612,7 +613,7 @@ server <- function(input, output, session) {
 
     roadmap_tabs <- lapply(ROADMAP_OBJECTIVES, function(obj) {
       tab_ui <- if (identical(obj$id, "intelligence_brief")) {
-        intelligence_brief_roadmap_ui(obj)
+        uiOutput("brief_tab_body")
       } else if (identical(obj$id, "transmission_spread")) {
         uiOutput("ts_roadmap_body")
       } else if (identical(obj$id, "geographic_temporal")) {
@@ -690,7 +691,34 @@ server <- function(input, output, session) {
   })
 
   output$overview_body <- renderUI({
-    overview_body_ui(!is.null(current_species()))
+    overview_body_ui(current_species(), outdir_r())
+  })
+
+  # -- Intelligence Brief tab: renders the pre-generated per-species
+  # intelligence_brief.json for whichever species the Overview dropdown has
+  # selected, plus the export card.
+  brief_data <- reactive({
+    sp <- current_species()
+    if (is.null(sp)) return(NULL)
+    brief_read(outdir_r(), sp)
+  })
+
+  output$brief_tab_body <- renderUI({
+    sp <- current_species()
+    if (is.null(sp)) {
+      return(roadmap_ui(ROADMAP_OBJECTIVES[[which(vapply(ROADMAP_OBJECTIVES,
+        function(o) identical(o$id, "intelligence_brief"), logical(1)))]]))
+    }
+    tagList(
+      brief_full_ui(brief_data(), sp, outdir_r()),
+      bs4Dash::bs4Card(
+        title = "Export", width = 12, status = "secondary",
+        p(style = "color: #6c757d;",
+          "Open an editable preview of the brief before printing or sharing."),
+        actionButton("brief_preview_open", "Preview & Edit Brief",
+                     icon = icon("file-lines"))
+      )
+    )
   })
 
   # -- Overview CTAs and signal/roadmap-tile clicks jump the sidebar tab.
@@ -729,10 +757,23 @@ server <- function(input, output, session) {
     updateTabItems(session, "sidebarmenu", selected = tab)
   })
 
-  # -- Intelligence Brief "preview & edit before export" scaffold (UI only).
+  # -- Intelligence Brief "preview & edit before export": the modal is
+  # pre-filled with the generated brief as editable plain text.
   observeEvent(input$brief_preview_open, {
-    showModal(intelligence_brief_preview_modal())
+    sp <- current_species()
+    showModal(intelligence_brief_preview_modal(brief_markdown(brief_data(), sp)))
   })
+
+  # Download the (possibly edited) brief text as a .md file.
+  output$brief_download <- downloadHandler(
+    filename = function() {
+      sp <- current_species() %||% "brief"
+      paste0("intelligence_brief_", sp, "_", Sys.Date(), ".md")
+    },
+    content = function(file) {
+      writeLines(input$brief_preview_text %||% "", file)
+    }
+  )
 }
 
 shinyApp(ui, server)

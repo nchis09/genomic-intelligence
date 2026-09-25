@@ -20,7 +20,7 @@ process PATHOGEN_IDENTIFICATION {
     tuple val(meta), path(duckdb_file)
 
     output:
-    path "species_identification/*.tsv", emit: tsv
+    tuple val(meta), path("species_identification"), emit: tsv
     path "species_identification/mqc/*_mqc.tsv", emit: mqc_tsv
 
     script:

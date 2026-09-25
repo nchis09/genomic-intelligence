@@ -1243,11 +1243,628 @@ def write_tsv(df: pd.DataFrame, path: Path):
         df.to_csv(path, sep="\t", index=False, float_format="%.6g")
 
 
+# ---------------------------------------------------------------------------
+# RECON-style genomic-epidemiological analytics — every output is anchored to
+# the query genomes (keyed by query_sample where applicable).
+# ---------------------------------------------------------------------------
+
+def _parse_newick(s: str) -> dict:
+    """Minimal iterative Newick parser -> nested {name, length, children}.
+
+    Handles quoted tip names, internal-node labels/support, branch lengths and
+    [&...] comments. Iterative so deep trees don't hit the recursion limit.
+    """
+    s = s.strip()
+    if s.endswith(";"):
+        s = s[:-1]
+    root = {"name": "", "length": 0.0, "children": []}
+    stack = [root]
+    last = None  # node awaiting a name / :length (just-closed internal or leaf)
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "(":
+            node = {"name": "", "length": 0.0, "children": []}
+            stack[-1]["children"].append(node)
+            stack.append(node)
+            last = None
+            i += 1
+        elif c == ")":
+            last = stack.pop()
+            i += 1
+        elif c == ",":
+            last = None
+            i += 1
+        elif c == ":":
+            i += 1
+            j = i
+            while j < n and s[j] not in ",()":
+                j += 1
+            if last is not None:
+                try:
+                    last["length"] = float(s[i:j])
+                except ValueError:
+                    pass
+            i = j
+        elif c == "[":
+            j = s.find("]", i)
+            i = n if j < 0 else j + 1
+        else:
+            if c in "'\"":
+                j = s.find(c, i + 1)
+                if j < 0:
+                    j = n
+                name = s[i + 1:j]
+                i = min(j + 1, n)
+            else:
+                j = i
+                while j < n and s[j] not in ",():":
+                    j += 1
+                name = s[i:j].strip()
+                i = j
+            if last is None:
+                leaf = {"name": name, "length": 0.0, "children": []}
+                stack[-1]["children"].append(leaf)
+                last = leaf
+            else:
+                last["name"] = name
+    return root
+
+
+def _clean_label(name) -> str:
+    """Match the dashboard's .ts_clean_label / build_knowledge_db cleaning."""
+    return re.sub(r"[,;():\[\] ]", "_", str(name or ""))
+
+
+def _tree_postorder(root: dict) -> list:
+    """Post-order list of nodes (children before parents), iterative."""
+    order, stack = [], [(root, False)]
+    while stack:
+        node, done = stack.pop()
+        if done:
+            order.append(node)
+        else:
+            stack.append((node, True))
+            for ch in node["children"]:
+                stack.append((ch, False))
+    return order
+
+
+def _node_heights(root: dict) -> None:
+    """Set node['div'] = distance from root (matches tree_tips.div)."""
+    root["div"] = 0.0
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        for ch in node["children"]:
+            ch["div"] = node["div"] + ch["length"]
+            stack.append(ch)
+
+
+def _best_tree(con: duckdb.DuckDBPyConnection, species: str):
+    """Return (tree_id, newick) for the species' most tip-complete tree."""
+    try:
+        rows = con.execute(
+            """
+            SELECT t.tree_id, t.newick
+            FROM phylogenetic_trees t
+            JOIN (SELECT tree_id, COUNT(*) AS n FROM tree_tips GROUP BY tree_id) c
+              ON t.tree_id = c.tree_id
+            WHERE LOWER(t.species) = ?
+            ORDER BY c.n DESC
+            """,
+            [species.lower()],
+        ).fetchall()
+    except Exception:
+        return None, None
+    for tree_id, nwk in rows:
+        if nwk and str(nwk).strip():
+            return tree_id, str(nwk)
+    return None, None
+
+
+def build_genetic_clusters(con, species, threshold: float):
+    """Max-clade transmission clusters (TreeCluster-style).
+
+    A cluster is a maximal subtree in which every pairwise patristic distance
+    between member tips is <= threshold. Returns (clusters_df, tip_meta_df).
+    """
+    cols = ["cluster_id", "tip_label", "is_query", "country", "admin1",
+            "tip_date", "clade", "outbreak", "div"]
+    tree_id, nwk = _best_tree(con, species)
+    if tree_id is None:
+        return pd.DataFrame(columns=cols), pd.DataFrame()
+    tips = con.execute(
+        "SELECT t.label, t.is_query, t.country, t.admin1, t.tip_date, t.clade, "
+        "t.outbreak, t.div, s.collection_date "
+        "FROM tree_tips t LEFT JOIN samples s ON t.sample_id = s.sample_id "
+        "WHERE t.tree_id = ?",
+        [tree_id],
+    ).df()
+    if tips.empty:
+        return pd.DataFrame(columns=cols), pd.DataFrame()
+    # Query tips often lack tip_date in tree_tips; fall back to collection_date
+    tips["tip_date"] = tips["tip_date"].fillna(tips["collection_date"])
+    tips["clean"] = tips["label"].map(_clean_label)
+    meta = tips.drop_duplicates("clean").set_index("clean")
+
+    root = _parse_newick(nwk)
+    _node_heights(root)
+    order = _tree_postorder(root)
+
+    # Post-order: max descendant-tip div AND max pairwise patristic distance
+    # within each subtree. For a node, cross-child pairs contribute
+    # depth_i + depth_j where depth_i = max_tip_div(child_i) - node.div.
+    for node in order:
+        if not node["children"]:
+            node["max_tip_div"] = node["div"]
+            node["max_pw"] = 0.0
+        else:
+            node["max_tip_div"] = max(ch["max_tip_div"] for ch in node["children"])
+            depths = sorted(
+                (ch["max_tip_div"] - node["div"] for ch in node["children"]),
+                reverse=True,
+            )
+            cross = depths[0] + depths[1] if len(depths) > 1 else 0.0
+            node["max_pw"] = max(
+                [cross] + [ch["max_pw"] for ch in node["children"]]
+            )
+
+    clusters = []  # list of lists of tip nodes
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if not node["children"]:
+            clusters.append([node])  # singleton
+            continue
+        if node is not root and node["max_pw"] <= threshold:
+            # collect all descendant tips
+            tips_in = []
+            sub = [node]
+            while sub:
+                nd = sub.pop()
+                if nd["children"]:
+                    sub.extend(nd["children"])
+                else:
+                    tips_in.append(nd)
+            clusters.append(tips_in)
+        else:
+            stack.extend(node["children"])
+
+    rows = []
+    for i, members in enumerate(clusters, start=1):
+        cid = f"C{i:03d}"
+        for tip in members:
+            lab = _clean_label(tip["name"])
+            m = meta.loc[lab] if lab in meta.index else None
+            rows.append({
+                "cluster_id": cid,
+                "tip_label": lab,
+                "is_query": bool(m["is_query"]) if m is not None else False,
+                "country": m["country"] if m is not None else None,
+                "admin1": m["admin1"] if m is not None else None,
+                "tip_date": m["tip_date"] if m is not None else None,
+                "clade": m["clade"] if m is not None else None,
+                "outbreak": m["outbreak"] if m is not None else None,
+                "div": tip["div"],
+            })
+    return pd.DataFrame(rows, columns=cols), meta.reset_index()
+
+
+def _gamma_cdf(x: float, shape: float, scale: float) -> float:
+    """Regularised lower incomplete gamma P(shape, x/scale) — NR gser/gcf."""
+    if x <= 0:
+        return 0.0
+    x = x / scale
+    a = shape
+    gln = math.lgamma(a)
+    if x < a + 1.0:  # series representation
+        ap, s, delta = a, 1.0 / a, 1.0 / a
+        for _ in range(200):
+            ap += 1.0
+            delta *= x / ap
+            s += delta
+            if abs(delta) < abs(s) * 1e-12:
+                break
+        return s * math.exp(-x + a * math.log(x) - gln)
+    # continued fraction
+    b, c, d = x + 1.0 - a, 1e30, 1.0 / (x + 1.0 - a)
+    h = d
+    for i in range(1, 200):
+        an = -i * (i - a)
+        b += 2.0
+        d = an * d + b
+        if abs(d) < 1e-30:
+            d = 1e-30
+        c = b + an / c
+        if abs(c) < 1e-30:
+            c = 1e-30
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 1e-12:
+            break
+    return 1.0 - math.exp(-x + a * math.log(x) - gln) * h
+
+
+def _si_weekly_weights(mean_d: float, sd_d: float, k: int = 8) -> np.ndarray:
+    """Discretised serial-interval PMF aggregated to weekly bins (w[0]=week1)."""
+    shape = (mean_d / sd_d) ** 2
+    scale = sd_d ** 2 / mean_d
+    w = np.array([
+        _gamma_cdf(7 * s + 3.5, shape, scale) - _gamma_cdf(max(0.0, 7 * s - 3.5), shape, scale)
+        for s in range(1, k + 1)
+    ])
+    total = w.sum()
+    return w / total if total > 0 else w
+
+
+def _gamma_quantile(p: float, shape: float, scale: float) -> float:
+    """Wilson–Hilferty approximation for gamma quantiles."""
+    z = {0.025: -1.96, 0.5: 0.0, 0.975: 1.96}.get(p)
+    if z is None:  # generic fallback via inverse normal
+        z = math.sqrt(2) * math.erfc(2 * (1 - p)) if p < 0.5 else -math.sqrt(2) * math.erfc(2 * p)
+        z = -z
+    return shape * scale * max(0.0, (1 - 1 / (9 * shape) + z / (3 * math.sqrt(shape))) ** 3)
+
+
+def build_rt(weekly: pd.DataFrame, si_mean: float, si_sd: float, window: int = 3) -> pd.DataFrame:
+    """Cori-style time-varying R per country/admin1 from weekly incidence.
+
+    Posterior Gamma(a + sum(I_window), rate = 0.2 + sum(Lambda_window)) with
+    EpiEstim's default prior (mean 5, sd 5 -> a=1, rate=0.2).
+    """
+    cols = ["country", "admin1", "week_start", "r_mean", "r_lower", "r_upper", "window_cases"]
+    if weekly.empty or "new_cases" not in weekly.columns:
+        return pd.DataFrame(columns=cols)
+    w = _si_weekly_weights(si_mean, si_sd)
+    rows = []
+    for (country, admin1), sub in weekly.groupby(["country", "admin1"]):
+        sub = sub.sort_values("week_start")
+        inc = sub["new_cases"].fillna(0).astype(float).values
+        dates = sub["week_start"].values
+        n = len(inc)
+        lam = np.zeros(n)
+        for t in range(n):
+            for s in range(1, min(len(w), t) + 1):
+                lam[t] += w[s - 1] * inc[t - s]
+        for end in range(window, n + 1):
+            sl = slice(end - window, end)
+            a_post = 1.0 + inc[sl].sum()
+            rate_post = 0.2 + lam[sl].sum()
+            if rate_post <= 0.2:  # no infectiousness in window
+                continue
+            rows.append({
+                "country": country,
+                "admin1": admin1,
+                "week_start": dates[end - 1],
+                "r_mean": a_post / rate_post,
+                "r_lower": _gamma_quantile(0.025, a_post, 1.0 / rate_post),
+                "r_upper": _gamma_quantile(0.975, a_post, 1.0 / rate_post),
+                "window_cases": float(inc[sl].sum()),
+            })
+    return pd.DataFrame(rows, columns=cols)
+
+
+def build_query_epi_context(con, species, weekly, rt, clusters):
+    """One row per query: epi situation at its own place and time."""
+    cols = [
+        "query_sample", "query_country", "query_admin1", "query_collection_date",
+        "r_at_sampling", "r_lower", "r_upper", "growth_phase",
+        "weekly_cases_at_sampling", "cfr_at_sampling",
+        "sampling_fraction", "epi_cases_year", "genomes_year", "cluster_id",
+    ]
+    samples = con.execute(SAMPLE_QUERY, [species]).df()
+    if samples.empty:
+        return pd.DataFrame(columns=cols)
+    samples["collection_date"] = pd.to_datetime(samples["collection_date"], errors="coerce")
+    samples["tip_date"] = pd.to_datetime(samples["tip_date"].apply(_to_timestamp), errors="coerce")
+    samples["sample_date"] = samples["collection_date"].where(
+        samples["collection_date"].notna(), samples["tip_date"])
+    samples["country"] = (samples["country"].astype(str)
+                          .replace(["<NA>", "nan", "None"], "Unknown")
+                          .replace(COUNTRY_NAME_MAP).fillna("Unknown"))
+    samples["admin1"] = (samples["admin1"].astype(str)
+                         .replace(["<NA>", "nan", "None", ""], "National").fillna("National"))
+    # Samples join to multiple trees -> duplicate rows; keep the most complete
+    samples = (samples.sort_values("sample_date", na_position="last")
+               .drop_duplicates("sample_name", keep="first"))
+    queries = samples[samples["is_query"].astype(str).str.lower() == "true"].copy()
+    if queries.empty:
+        return pd.DataFrame(columns=cols)
+
+    # genomes per country-year (all samples, not just queries)
+    samples["year"] = samples["sample_date"].dt.year
+    gen_year = (samples.dropna(subset=["year"])
+                .groupby(["country", "year"])["sample_name"].count()
+                .rename("genomes_year").reset_index())
+    _, epi_country = build_yearly_burden(weekly if weekly is not None else pd.DataFrame())
+
+    rt_idx = {}
+    if rt is not None and not rt.empty:
+        rtd = rt.copy()
+        rtd["week_start"] = pd.to_datetime(rtd["week_start"], errors="coerce")
+        for (c, a), sub in rtd.groupby(["country", "admin1"]):
+            rt_idx[(c, a)] = sub.sort_values("week_start")
+
+    wk = weekly.copy() if weekly is not None else pd.DataFrame()
+    if not wk.empty:
+        wk["week_start"] = pd.to_datetime(wk["week_start"], errors="coerce")
+
+    cl_map = {}
+    if clusters is not None and not clusters.empty:
+        qcl = clusters[clusters["is_query"]]
+        cl_map = dict(zip(qcl["tip_label"], qcl["cluster_id"]))
+
+    rows = []
+    for _, q in queries.iterrows():
+        name = str(q["sample_name"])
+        ctry, adm, dt = q["country"], q["admin1"], q["sample_date"]
+        r_mean = r_lo = r_hi = np.nan
+        phase = "unknown"
+        if dt is not None and not pd.isna(dt):
+            for key in [(ctry, adm), (ctry, "National")]:
+                sub = rt_idx.get(key)
+                if sub is None:
+                    continue
+                past = sub[sub["week_start"] <= dt]
+                if not past.empty:
+                    r = past.iloc[-1]
+                    r_mean, r_lo, r_hi = r["r_mean"], r["r_lower"], r["r_upper"]
+                    break
+            if not np.isnan(r_mean):
+                if r_lo > 1:
+                    phase = "growing"
+                elif r_hi < 1:
+                    phase = "declining"
+                else:
+                    phase = "stable_or_uncertain"
+        wk_cases = cfr = np.nan
+        if not wk.empty and dt is not None and not pd.isna(dt):
+            cand = wk[(wk["country"] == ctry) & (wk["week_start"] <= dt)]
+            cand_adm = cand[cand["admin1"] == adm]
+            use = cand_adm if not cand_adm.empty else cand[cand["admin1"] == "National"]
+            if use.empty:
+                use = cand
+            if not use.empty:
+                r = use.sort_values("week_start").iloc[-1]
+                wk_cases, cfr = r["new_cases"], r["cfr_cum"]
+        frac = np.nan; epi_cases = np.nan; n_gen = np.nan
+        if dt is not None and not pd.isna(dt):
+            yr = int(dt.year)
+            g = gen_year[(gen_year["country"] == ctry) & (gen_year["year"] == yr)]
+            e = epi_country[(epi_country["country"] == ctry) & (epi_country["year"] == yr)] if not epi_country.empty else pd.DataFrame()
+            if not g.empty:
+                n_gen = float(g["genomes_year"].iloc[0])
+            if not e.empty:
+                epi_cases = float(e["epi_cases"].iloc[0])
+            if not np.isnan(n_gen) and not np.isnan(epi_cases) and epi_cases > 0:
+                frac = n_gen / epi_cases
+        rows.append({
+            "query_sample": name, "query_country": ctry, "query_admin1": adm,
+            "query_collection_date": dt.date() if dt is not None and not pd.isna(dt) else None,
+            "r_at_sampling": r_mean, "r_lower": r_lo, "r_upper": r_hi,
+            "growth_phase": phase,
+            "weekly_cases_at_sampling": wk_cases, "cfr_at_sampling": cfr,
+            "sampling_fraction": frac, "epi_cases_year": epi_cases,
+            "genomes_year": n_gen,
+            "cluster_id": cl_map.get(_clean_label(name), cl_map.get(name)),
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
+def build_cluster_profile(clusters, weekly):
+    """Per-query summary of the genetic cluster it belongs to."""
+    cols = ["query_sample", "cluster_id", "cluster_size", "n_countries", "countries",
+            "first_date", "last_date", "span_days", "n_query_in_cluster",
+            "linked_cases", "linked_deaths"]
+    if clusters is None or clusters.empty:
+        return pd.DataFrame(columns=cols)
+    cl = clusters.copy()
+    cl["tip_date"] = pd.to_datetime(cl["tip_date"], errors="coerce")
+    _, epi_country = build_yearly_burden(weekly if weekly is not None else pd.DataFrame())
+    rows = []
+    for cid, g in cl.groupby("cluster_id"):
+        q = g[g["is_query"]]
+        if q.empty:
+            continue
+        dates = g["tip_date"].dropna()
+        countries = sorted({str(c) for c in g["country"].dropna() if str(c) not in {"Unknown", "nan", "None"}})
+        linked_cases = linked_deaths = 0.0
+        if not epi_country.empty and not dates.empty:
+            years = set(dates.dt.year.astype(int))
+            for ctry in countries:
+                for yr in years:
+                    e = epi_country[(epi_country["country"] == ctry) & (epi_country["year"] == yr)]
+                    if not e.empty:
+                        linked_cases += float(e["epi_cases"].iloc[0])
+                        linked_deaths += float(e["epi_deaths"].iloc[0])
+        for _, qr in q.iterrows():
+            rows.append({
+                "query_sample": qr["tip_label"], "cluster_id": cid,
+                "cluster_size": len(g), "n_countries": len(countries),
+                "countries": ";".join(countries),
+                "first_date": dates.min().date() if not dates.empty else None,
+                "last_date": dates.max().date() if not dates.empty else None,
+                "span_days": (dates.max() - dates.min()).days if len(dates) > 1 else 0,
+                "n_query_in_cluster": int(q.shape[0]),
+                "linked_cases": linked_cases, "linked_deaths": linked_deaths,
+            })
+    return pd.DataFrame(rows, columns=cols)
+
+
+def build_query_projection(qctx, weekly, rt, si_mean, si_sd, origin_map=None,
+                           horizon=8, n_sims=1000):
+    """Branching-process weekly case projections per query location.
+
+    I[t+1] ~ Poisson(R * Lambda[t+1]); Lambda from the discretised serial
+    interval over recent incidence. Three scenarios scale R. When the query's
+    own location has no epidemiological time series, falls back to the inferred
+    origin country (then to the location with the most data) so the panel still
+    shows a query-relevant projection.
+    """
+    cols = ["query_sample", "country", "admin1", "scenario", "week_ahead",
+            "proj_median", "proj_lower95", "proj_upper95", "r_used"]
+    if qctx is None or qctx.empty or weekly is None or weekly.empty:
+        return pd.DataFrame(columns=cols)
+    origin_map = origin_map or {}
+    w = _si_weekly_weights(si_mean, si_sd)
+    wk = weekly.copy()
+    wk["week_start"] = pd.to_datetime(wk["week_start"], errors="coerce")
+    rng = np.random.default_rng(42)
+    scenarios = {"contained": 0.5, "baseline": 1.0, "expanded": 1.35}
+    rt = rt if rt is not None and not rt.empty else pd.DataFrame()
+    # location with the most R(t) data — last-resort fallback
+    top_ctry = (rt["country"].value_counts().idxmax()
+                if not rt.empty else None)
+    rows = []
+    for _, q in qctx.iterrows():
+        ctry, adm = q["query_country"], q["query_admin1"]
+        r_use = q["r_at_sampling"]
+        loc_ctry, loc_adm = ctry, adm
+        if np.isnan(r_use):
+            # fall back to the latest R in the query's country
+            sub = rt[rt["country"] == ctry] if not rt.empty else pd.DataFrame()
+            if not sub.empty:
+                r_use = sub.sort_values("week_start").iloc[-1]["r_mean"]
+            else:
+                # then the inferred origin country, then the top-data location
+                for cand in (origin_map.get(q["query_sample"]), top_ctry):
+                    if cand and cand in set(rt["country"]):
+                        sub = rt[rt["country"] == cand]
+                        r_use = sub.sort_values("week_start").iloc[-1]["r_mean"]
+                        loc_ctry, loc_adm = cand, "National"
+                        break
+                else:
+                    continue
+        inc_sub = wk[(wk["country"] == loc_ctry)]
+        if loc_adm != "National":
+            adm_sub = inc_sub[inc_sub["admin1"] == loc_adm]
+            if not adm_sub.empty:
+                inc_sub = adm_sub
+        inc = (inc_sub.sort_values("week_start")["new_cases"]
+               .fillna(0).astype(float).tail(len(w) + 4).values)
+        if len(inc) < 2 or inc.sum() == 0:
+            continue
+        for scen, mult in scenarios.items():
+            r = max(0.0, r_use * mult)
+            sims = np.zeros((n_sims, horizon))
+            for s_i in range(n_sims):
+                hist = list(inc)
+                for wk_ahead in range(horizon):
+                    lam = sum(w[s - 1] * hist[-s] for s in range(1, min(len(w), len(hist)) + 1))
+                    nxt = rng.poisson(max(0.0, r * lam))
+                    sims[s_i, wk_ahead] = nxt
+                    hist.append(nxt)
+            for wk_ahead in range(horizon):
+                col = sims[:, wk_ahead]
+                rows.append({
+                    "query_sample": q["query_sample"], "country": loc_ctry,
+                    "admin1": loc_adm,
+                    "scenario": scen, "week_ahead": wk_ahead + 1,
+                    "proj_median": float(np.median(col)),
+                    "proj_lower95": float(np.percentile(col, 2.5)),
+                    "proj_upper95": float(np.percentile(col, 97.5)),
+                    "r_used": r,
+                })
+    return pd.DataFrame(rows, columns=cols)
+
+
+def build_source_inference(con, species, tip_meta):
+    """Fitch-parsimony country reconstruction -> per-query likely origin.
+
+    Post-order: node.state = intersect(children) if non-empty else union.
+    Pre-order refinement: child.state = child ∩ parent if non-empty.
+    A transition is an edge whose endpoints resolve to different singletons.
+    """
+    cols = ["query_sample", "query_country", "likely_origin_country",
+            "n_introductions_into_query_country", "n_transitions_total", "method"]
+    tree_id, nwk = _best_tree(con, species)
+    if tree_id is None or tip_meta is None or tip_meta.empty:
+        return pd.DataFrame(columns=cols)
+    meta = tip_meta.set_index("clean") if "clean" in tip_meta.columns else tip_meta.set_index(tip_meta.columns[0])
+
+    root = _parse_newick(nwk)
+    order = _tree_postorder(root)
+    all_countries = {str(c) for c in meta["country"].dropna()
+                     if str(c) not in {"Unknown", "nan", "None", ""}}
+    if not all_countries:
+        return pd.DataFrame(columns=cols)
+
+    parent = {}
+    for node in order:
+        for ch in node["children"]:
+            parent[id(ch)] = node
+
+    for node in order:  # post-order pass
+        if not node["children"]:
+            c = meta.loc[_clean_label(node["name"]), "country"] if _clean_label(node["name"]) in meta.index else None
+            node["state"] = {str(c)} if c is not None and str(c) not in {"Unknown", "nan", "None", ""} else set(all_countries)
+        else:
+            inter = set.intersection(*[ch["state"] for ch in node["children"]])
+            node["state"] = inter if inter else set.union(*[ch["state"] for ch in node["children"]])
+    # pre-order refinement
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        for ch in node["children"]:
+            inter = ch["state"] & node["state"]
+            if inter:
+                ch["state"] = inter
+            stack.append(ch)
+
+    transitions = []  # (from_country, to_country)
+    for node in order:
+        p = parent.get(id(node))
+        if p is None:
+            continue
+        if len(p["state"]) == 1 and len(node["state"]) == 1:
+            a, b = next(iter(p["state"])), next(iter(node["state"]))
+            if a != b:
+                transitions.append((a, b))
+
+    rows = []
+    for node in order:
+        if node["children"]:
+            continue
+        lab = _clean_label(node["name"])
+        if lab not in meta.index or not bool(meta.loc[lab, "is_query"]):
+            continue
+        qc = meta.loc[lab, "country"]
+        qc = str(qc) if qc is not None else "Unknown"
+        origin = np.nan
+        if qc not in {"Unknown", "nan", "None", ""}:
+            cur = node
+            while id(cur) in parent:
+                p = parent[id(cur)]
+                if len(p["state"]) == 1:
+                    pc = next(iter(p["state"]))
+                    if pc != qc:
+                        origin = pc
+                        break
+                cur = p
+        n_intro = sum(1 for (_, b) in transitions if b == qc) if qc not in {"Unknown", "nan", "None", ""} else np.nan
+        rows.append({
+            "query_sample": lab, "query_country": qc,
+            "likely_origin_country": origin,
+            "n_introductions_into_query_country": n_intro,
+            "n_transitions_total": len(transitions),
+            "method": "fitch_parsimony",
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pre-compute Transmission & Spread context tables")
     parser.add_argument("--db", default="results/knowledge_warehouse/knowledge_warehouse.duckdb")
     parser.add_argument("--species", default="ebov")
     parser.add_argument("--outdir", default="results/transmission_context")
+    parser.add_argument("--si-mean", type=float, default=15.3,
+                        help="Serial interval mean in days (Ebola default)")
+    parser.add_argument("--si-sd", type=float, default=9.3,
+                        help="Serial interval SD in days (Ebola default)")
+    parser.add_argument("--cluster-threshold", type=float, default=0.0005,
+                        help="Max pairwise patristic distance (div units) inside a genetic cluster")
     args = parser.parse_args()
 
     outdir = Path(args.outdir) / args.species
@@ -1329,6 +1946,38 @@ def main():
     # 5. Outbreak summary
     summary = build_outbreak_summary(con, args.species)
     write_tsv(summary, outdir / "transmission_outbreak_summary.tsv")
+
+    # --- RECON-style query-anchored analytics --------------------------------
+
+    # 7. Time-varying R per location
+    rt = build_rt(weekly if not weekly.empty else pd.DataFrame(),
+                  args.si_mean, args.si_sd)
+    write_tsv(rt, outdir / "transmission_rt.tsv")
+
+    # 8. Genetic transmission clusters + per-query cluster profile
+    clusters, tip_meta = build_genetic_clusters(con, args.species, args.cluster_threshold)
+    write_tsv(clusters, outdir / "genetic_clusters.tsv")
+    cprofile = build_cluster_profile(clusters, weekly if not weekly.empty else pd.DataFrame())
+    write_tsv(cprofile, outdir / "query_cluster_profile.tsv")
+
+    # 9. Per-query epi context (R at sampling, growth phase, sampling fraction)
+    qctx = build_query_epi_context(
+        con, args.species, weekly if not weekly.empty else pd.DataFrame(), rt, clusters
+    )
+    write_tsv(qctx, outdir / "query_epi_context.tsv")
+
+    # 10. Parsimony source inference per query (needed for projection fallback)
+    src = build_source_inference(con, args.species, tip_meta)
+    write_tsv(src, outdir / "query_source_inference.tsv")
+    origin_map = (dict(zip(src["query_sample"], src["likely_origin_country"]))
+                  if not src.empty else {})
+
+    # 11. Branching-process projections per query location (origin fallback)
+    proj = build_query_projection(
+        qctx, weekly if not weekly.empty else pd.DataFrame(), rt,
+        args.si_mean, args.si_sd, origin_map=origin_map,
+    )
+    write_tsv(proj, outdir / "query_projection.tsv")
 
     # 6. Strain transmission profile (per-clade historical behaviour)
     strain = build_strain_profile(

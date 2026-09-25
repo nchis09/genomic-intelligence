@@ -76,13 +76,15 @@ overview_header_ui <- function(species) {
   )
 }
 
-# Card body: currently a neutral placeholder -- no risk verdict or evidence
-# facts are surfaced here yet.
-overview_body_ui <- function(has_species) {
-  if (!has_species) {
+# Card body: the Intelligence Brief front page — situation strip, verdict
+# badges, bottom-line narrative, and one compact block per intelligence
+# objective with deep links into the detail tabs. Rendered from the
+# pre-generated intelligence_brief.json (GENERATE_INTELLIGENCE_BRIEF).
+overview_body_ui <- function(species, outdir = NULL) {
+  if (is.null(species)) {
     return(p("No Biological Threat data found in the pipeline output yet."))
   }
-  tags$ul(tags$li("In planning."))
+  brief_overview_ui(brief_read(outdir, species), species, outdir)
 }
 
 # Pathogen Genomics landing page: choose a species and whether to view the
