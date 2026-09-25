@@ -82,8 +82,9 @@ Alternatively, open `dashboard/app.R` in RStudio and click **Run App**.
 4. The other sidebar items (Transmission & Spread, Geographic & Temporal
    Context, etc.) are roadmap pages for now — they describe what each
    objective will show once its data source is wired in. **Intelligence
-   Brief** additionally has a "Preview & Edit Brief" button that opens a
-   placeholder editable preview, previewing the intended export flow.
+   Brief** shows the generated per-species brief and has a "Preview & Edit
+   Brief" button that opens an editable preview for export (Download .md /
+   Print → PDF).
 
 ## Data source
 
@@ -92,7 +93,14 @@ Reads directly from:
 ```
 <outdir>/pathogen_identification/<species>/species_identification/identification_summary.tsv
 <outdir>/pathogen_identification/<species>/species_identification/unresolved_samples.tsv
+<outdir>/intelligence_brief/<species>/intelligence_brief.json
 ```
+
+`intelligence_brief.json` is written by the `GENERATE_INTELLIGENCE_BRIEF`
+process (`bin/generate_intelligence_brief.R`) — the terminal aggregation
+step that synthesizes identification, transmission-context, mutation-profile
+and literature facts plus an LLM/template narrative into the front-page
+brief.
 
 No database connection — these are the same plain TSVs written by
 `PATHOGEN_IDENTIFICATION` alongside the `*_mqc.tsv` MultiQC copies (see

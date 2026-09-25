@@ -12,6 +12,8 @@ include { MUTATION_PROFILE_WF    } from '../subworkflows/local/mutation_profile/
 include { REPORTING              } from '../subworkflows/local/reporting/main'
 include { COMPUTE_TRANSMISSION_CONTEXT } from '../modules/local/compute_transmission_context/main'
 include { GENERATE_TREE_NOTES          } from '../modules/local/generate_tree_notes/main'
+include { GENERATE_SPREAD_ASSESSMENT   } from '../modules/local/generate_spread_assessment/main'
+include { GENERATE_INTELLIGENCE_BRIEF  } from '../modules/local/generate_intelligence_brief/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -92,6 +94,7 @@ workflow GENOMIC_INTELLIGENCE {
     def ch_mutation_profile_tsv = nextflow.Channel.empty()
     def ch_mutation_profile_mqc = nextflow.Channel.empty()
     def ch_multiqc_report = nextflow.Channel.empty()
+    def ch_intelligence_brief = nextflow.Channel.empty()
 
     db_host = nextflow.Channel.value(params.kw_db_host)
     db_port = nextflow.Channel.value(params.kw_db_port)
@@ -137,6 +140,17 @@ workflow GENOMIC_INTELLIGENCE {
                 .combine(ch_duckdb_dump)
                 .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
             COMPUTE_TRANSMISSION_CONTEXT(ch_transmission_input)
+
+            // Pre-generate the per-query Transmission & Spread assessment
+            // (LLM narrative over the context tables; template fallback when
+            // Ollama is unreachable — spread_assessment.json is always written).
+            if (!params.skip_spread_assessment) {
+                GENERATE_SPREAD_ASSESSMENT(
+                    COMPUTE_TRANSMISSION_CONTEXT.out.tsv,
+                    file("${projectDir}/dashboard/modules/llm_note.R"),
+                    file("${projectDir}/dashboard/modules/pathogen_transmission.R")
+                )
+            }
         }
 
         // Pre-generate the LLM tree-interpretation note per species so the
@@ -150,6 +164,45 @@ workflow GENOMIC_INTELLIGENCE {
                 ch_tree_notes_input,
                 file("${projectDir}/dashboard/modules/llm_note.R")
             )
+        }
+
+        //
+        // Terminal aggregation step: the Intelligence Brief is the front-page
+        // product of the whole run. It joins every optional upstream output on
+        // `meta` (per species) — stages skipped via --skip_* contribute an
+        // empty file list, which the R script records as a data gap. The join
+        // also guarantees the brief only starts once all upstream work for
+        // that species has finished.
+        //
+        if (!params.skip_intelligence_brief) {
+            ch_brief_base = ch_knowledge_db
+                .combine(ch_duckdb_dump)
+                .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
+            ch_brief_empty = ch_brief_base.map { meta, db -> tuple(meta, []) }
+
+            ch_brief_pi = params.skip_pathogen_identification ? ch_brief_empty
+                : PATHOGEN_IDENTIFICATION_WF.out.tsv
+            ch_brief_tc = params.skip_transmission_context ? ch_brief_empty
+                : COMPUTE_TRANSMISSION_CONTEXT.out.tsv
+            ch_brief_mp = params.skip_mutation_profile ? ch_brief_empty
+                : MUTATION_PROFILE_WF.out.tsv
+            ch_brief_tn = params.skip_tree_notes ? ch_brief_empty
+                : GENERATE_TREE_NOTES.out.json
+            ch_brief_sa = (params.skip_transmission_context || params.skip_spread_assessment)
+                ? ch_brief_empty
+                : GENERATE_SPREAD_ASSESSMENT.out.json
+
+            GENERATE_INTELLIGENCE_BRIEF(
+                ch_brief_base
+                    .join(ch_brief_pi)
+                    .join(ch_brief_tc)
+                    .join(ch_brief_mp)
+                    .join(ch_brief_tn)
+                    .join(ch_brief_sa),
+                file("${projectDir}/dashboard/modules/llm_note.R"),
+                file("${projectDir}/dashboard/modules/intelligence_brief.R")
+            )
+            ch_intelligence_brief = GENERATE_INTELLIGENCE_BRIEF.out.json
         }
 
     }
@@ -183,6 +236,7 @@ workflow GENOMIC_INTELLIGENCE {
     knowledge_db        = ch_knowledge_db
     knowledge_db_summary = ch_knowledge_db_summary
     identification_tsv   = ch_pathogen_id_tsv
+    intelligence_brief   = ch_intelligence_brief
     multiqc_report       = ch_multiqc_report
 }
 
