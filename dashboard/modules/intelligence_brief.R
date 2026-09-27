@@ -533,28 +533,45 @@ brief_read <- function(outdir, species) {
 }
 
 # Section block: title + stat strip + optional extra content + deep-link.
+# The whole card is clickable and navigates to nav_tab; the "Details" arrow is
+# a visual cue that does not capture the click itself.
 .brief_section <- function(icon_name, title, subtitle, stats, extra = NULL,
                            nav_tab = NULL) {
   link <- if (!is.null(nav_tab)) {
-    tags$a(
-      href = "#", style = "font-size: 0.78rem; margin-left: auto;",
-      onclick = sprintf(
-        "Shiny.setInputValue('overview_nav_click', '%s', {priority: 'event'}); return false;",
-        nav_tab),
+    tags$span(
+      style = "font-size: 0.78rem; margin-left: auto;",
       "Details ", icon("arrow-right")
     )
   }
-  div(
-    style = "border: 1px solid #e9ecef; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; background: #fff;",
-    div(
-      style = "display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px;",
-      icon(icon_name, style = "color: #4A6C8C;"),
-      span(style = "font-weight: 700; font-size: 0.95rem;", title),
-      tags$small(class = "text-muted", subtitle),
-      link
-    ),
-    if (length(stats)) div(class = "pi-summary-strip", style = "margin-bottom: 4px;", stats),
-    extra
+  click_attr <- if (!is.null(nav_tab)) {
+    list(
+      onclick = sprintf(
+        "Shiny.setInputValue('overview_nav_click', '%s', {priority: 'event'});",
+        nav_tab),
+      style = "border: 1px solid #e9ecef; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; background: #fff; cursor: pointer;",
+      title = sprintf("Click to open %s details", title),
+      onmouseover = "this.style.backgroundColor='#f8f9fa';",
+      onmouseout = "this.style.backgroundColor='#fff';"
+    )
+  } else {
+    list(
+      style = "border: 1px solid #e9ecef; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; background: #fff;"
+    )
+  }
+  do.call(
+    div,
+    c(click_attr,
+      list(
+        div(
+          style = "display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px;",
+          icon(icon_name, style = "color: #4A6C8C;"),
+          span(style = "font-weight: 700; font-size: 0.95rem;", title),
+          tags$small(class = "text-muted", subtitle),
+          link
+        ),
+        if (length(stats)) div(class = "pi-summary-strip", style = "margin-bottom: 4px;", stats),
+        extra
+      ))
   )
 }
 
