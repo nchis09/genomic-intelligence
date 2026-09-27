@@ -108,14 +108,15 @@ pathogen_genomics_tile_ui <- function() {
   )
 }
 
-# Preview/edit modal for the Intelligence Brief. The textarea is pre-filled
-# with the generated brief text (brief_markdown()); edits are what get
-# exported — the pipeline JSON stays untouched. "Download .md" saves the
-# current textarea content; "Print / Save as PDF" opens a minimal window
-# containing just the brief text and triggers the browser print dialog.
+# Preview/edit/export modal for the Intelligence Brief. The textarea is
+# pre-filled with the generated brief text (brief_markdown()); edits are what
+# get exported — the pipeline JSON stays untouched. The sign-off fields (lab,
+# performer, validator, date) are appended to every export and rendered as a
+# signature table in the HTML/PDF output. "Print / Save as PDF" opens a
+# formatted document window and triggers the browser print dialog.
 intelligence_brief_preview_modal <- function(content = NULL) {
   modalDialog(
-    title = "Preview & Edit Brief",
+    title = "Preview & Export Brief",
     size = "l",
     easyClose = TRUE,
     p(
@@ -123,24 +124,31 @@ intelligence_brief_preview_modal <- function(content = NULL) {
       "Generated from the pipeline's intelligence_brief.json — edit freely",
       "before exporting; the underlying file is not modified."
     ),
+    fluidRow(
+      column(6, textInput("report_lab_name", "Laboratory / institution",
+                          width = "100%", placeholder = "e.g. National Public Health Lab")),
+      column(6, dateInput("report_date", "Report date", value = Sys.Date(),
+                          width = "100%"))
+    ),
+    fluidRow(
+      column(6, textInput("report_run_by", "Analysis performed by",
+                          width = "100%", placeholder = "Name of analyst")),
+      column(6, textInput("report_validated_by", "Reviewed / validated by",
+                          width = "100%", placeholder = "Name of validator"))
+    ),
     textAreaInput(
-      "brief_preview_text", label = NULL, width = "100%", height = "320px",
+      "brief_preview_text", label = NULL, width = "100%", height = "280px",
       value = content %||% "No intelligence brief content available."
     ),
     footer = tagList(
       modalButton("Close"),
       downloadButton("brief_download", "Download .md",
                      class = "btn-outline-secondary"),
+      downloadButton("brief_download_html", "Download .html",
+                     class = "btn-outline-secondary"),
       actionButton(
         "brief_export_pdf", "Print / Save as PDF",
-        icon = icon("file-pdf"), class = "btn-secondary",
-        onclick = paste(
-          "var t=document.getElementById('brief_preview_text').value;",
-          "var w=window.open('','_blank');",
-          "w.document.write('<pre style=\"font-family:monospace;white-space:pre-wrap\">'",
-          "+ t.replace(/&/g,'&amp;').replace(/</g,'&lt;') +'</pre>');",
-          "w.document.close(); w.print();"
-        )
+        icon = icon("file-pdf"), class = "btn-secondary"
       )
     )
   )

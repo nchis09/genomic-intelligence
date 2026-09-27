@@ -445,7 +445,14 @@ ui <- bs4DashPage(
     tags$head(
       tags$style(HTML(brand_css)),
       tags$script(HTML(
-        "$(document).on('click', '.brand-link', function(e) {
+        "// Brief export: server sends a complete HTML doc to print
+        Shiny.addCustomMessageHandler('open_print_window', function(m) {
+          var w = window.open('', '_blank');
+          if (!w) return;
+          w.document.open(); w.document.write(m.html); w.document.close();
+          w.focus(); w.print();
+        });
+        $(document).on('click', '.brand-link', function(e) {
            e.preventDefault();
            Shiny.setInputValue('brand_home_click', 'click', {priority: 'event'});
          });
@@ -764,16 +771,46 @@ server <- function(input, output, session) {
     showModal(intelligence_brief_preview_modal(brief_markdown(brief_data(), sp)))
   })
 
-  # Download the (possibly edited) brief text as a .md file.
+  # Sign-off metadata entered in the preview modal, collected once here.
+  brief_signoff_meta <- reactive({
+    list(lab          = input$report_lab_name,
+         run_by       = input$report_run_by,
+         validated_by = input$report_validated_by,
+         report_date  = as.character(input$report_date %||% Sys.Date()),
+         species      = current_species())
+  })
+
+  # Download the (possibly edited) brief text as a .md file, sign-off appended.
   output$brief_download <- downloadHandler(
     filename = function() {
       sp <- current_species() %||% "brief"
       paste0("intelligence_brief_", sp, "_", Sys.Date(), ".md")
     },
     content = function(file) {
-      writeLines(input$brief_preview_text %||% "", file)
+      m <- brief_signoff_meta()
+      writeLines(c(input$brief_preview_text %||% "",
+                   brief_signoff_md(m$lab, m$run_by, m$validated_by, m$report_date)),
+                 file)
     }
   )
+
+  # Download the formatted standalone HTML report (same doc the print path uses).
+  output$brief_download_html <- downloadHandler(
+    filename = function() {
+      sp <- current_species() %||% "brief"
+      paste0("intelligence_brief_", sp, "_", Sys.Date(), ".html")
+    },
+    content = function(file) {
+      writeLines(brief_report_html(input$brief_preview_text, brief_signoff_meta()), file)
+    }
+  )
+
+  # Print / Save as PDF: build the formatted document server-side and hand it
+  # to the browser print dialog (head JS handler 'open_print_window').
+  observeEvent(input$brief_export_pdf, {
+    session$sendCustomMessage("open_print_window",
+      list(html = brief_report_html(input$brief_preview_text, brief_signoff_meta())))
+  })
 }
 
 shinyApp(ui, server)
