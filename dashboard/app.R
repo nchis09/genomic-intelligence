@@ -701,6 +701,133 @@ server <- function(input, output, session) {
     overview_body_ui(current_species(), outdir_r())
   })
 
+  # -- Home-page genomics mini-plots (divergence + VIP) wired into the
+  # "What is different about it" card. Divergence is read from the tree_tips
+  # table of the nextstrain tree; it is a per-sample evolution metric.
+  output$genomics_burden_plot <- renderPlot({
+    sp <- current_species(); outdir <- outdir_r(); if (is.null(sp) || is.null(outdir)) return(NULL)
+    db <- file.path(outdir, "knowledge_warehouse", "knowledge_warehouse.duckdb")
+    if (!file.exists(db)) return(NULL)
+    con <- DBI::dbConnect(duckdb::duckdb(), dbdir = db, read_only = TRUE)
+    on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+    tree_id <- DBI::dbGetQuery(con,
+      "SELECT tree_id FROM phylogenetic_trees WHERE species = ? AND tree_method = 'nextstrain' ORDER BY tree_id LIMIT 1",
+      params = list(sp))
+    if (!nrow(tree_id))
+      tree_id <- DBI::dbGetQuery(con,
+        "SELECT tree_id FROM phylogenetic_trees WHERE species = ? LIMIT 1",
+        params = list(sp))
+    if (!nrow(tree_id)) return(NULL)
+    tips <- DBI::dbGetQuery(con,
+      "SELECT is_query, div FROM tree_tips WHERE tree_id = ? AND div IS NOT NULL",
+      params = list(tree_id$tree_id))
+    if (!nrow(tips)) return(NULL)
+    tips$group <- ifelse(tips$is_query, "Query", "Background")
+    tips$group <- factor(tips$group, levels = c("Background", "Query"))
+    query <- tips[tips$group == "Query", ]
+    ggplot2::ggplot(tips, aes(group, div, fill = group)) +
+      ggplot2::geom_boxplot(outlier.shape = NA, alpha = 0.7, width = 0.45, show.legend = FALSE) +
+      ggplot2::geom_jitter(data = query, color = "#C0392B", width = 0.1, height = 0, size = 2.2) +
+      ggplot2::scale_fill_manual(values = c(Query = "#C0392B", Background = "#4A6C8C")) +
+      ggplot2::labs(x = NULL, y = "Divergence (substs/site)", title = "Query vs background divergence") +
+      ggplot2::theme_minimal(base_size = 11) +
+      ggplot2::theme(legend.position = "none")
+  })
+
+  output$genomics_vip_plot <- renderPlot({
+    sp <- current_species(); outdir <- outdir_r(); if (is.null(sp) || is.null(outdir)) return(NULL)
+    df <- .brief_tsv(file.path(outdir, "pathogen_mutation_profile", sp, "mutation_profile"),
+                     "01_plsda_vip.tsv")
+    if (is.null(df) || !nrow(df)) return(NULL)
+    df <- df[order(df$vip, decreasing = TRUE), ]
+    if (nrow(df) > 10) df <- utils::head(df, 10)
+    df$protein_name <- factor(df$protein_name, levels = rev(df$protein_name))
+    ggplot2::ggplot(df, aes(protein_name, vip)) +
+      ggplot2::geom_col(fill = "#4A6C8C", width = 0.7, show.legend = FALSE) +
+      ggplot2::coord_flip() +
+      ggplot2::labs(x = NULL, y = "VIP score", title = "Top proteins") +
+      ggplot2::theme_minimal(base_size = 11) +
+      ggplot2::theme(legend.position = "none",
+                     plot.title = ggplot2::element_text(size = 10, face = "bold"))
+  })
+
+  # -- Home-page projection fan chart (Where it could go card).
+  output$projection_fan_plot <- renderPlot({
+    sp <- current_species(); outdir <- outdir_r(); if (is.null(sp) || is.null(outdir)) return(NULL)
+    pj <- .brief_tsv(file.path(outdir, "transmission_context", sp), "query_projection.tsv")
+    if (is.null(pj) || !nrow(pj)) return(NULL)
+    pj <- pj |>
+      dplyr::mutate(
+        wk = as.numeric(.data$week_ahead),
+        med = as.numeric(.data$proj_median),
+        lo = as.numeric(.data$proj_lower95),
+        hi = as.numeric(.data$proj_upper95),
+        scenario = as.character(.data$scenario)
+      ) |>
+      dplyr::filter(!is.na(.data$wk), !is.na(.data$med)) |>
+      dplyr::group_by(.data$scenario, .data$wk) |>
+      dplyr::summarise(med = median(.data$med), lo = min(.data$lo), hi = max(.data$hi), .groups = "drop")
+    pal <- c(baseline = "#4A6C8C", contained = "#3A916E", expanded = "#C0392B")
+    ggplot2::ggplot(pj, aes(wk, med, color = scenario, fill = scenario)) +
+      ggplot2::geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.15, color = NA) +
+      ggplot2::geom_line(linewidth = 1) +
+      ggplot2::scale_color_manual(values = pal) +
+      ggplot2::scale_fill_manual(values = pal) +
+      ggplot2::labs(x = "Weeks ahead", y = "Weekly cases", color = "Scenario", title = "8-week projection") +
+      ggplot2::theme_minimal(base_size = 10) +
+      ggplot2::theme(legend.position = "top",
+                     legend.title = ggplot2::element_blank(),
+                     legend.text = ggplot2::element_text(size = 7))
+  })
+
+  # -- Home-page spread map (How it's spreading card): query locations,
+  # likely origins, and reported historical cases from transmission_spatial.
+  output$spread_map_plot <- leaflet::renderLeaflet({
+    brief <- brief_data()
+    outdir <- outdir_r()
+    if (is.null(brief) || is.null(outdir)) return(NULL)
+    q_countries <- unique(brief$situation$query_countries %||% character())
+    origins <- unique(brief$transmission$likely_origins %||% character())
+    all_countries <- unique(c(q_countries, origins))
+    if (!length(all_countries)) return(NULL)
+    cc <- .brief_country_centroid(all_countries)
+    cc$country <- all_countries
+    cc <- cc[!is.na(cc$lat) & !is.na(cc$lon), ]
+    q <- cc[cc$country %in% q_countries, ]
+    o <- cc[cc$country %in% origins, ]
+    m <- leaflet::leaflet() |> leaflet::addTiles()
+    if (nrow(q)) {
+      m <- m |> leaflet::addCircleMarkers(
+        data = q, lng = ~lon, lat = ~lat, color = "#C0392B",
+        fillColor = "#C0392B", fillOpacity = 0.85, radius = 7,
+        popup = ~paste0("Query location: ", country)
+      )
+    }
+    if (nrow(o)) {
+      m <- m |> leaflet::addCircleMarkers(
+        data = o, lng = ~lon, lat = ~lat, color = "#4A6C8C",
+        fillColor = "#4A6C8C", fillOpacity = 0.85, radius = 7,
+        popup = ~paste0("Likely origin: ", country)
+      )
+      for (i in seq_len(nrow(o))) {
+        for (j in seq_len(nrow(q))) {
+          m <- m |> leaflet::addPolylines(
+            lng = c(o$lon[i], q$lon[j]), lat = c(o$lat[i], q$lat[j]),
+            color = "#4A6C8C", dashArray = "5,8", opacity = 0.6, weight = 1.5
+          )
+        }
+      }
+    }
+    if (nrow(cc)) {
+      pad <- 8
+      m <- m |> leaflet::fitBounds(
+        min(cc$lon) - pad, min(cc$lat) - pad,
+        max(cc$lon) + pad, max(cc$lat) + pad
+      )
+    }
+    m
+  })
+
   # -- Intelligence Brief tab: renders the pre-generated per-species
   # intelligence_brief.json for whichever species the Overview dropdown has
   # selected, plus the export card.

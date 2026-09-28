@@ -691,11 +691,26 @@ brief_overview_ui <- function(brief, species, outdir = NULL) {
     .brief_section("dna", "What is it", "— identification",
                    id_stats, nav_tab = paste0("pi_", species)),
     .brief_section("microscope", "What's different about it", "— genomics",
-                   gen_stats, nav_tab = paste0("pg_", species)),
+                   gen_stats,
+                   extra = tagList(
+                     fluidRow(
+                       column(6, plotOutput("genomics_burden_plot", height = "150px")),
+                       column(6, plotOutput("genomics_vip_plot", height = "150px"))
+                     )
+                   ),
+                   nav_tab = paste0("pg_", species)),
     .brief_section("share-nodes", "How it's spreading", "— transmission evidence",
-                   tr_stats, nav_tab = paste0("ts_", species)),
+                   tr_stats,
+                   extra = div(
+                     onclick = "event.stopPropagation();",
+                     style = "position: relative;",
+                     leaflet::leafletOutput("spread_map_plot", height = "150px")
+                   ),
+                   nav_tab = paste0("ts_", species)),
     .brief_section("earth-africa", "Where it could go", "— distribution & outlook",
-                   out_stats, nav_tab = paste0("gt_", species)),
+                   out_stats,
+                   extra = plotOutput("projection_fan_plot", height = "150px"),
+                   nav_tab = paste0("gt_", species)),
     caveats_block
   )
 }
@@ -863,6 +878,49 @@ brief_markdown <- function(brief, species) {
                               format(brief$evidence_base$total_papers, big.mark = ","),
                               length(brief$evidence_base$domains %||% list())))
   paste(lines, collapse = "\n")
+}
+
+# Small geocoding helper for the home-page spread map. Uses ggplot2's world
+# map polygons to fall back to country centroids when coordinates are missing.
+.brief_centroid_cache <- new.env(parent = emptyenv())
+
+.brief_world_centroids <- function() {
+  if (exists("centroids", envir = .brief_centroid_cache))
+    return(get("centroids", envir = .brief_centroid_cache))
+  wm <- tryCatch(ggplot2::map_data("world"), error = function(e) NULL)
+  cents <- if (is.null(wm) || !nrow(wm)) {
+    data.frame(country = character(0), lat = numeric(0), lon = numeric(0), stringsAsFactors = FALSE)
+  } else {
+    wm |>
+      dplyr::filter(!is.na(.data$long), !is.na(.data$lat)) |>
+      dplyr::group_by(country = .data$region) |>
+      dplyr::summarise(lon = mean(.data$long), lat = mean(.data$lat), .groups = "drop") |>
+      as.data.frame()
+  }
+  assign("centroids", cents, envir = .brief_centroid_cache)
+  cents
+}
+
+.brief_country_centroid <- function(country) {
+  out <- data.frame(lat = rep(NA_real_, length(country)), lon = rep(NA_real_, length(country)))
+  cents <- .brief_world_centroids()
+  if (!nrow(cents)) return(out)
+  norm <- function(x) tolower(trimws(gsub("[^a-z ]", "", tolower(as.character(x)))))
+  alias <- c("drc" = "democratic republic of the congo",
+             "congo kinshasa" = "democratic republic of the congo",
+             "republic of the congo" = "republic of congo",
+             "congo brazzaville" = "republic of congo",
+             "united states" = "usa", "united states of america" = "usa",
+             "us" = "usa", "united kingdom" = "uk", "great britain" = "uk",
+             "cote divoire" = "ivory coast", "the gambia" = "gambia")
+  key <- norm(country)
+  key <- ifelse(key %in% names(alias), unname(alias[key]), key)
+  cmap <- stats::setNames(seq_len(nrow(cents)), norm(cents$country))
+  idx <- unname(cmap[key])
+  hit <- !is.na(idx)
+  out$lat[hit] <- cents$lat[idx[hit]]
+  out$lon[hit] <- cents$lon[idx[hit]]
+  out
 }
 
 # Sign-off block appended to exported briefs — lab name / performer / validator
