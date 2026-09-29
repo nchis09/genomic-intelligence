@@ -18,6 +18,7 @@ process EVIDENCE_SUMMARY {
 
     output:
     tuple val(meta), path("domain_summaries.tsv"), emit: summaries
+    tuple val(meta), path("evidence_highlights.json"), emit: highlights
 
     when:
     !params.skip_literature_evidence && !params.skip_literature_text && (task.ext.when == null || task.ext.when)

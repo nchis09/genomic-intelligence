@@ -570,6 +570,9 @@ server <- function(input, output, session) {
       }
     })
 
+    # Intelligence Overview is the single top item — the full brief page is
+    # still reachable via the home-page brief card, the objectives tile and
+    # the "Generate Genomic Intelligence Brief" CTA.
     do.call(sidebarMenu, c(
       list(id = "sidebarmenu"),
       list(menuItem("Intelligence Overview", tabName = "home", icon = icon("house"))),
@@ -578,7 +581,7 @@ server <- function(input, output, session) {
       pg_items,
       roadmap_items[1:4],
       list(sidebarHeader("EVIDENCE & REPORTING")),
-      roadmap_items[5:6]
+      roadmap_items[5]
     ))
   })
 
@@ -815,6 +818,56 @@ server <- function(input, output, session) {
       ggplot2::theme(legend.position = "top",
                      legend.title = ggplot2::element_blank(),
                      legend.text = ggplot2::element_text(size = 7))
+  })
+
+  # -- Evidence highlights charts (What we know & can do card): claims per
+  # domain + top countermeasure products from evidence_highlights.json.
+  output$evidence_domains_plot <- plotly::renderPlotly({
+    sp <- current_species(); outdir <- outdir_r()
+    if (is.null(sp) || is.null(outdir)) return(NULL)
+    hl <- brief_highlights(outdir, sp)
+    dc <- hl$domain_claims
+    if (is.null(dc) || !length(dc)) return(NULL)
+    d <- data.frame(domain = names(dc), claims = as.numeric(unlist(dc)),
+                    stringsAsFactors = FALSE)
+    d <- d[order(d$claims), ]
+    d$domain <- factor(d$domain, levels = d$domain)
+    plotly::plot_ly(d, y = ~domain, x = ~claims, type = "bar",
+                    orientation = "h",
+                    marker = list(color = "#4A6C8C"),
+                    hovertemplate = "%{y}: %{x} claims<extra></extra>") %>%
+      plotly::layout(title = list(text = "Claims per domain", font = list(size = 11)),
+                     xaxis = list(title = ""), yaxis = list(title = ""),
+                     margin = list(t = 40, b = 20, l = 10, r = 10),
+                     paper_bgcolor = "transparent", plot_bgcolor = "transparent") %>%
+      plotly::config(displayModeBar = FALSE)
+  })
+
+  output$evidence_products_plot <- plotly::renderPlotly({
+    sp <- current_species(); outdir <- outdir_r()
+    if (is.null(sp) || is.null(outdir)) return(NULL)
+    hl <- brief_highlights(outdir, sp)
+    tp <- hl$top_products
+    if (is.null(tp) || !length(tp)) return(NULL)
+    d <- data.frame(
+      product = vapply(tp, function(p) p$product, character(1)),
+      value   = vapply(tp, function(p) as.numeric(p$value), numeric(1)),
+      label   = vapply(tp, function(p) paste0(p$metric, " ", p$value, "%"),
+                       character(1)),
+      stringsAsFactors = FALSE)
+    d <- d[order(d$value), ]
+    d$product <- factor(d$product, levels = d$product)
+    plotly::plot_ly(d, y = ~product, x = ~value, type = "bar",
+                    orientation = "h", text = ~label, textposition = "outside",
+                    marker = list(color = "#3A916E"),
+                    hovertemplate = "%{y}: %{text}<extra></extra>") %>%
+      plotly::layout(title = list(text = "Top countermeasure products",
+                                  font = list(size = 11)),
+                     xaxis = list(title = "%", range = c(0, 115)),
+                     yaxis = list(title = ""),
+                     margin = list(t = 40, b = 20, l = 10, r = 10),
+                     paper_bgcolor = "transparent", plot_bgcolor = "transparent") %>%
+      plotly::config(displayModeBar = FALSE)
   })
 
   # -- Home-page spread map (How it's spreading card): query locations,
