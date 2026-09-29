@@ -214,6 +214,93 @@ def overview_facts(per_domain):
     return out
 
 
+# -- Evidence highlights (brief) ------------------------------------------------
+
+PCT_METRICS = {
+    "vaccine_therapeutic": ("efficacy", ("product_name", "product_type",
+                                        "intervention_name", "target")),
+    "diagnostic":          ("sensitivity", ("test_name", "product_name",
+                                            "test_type",
+                                            "target_gene_or_antigen")),
+    "intervention":        ("effectiveness", ("intervention_name",
+                                              "product_name",
+                                              "intervention_type")),
+}
+
+
+def parse_pct(v):
+    """Parse a proportion/percent field to 0-100."""
+    if not nonempty(v):
+        return None
+    s = str(v).strip().rstrip("%")
+    m = re.search(r"-?\d+(?:\.\d+)?", s)
+    if not m:
+        return None
+    x = float(m.group(0))
+    if x <= 1.0:
+        x *= 100
+    return x
+
+
+def group_label(r, fields):
+    for f in fields:
+        v = (r.get(f) or "").strip()
+        if nonempty(v):
+            return v
+    return ""
+
+
+def top_products(per_domain, k=6):
+    """Median effectiveness metric per concrete product/test/intervention."""
+    out = []
+    for domain, (metric, groups) in PCT_METRICS.items():
+        rows = per_domain.get(domain, ([], {}))[0]
+        agg = {}
+        for r in rows:
+            g = group_label(r, groups)
+            v = parse_pct(r.get(metric))
+            if g and v is not None:
+                agg.setdefault(g, []).append(v)
+        for g, vs in agg.items():
+            vs.sort()
+            med = vs[len(vs) // 2] if len(vs) % 2 else (vs[len(vs) // 2 - 1]
+                                                      + vs[len(vs) // 2]) / 2
+            out.append({"product": g, "domain": domain,
+                        "metric": metric, "value": round(med, 1),
+                        "n": len(vs)})
+    out.sort(key=lambda d: d["value"], reverse=True)
+    return out[:k]
+
+
+def highlights_prompt(facts, species):
+    return (
+        "You are an epidemiologist writing field-brief highlights on "
+        f"{species.upper()} for a colleague about to deploy. From the JSON "
+        "below — per-domain literature summaries, claim coverage, gaps and "
+        "top countermeasure products — write 4-6 plain sentences: what is "
+        "known about this pathogen from published evidence, which concrete "
+        "diagnostics/vaccines/therapeutics exist and their key metrics, and "
+        "the most important knowledge gap. Name products and numbers; "
+        "summarise only what is given — no outside knowledge, no markdown.\n\n"
+        "FACTS:\n" + json.dumps(facts, ensure_ascii=False))
+
+
+def write_highlights(outdir, species, facts, text, source, model, generated_at):
+    payload = {
+        "species": species, "text": text, "source": source,
+        "model": model if source == "ollama" else "",
+        "generated_at": generated_at,
+        "domain_claims": facts["domain_claims"],
+        "top_products": facts["top_products"],
+        "papers_with_claims": facts["papers_with_claims"],
+        "domains_with_evidence": facts["domains_with_evidence"],
+        "domains_with_gap": facts["domains_with_gap"],
+    }
+    with open(Path(outdir) / "evidence_highlights.json", "w",
+              encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
 def overview_prompt(facts, species):
     return (
         "You are an epidemiologist writing a short 'known vs unknown' "
@@ -287,6 +374,39 @@ def main():
         "source": "ollama" if text else "template",
         "model": model if text else "", "generated_at": now,
     })
+
+    # -- Intelligence-brief highlights ------------------------------------------
+    products = top_products(per_domain)
+    hl_facts = {
+        "domain_summaries": {r["domain"]: r["summary"] for r in results
+                             if r["domain"] != "species_overview"},
+        "domain_claims": {d: f["n_claims"] for d, (_, f)
+                          in per_domain.items()},
+        "top_products": products,
+        "papers_with_claims": n_papers,
+        "domains_with_evidence": present,
+        "domains_with_gap": [d for d in sorted(DOMAIN_LABELS)
+                             if d not in present],
+    }
+    hl_text = None
+    if model:
+        try:
+            hl_text = ollama_generate(host, model,
+                                      highlights_prompt(hl_facts, args.species),
+                                      args.n_ctx, args.temperature, args.timeout)
+        except Exception as exc:
+            print(f"[summarize_evidence] highlights Ollama failed: {exc}",
+                  file=sys.stderr)
+    if not hl_text:
+        prod_txt = ("; ".join(f"{p['product']} ({p['metric']} "
+                              f"{p['value']}%, n={p['n']})"
+                              for p in products[:3])
+                    if products else "none quantified")
+        hl_text = (fallback
+                   + f" Countermeasure products with metrics: {prod_txt}.")
+    write_highlights(outdir, args.species, hl_facts, hl_text,
+                     "ollama" if hl_text and model else "template",
+                     model, now)
 
     cols = ["species", "domain", "n_claims", "n_papers", "summary", "source",
             "model", "generated_at"]
