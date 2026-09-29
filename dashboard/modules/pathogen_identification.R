@@ -63,6 +63,12 @@ PI_UNRESOLVED_TABLE <- list(
 PI_COLORS <- c("#2ECC71", "#3498DB", "#F39C12", "#E74C3C", "#9B59B6",
                "#1ABC9C", "#E67E22", "#34495E", "#E91E63", "#00BCD4")
 
+# Default d3.scaleOrdinal.schemeCategory10 palette used by parcoords
+PI_PARCOORDS_COLORS <- c(
+  "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+  "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
+)
+
 # Metrics to chart: list(col, label, subtitle, higher_is_better, is_pct)
 PI_METRICS <- list(
   list(col = "coverage",                    label = "Coverage (%)",                      subtitle = "Higher is better",             higher = TRUE,  pct = TRUE),
@@ -136,6 +142,154 @@ pi_metric_chart <- function(sel_df, metric, color_map, dark_mode = FALSE) {
     ) %>%
     config(displayModeBar = FALSE)
   p
+}
+
+# Single grouped-bar plot: metric sections on the x-axis, one coloured bar per
+# selected sample inside each section. Metrics differ wildly in scale
+# (percentages vs distances vs raw QC scores) so each section is normalised to
+# its own max — the bars compare samples within a metric, and raw values are
+# shown as labels/hover.
+pi_metrics_grouped_bars <- function(sel_df, color_map, dark_mode = FALSE) {
+  font_color <- if (dark_mode) "#e0e0e0" else "#333333"
+  grid_color <- if (dark_mode) "#4a5568" else "#e9ecef"
+
+  rows <- list()
+  for (metric in PI_METRICS) {
+    col <- metric$col
+    vals <- suppressWarnings(as.numeric(sel_df[[col]]))
+    if (all(is.na(vals))) next
+    display_vals <- if (metric$pct) vals * 100 else vals
+    mx <- max(display_vals, na.rm = TRUE)
+    if (!is.finite(mx) || mx <= 0) mx <- 1
+    rows[[length(rows) + 1]] <- data.frame(
+      metric  = gsub("\n", " ", metric$label),
+      sample  = sel_df$sample,
+      val     = display_vals,
+      pct_max = display_vals / mx * 100,
+      label   = sprintf(if (metric$pct) "%.1f%%" else "%.4g", display_vals),
+      stringsAsFactors = FALSE
+    )
+  }
+  if (!length(rows)) return(NULL)
+  dd <- do.call(rbind, rows)
+  dd$metric <- factor(dd$metric, levels = unique(dd$metric))
+  dd$sample <- factor(dd$sample, levels = sel_df$sample)
+
+  plot_ly(
+    data = dd, x = ~metric, y = ~pct_max, color = ~sample,
+    colors = setNames(unname(color_map[levels(dd$sample)]), levels(dd$sample)),
+    type = "bar",
+    hovertemplate = "<b>%{fullData.name}</b><br>%{x}: %{text}<extra></extra>",
+    text = ~label, textposition = "outside",
+    textfont = list(size = 9),
+    marker = list(line = list(color = "rgba(0,0,0,0.15)", width = 1))
+  ) %>%
+    layout(
+      barmode = "group",
+      title = list(text = "Genomic metrics — bars scaled per metric (max = 100%); labels show raw values",
+                   font = list(size = 13, color = font_color), x = 0.5),
+      xaxis = list(title = "", tickangle = -20,
+                   tickfont = list(size = 10, color = font_color),
+                   gridcolor = grid_color),
+      yaxis = list(title = "% of section max", rangemode = "tozero",
+                   range = c(0, 118),
+                   tickfont = list(color = font_color), gridcolor = grid_color),
+      legend = list(orientation = "h", y = -0.28, font = list(color = font_color)),
+      margin = list(t = 60, b = 90, l = 60, r = 20, pad = 8),
+      paper_bgcolor = "transparent", plot_bgcolor = "transparent",
+      font = list(color = font_color),
+      height = 420
+    ) %>%
+    config(displayModeBar = FALSE)
+}
+
+# Bar chart for one metric: one bar per selected sample, coloured by sample.
+pi_metric_bars <- function(sel_df, metric, color_map, dark_mode = FALSE) {
+  font_color <- if (dark_mode) "#e0e0e0" else "#333333"
+  grid_color <- if (dark_mode) "#4a5568" else "#e9ecef"
+
+  col  <- metric$col
+  vals <- suppressWarnings(as.numeric(sel_df[[col]]))
+  if (all(is.na(vals))) return(NULL)
+
+  display_vals <- if (metric$pct) vals * 100 else vals
+  labels <- sprintf(if (metric$pct) "%.1f%%" else "%.4f", display_vals)
+  colors <- color_map[sel_df$sample]
+  colors[is.na(colors)] <- PI_PARCOORDS_COLORS[seq_along(colors)]
+
+  plot_ly(
+    x = sel_df$sample, y = display_vals,
+    type = "bar",
+    marker = list(color = unname(colors), line = list(color = "rgba(0,0,0,0.15)", width = 1)),
+    text = labels, textposition = "outside",
+    textfont = list(size = 10, color = unname(colors)),
+    hoverinfo = "x+y",
+    showlegend = FALSE
+  ) %>%
+    layout(
+      title = list(text = paste0("<b>", gsub("\n", " ", metric$label), "</b>",
+                                 "<br><sup>", metric$subtitle, "</sup>"),
+                   font = list(size = 13, color = font_color), x = 0.5, y = 0.95),
+      xaxis = list(title = "", tickangle = -30,
+                   tickfont = list(size = 10, color = font_color),
+                   categoryorder = "array", categoryarray = sel_df$sample,
+                   gridcolor = grid_color),
+      yaxis = list(
+        title = "",
+        tickformat = if (metric$pct) ".0f" else ".4f",
+        tickfont = list(color = font_color),
+        range = list(0, max(display_vals, na.rm = TRUE) * 1.25),
+        automargin = TRUE,
+        gridcolor = grid_color
+      ),
+      margin = list(t = 85, b = 50, l = 55, r = 20, pad = 8),
+      paper_bgcolor = "transparent", plot_bgcolor = "transparent",
+      font = list(color = font_color),
+      height = 310
+    ) %>%
+    config(displayModeBar = FALSE)
+}
+
+# ---------------------------------------------------------------------------
+# Parallel coordinates data for D3 r2d3
+# ---------------------------------------------------------------------------
+pi_parcoords_data <- function(sel_df, color_map, dark_mode = FALSE) {
+  if (nrow(sel_df) < 2) return(NULL)
+
+  cols   <- sapply(PI_METRICS, `[[`, "col")
+  titles <- sapply(PI_METRICS, function(m) gsub("\n", " ", m$label))
+  pct    <- sapply(PI_METRICS, `[[`, "pct")
+
+  n <- nrow(sel_df)
+  raw_vals <- matrix(0, nrow = n, ncol = length(cols))
+
+  for (i in seq_along(cols)) {
+    vals <- suppressWarnings(as.numeric(sel_df[[cols[i]]]))
+    if (pct[i]) vals <- vals * 100
+    raw_vals[, i] <- vals
+  }
+
+  closest_ref <- if ("closest_reference" %in% names(sel_df)) {
+    as.character(sel_df$closest_reference)
+  } else {
+    rep(NA_character_, n)
+  }
+
+  samples <- lapply(seq_len(n), function(j) {
+    sample_name <- as.character(sel_df$sample[j])
+    sample_color <- color_map[[sample_name]]
+    if (is.null(sample_color) || is.na(sample_color)) {
+      sample_color <- PI_PARCOORDS_COLORS[((j - 1) %% length(PI_PARCOORDS_COLORS)) + 1]
+    }
+    list(
+      name = sample_name,
+      values = as.numeric(raw_vals[j, ]),
+      closest_reference = closest_ref[j],
+      color = unname(sample_color)
+    )
+  })
+
+  list(samples = samples, titles = titles, dark_mode = dark_mode)
 }
 
 # ---------------------------------------------------------------------------
@@ -381,24 +535,10 @@ pathogen_identification_register <- function(input, output, session, species, ou
     )
   })
 
-  # -- Comparison charts section
+  # -- Comparison charts section (single parallel coordinates plot)
   output[[pi_id(sp, "chart_section")]] <- renderUI({
     sel <- selected_samples()
     if (length(sel) < 2) return(NULL)
-
-    chart_outputs <- lapply(seq_along(PI_METRICS), function(i) {
-      column(width = 4, style = "margin-bottom: 12px;",
-        plotly::plotlyOutput(pi_id(sp, paste0("chart_", i)), height = "310px")
-      )
-    })
-
-    cmap <- color_map()
-    legend_items <- lapply(names(cmap), function(s) {
-      div(class = "pi-legend-item",
-        span(class = "pi-legend-swatch", style = paste0("background:", cmap[[s]], ";")),
-        s
-      )
-    })
 
     div(class = "pi-chart-section",
       div(style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;",
@@ -407,22 +547,25 @@ pathogen_identification_register <- function(input, output, session, species, ou
                      icon = icon("rotate-left"),
                      class = "btn-outline-secondary btn-sm")
       ),
-      fluidRow(chart_outputs),
-      div(class = "pi-legend", legend_items)
+      fluidRow(
+        column(width = 12,
+          plotly::plotlyOutput(pi_id(sp, "metric_grouped_plot"), height = "440px")
+        )
+      )
     )
   })
 
-  # -- Render each metric chart
-  lapply(seq_along(PI_METRICS), function(i) {
-    output[[pi_id(sp, paste0("chart_", i))]] <- plotly::renderPlotly({
-      sel <- selected_samples()
-      req(length(sel) >= 2)
-      dark <- isTRUE(input$is_dark_mode)
-      df <- summary_data()
-      sel_df <- df[df$sample %in% sel, , drop = FALSE]
-      sel_df <- sel_df[match(sel, sel_df$sample), , drop = FALSE]
-      pi_metric_chart(sel_df, PI_METRICS[[i]], color_map(), dark_mode = dark)
-    })
+  # -- Single grouped-bar comparison: metric sections on x, one coloured bar
+  #   per sample. Replaces the old parallel-coordinates view — connecting
+  #   unrelated metrics with continuous lines implied a trend that doesn't exist.
+  output[[pi_id(sp, "metric_grouped_plot")]] <- plotly::renderPlotly({
+    sel <- selected_samples()
+    req(length(sel) >= 2)
+    dark <- isTRUE(input$is_dark_mode)
+    df <- summary_data()
+    sel_df <- df[df$sample %in% sel, , drop = FALSE]
+    sel_df <- sel_df[match(sel, sel_df$sample), , drop = FALSE]
+    pi_metrics_grouped_bars(sel_df, color_map(), dark_mode = dark)
   })
 
   # -- Second reset button (inside chart section)
