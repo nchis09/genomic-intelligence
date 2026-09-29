@@ -53,8 +53,6 @@ roadmap_tile_ui <- function(objective) {
   is_live <- !is.null(objective$status) && objective$status == "Live"
   color <- if (is_live) "#4A6C8C" else "#6c757d"
   border <- if (is_live) "#4A6C8C" else "#e9ecef"
-  badge_class <- if (is_live) "badge badge-primary" else "badge badge-light"
-  badge_text <- if (is_live) "Live" else "Planned"
   div(
     style = paste0(
       "cursor: pointer; border: 1px solid ", border, "; border-radius: 6px;",
@@ -67,7 +65,9 @@ roadmap_tile_ui <- function(objective) {
     ),
     icon(objective$icon),
     div(style = paste0("font-size: 0.78rem; margin-top: 4px;", if (is_live) " font-weight: 600;" else ""), objective$label),
-    span(class = badge_class, style = "font-size: 0.65rem; margin-top: 2px;", badge_text)
+    # Only flag what's still planned — "Live" is the default state now.
+    if (!is_live)
+      span(class = "badge badge-light", style = "font-size: 0.65rem; margin-top: 2px;", "Planned")
   )
 }
 
@@ -88,8 +88,7 @@ live_tile_ui <- function() {
     ),
     onclick = "Shiny.setInputValue('overview_live_tile_click', 'click', {priority: 'event'});",
     icon("dna"),
-    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Biological Threat"),
-    span(class = "badge badge-primary", style = "font-size: 0.65rem; margin-top: 2px;", "Live")
+    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Biological Threat")
   )
 }
 
@@ -103,8 +102,7 @@ pathogen_genomics_tile_ui <- function() {
     ),
     onclick = "Shiny.setInputValue('overview_pg_tile_click', 'click', {priority: 'event'});",
     icon("microscope"),
-    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Pathogen Genomics"),
-    span(class = "badge badge-primary", style = "font-size: 0.65rem; margin-top: 2px;", "Live")
+    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Pathogen Genomics")
   )
 }
 

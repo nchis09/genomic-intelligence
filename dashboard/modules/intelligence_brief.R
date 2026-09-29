@@ -511,6 +511,15 @@ brief_read <- function(outdir, species) {
   .brief_json(brief_json_path(outdir, species))
 }
 
+# Pipeline-generated evidence & countermeasure highlights
+# (EVIDENCE_SUMMARY -> literature_summaries/<species>/evidence_highlights.json).
+brief_highlights <- function(outdir, species) {
+  if (is.null(species) || is.null(outdir)) return(list())
+  f <- file.path(outdir, "literature_retrieval", "literature_summaries",
+                 species, "evidence_highlights.json")
+  .brief_json(f) %||% list()
+}
+
 .brief_pct <- function(x, digits = 1) if (is.null(x) || is.na(x)) "—" else paste0(formatC(as.numeric(x) * 100, digits = digits, format = "f"), "%")
 .brief_fmt <- function(x, digits = 2, comma = FALSE) {
   if (is.null(x) || (length(x) == 1 && is.na(x))) return("—")
@@ -700,17 +709,58 @@ brief_overview_ui <- function(brief, species, outdir = NULL) {
                    ),
                    nav_tab = paste0("pg_", species)),
     .brief_section("share-nodes", "How it's spreading", "— transmission evidence",
-                   tr_stats,
+                   list(),
                    extra = div(
                      onclick = "event.stopPropagation();",
                      style = "position: relative;",
-                     leaflet::leafletOutput("spread_map_plot", height = "150px")
+                     fluidRow(
+                       column(5,
+                         div(class = "pi-summary-strip", style = "margin-bottom: 6px;",
+                             tr_stats[1:2]),
+                         div(class = "pi-summary-strip", style = "margin-bottom: 0;",
+                             tr_stats[3:4])
+                       ),
+                       column(7, leaflet::leafletOutput("spread_map_plot", height = "200px"))
+                     )
                    ),
                    nav_tab = paste0("ts_", species)),
     .brief_section("earth-africa", "Where it could go", "— distribution & outlook",
                    out_stats,
                    extra = plotOutput("projection_fan_plot", height = "150px"),
                    nav_tab = paste0("gt_", species)),
+    # Evidence & countermeasure highlights — LLM text + charts generated at
+    # pipeline time by EVIDENCE_SUMMARY (evidence_highlights.json).
+    local({
+      hl <- brief_highlights(outdir, species)
+      tp <- if (length(hl$top_products)) hl$top_products[[1]] else NULL
+      hl_stats <- list(
+        .brief_stat("Papers with claims", hl$papers_with_claims %||% "—"),
+        .brief_stat("Domains with evidence",
+                    paste0(length(hl$domains_with_evidence %||% character()), "/11")),
+        .brief_stat("Top product", tp$product %||% "—",
+                    if (!is.null(tp)) paste0(tp$metric, " ", tp$value, "%") else NULL)
+      )
+      .brief_section("book-open", "What we know & what we can do",
+                     "— evidence & countermeasures",
+                     hl_stats,
+                     extra = tagList(
+                       div(style = "border-left: 4px solid #3A916E; background: #eef8f2; padding: 10px 14px; margin-bottom: 10px; font-size: 0.9rem; line-height: 1.5;",
+                         div(style = "margin-bottom: 4px;",
+                             if (identical(hl$source, "ollama"))
+                               tags$span(class = "badge badge-info",
+                                         style = "margin-right:6px;",
+                                         paste0("AI \u00b7 ", hl$model))
+                             else tags$span(class = "badge badge-secondary",
+                                            style = "margin-right:6px;", "Auto-summary"),
+                             tags$small(class = "text-muted", "Evidence highlights")),
+                         div(hl$text %||% "No evidence highlights yet — rerun the pipeline so EVIDENCE_SUMMARY writes evidence_highlights.json.")),
+                       fluidRow(
+                         column(6, plotly::plotlyOutput("evidence_domains_plot", height = "190px")),
+                         column(6, plotly::plotlyOutput("evidence_products_plot", height = "190px"))
+                       )
+                     ),
+                     nav_tab = paste0("ekg_", species))
+    }),
     caveats_block
   )
 }
