@@ -13,3 +13,4 @@ tools/
 database/hmmdb/
 .nf-metro-env/
 *.Rhistory
+for_validation/

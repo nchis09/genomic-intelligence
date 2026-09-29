@@ -20,6 +20,17 @@ read_gif_intro_text <- function(config_path = "../assets/multiqc_config.yml") {
   trimws(cfg$intro_text)
 }
 
+# Tile order for the objectives grid: Intelligence Brief first (it's the
+# product's front page), then the remaining objectives in declared order.
+# ROADMAP_OBJECTIVES itself is untouched — sidebar menu slicing relies on it.
+brief_objective <- function() {
+  Filter(function(o) identical(o$id, "intelligence_brief"), ROADMAP_OBJECTIVES)[[1]]
+}
+
+ordered_objectives <- function() {
+  Filter(function(o) !identical(o$id, "intelligence_brief"), ROADMAP_OBJECTIVES)
+}
+
 # Static shell for the Overview tab: the card header/body are filled in
 # server-side via renderUI (uiOutput("overview_header") /
 # uiOutput("overview_body")), since they depend on the discovered species
@@ -50,9 +61,10 @@ overview_ui <- function() {
     ),
     h5("Intelligence Objectives", style = "margin-top: 28px; color: #6c757d; font-weight: bold;"),
     fluidRow(
+      column(width = 2, style = "margin-bottom: 10px;", roadmap_tile_ui(brief_objective())),
       column(width = 2, style = "margin-bottom: 10px;", live_tile_ui()),
       column(width = 2, style = "margin-bottom: 10px;", pathogen_genomics_tile_ui()),
-      lapply(ROADMAP_OBJECTIVES, function(obj) {
+      lapply(ordered_objectives(), function(obj) {
         column(width = 2, style = "margin-bottom: 10px;", roadmap_tile_ui(obj))
       })
     )
@@ -76,11 +88,59 @@ overview_header_ui <- function(species) {
   )
 }
 
-# Card body: currently a neutral placeholder -- no risk verdict or evidence
-# facts are surfaced here yet.
-overview_body_ui <- function(has_species) {
-  if (!has_species) {
+# Card body: the Intelligence Brief front page — situation strip, verdict
+# badges, bottom-line narrative, and one compact block per intelligence
+# objective with deep links into the detail tabs. Rendered from the
+# pre-generated intelligence_brief.json (GENERATE_INTELLIGENCE_BRIEF).
+overview_body_ui <- function(species, outdir = NULL) {
+  if (is.null(species)) {
     return(p("No Biological Threat data found in the pipeline output yet."))
   }
-  tags$ul(tags$li("In planning."))
+  brief_overview_ui(brief_read(outdir, species), species, outdir)
+}
+
+# Pathogen Genomics landing page: choose a species and whether to view the
+# phylotree or the mutation profile.
+pg_home_ui <- function(species) {
+  if (length(species) == 0) {
+    return(bs4Dash::bs4Card(
+      title = "Pathogen Genomics", width = 12, status = "secondary",
+      div(
+        style = "text-align: center; padding: 40px 0; color: #888;",
+        icon("microscope", class = "fa-3x"),
+        h4("No species found", style = "margin-top: 16px;"),
+        p("No species were found in the pipeline output. Run the pipeline, or check that results/ exists.")
+      )
+    ))
+  }
+
+  bs4Dash::bs4Card(
+    title = "Pathogen Genomics",
+    width = 12,
+    status = "secondary",
+    lapply(species, function(sp) {
+      div(
+        style = "display: inline-block; width: 260px; margin: 12px; vertical-align: top;",
+        bs4Dash::bs4Card(
+          title = toupper(sp),
+          width = 12,
+          status = "primary",
+          solidHeader = FALSE,
+          actionButton(
+            inputId = paste0("pg_home_phylotree_", sp),
+            label = "Phylotree",
+            icon = icon("share-nodes"),
+            class = "btn-primary btn-block",
+            style = "margin-bottom: 8px;"
+          ),
+          actionButton(
+            inputId = paste0("pg_home_mutation_", sp),
+            label = "Mutation",
+            icon = icon("chart-bar"),
+            class = "btn-outline-primary btn-block"
+          )
+        )
+      )
+    })
+  )
 }

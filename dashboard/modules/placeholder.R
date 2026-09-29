@@ -10,28 +10,22 @@
 
 ROADMAP_OBJECTIVES <- list(
   list(id = "transmission_spread", label = "Transmission & Spread",
-       icon = "share-nodes",
+       icon = "share-nodes", status = "Live",
        desc = "Estimated transmissibility and spread indicators from phylogenetic and epidemiological linkage."),
   list(id = "geographic_temporal", label = "Geographic & Temporal Context",
-       icon = "earth-africa",
+       icon = "earth-africa", status = "Live",
        desc = "Where and when related cases or sequences have been detected."),
   list(id = "health_impact", label = "Health Impact",
        icon = "heart-pulse",
        desc = "Case counts, severity and burden metrics associated with this pathogen or lineage."),
-  list(id = "populations_at_risk", label = "Populations & Settings at Risk",
-       icon = "users",
-       desc = "Demographic and setting-level risk factors relevant to further spread."),
   list(id = "countermeasure_readiness", label = "Countermeasure Readiness",
-       icon = "syringe",
+       icon = "syringe", status = "Live",
        desc = "Diagnostic, therapeutic and vaccine relevance/readiness for this pathogen or lineage."),
-  list(id = "risk_action", label = "Risk & Action",
-       icon = "triangle-exclamation",
-       desc = "Composite risk rating and recommended public-health actions."),
   list(id = "evidence_knowledge_gaps", label = "Evidence & Knowledge Gaps",
-       icon = "magnifying-glass",
+       icon = "magnifying-glass", status = "Live",
        desc = "Supporting literature, evidence strength, and open knowledge gaps behind the current assessment."),
   list(id = "intelligence_brief", label = "Intelligence Brief",
-       icon = "file-lines",
+       icon = "file-lines", status = "Live",
        desc = "A concise, standardized brief communicating the assessment, confidence, key findings and priority actions to decision-makers.")
 )
 
@@ -56,10 +50,13 @@ roadmap_ui <- function(objective) {
 # Small, quiet tile used in the Intelligence Overview's de-emphasized
 # roadmap strip. Clicking it jumps the sidebar to the objective's own tab.
 roadmap_tile_ui <- function(objective) {
+  is_live <- !is.null(objective$status) && objective$status == "Live"
+  color <- if (is_live) "#4A6C8C" else "#6c757d"
+  border <- if (is_live) "#4A6C8C" else "#e9ecef"
   div(
-    style = paste(
-      "cursor: pointer; border: 1px solid #e9ecef; border-radius: 6px;",
-      "padding: 10px 12px; text-align: center; color: #6c757d;",
+    style = paste0(
+      "cursor: pointer; border: 1px solid ", border, "; border-radius: 6px;",
+      "padding: 10px 12px; text-align: center; color: ", color, ";",
       "background: #fff; height: 100%;"
     ),
     onclick = sprintf(
@@ -67,32 +64,14 @@ roadmap_tile_ui <- function(objective) {
       roadmap_tab_name(objective$id)
     ),
     icon(objective$icon),
-    div(style = "font-size: 0.78rem; margin-top: 4px;", objective$label),
-    span(class = "badge badge-light", style = "font-size: 0.65rem; margin-top: 2px;", "Planned")
+    div(style = paste0("font-size: 0.78rem; margin-top: 4px;", if (is_live) " font-weight: 600;" else ""), objective$label),
+    # Only flag what's still planned — "Live" is the default state now.
+    if (!is_live)
+      span(class = "badge badge-light", style = "font-size: 0.65rem; margin-top: 2px;", "Planned")
   )
 }
 
-# Intelligence Brief's own roadmap tab: same "Planned" framing as the other
-# objectives, but with an added UI-only scaffold for the intended "preview &
-# edit before export" flow -- no real brief content or PDF rendering yet
-# (there's no data source behind it), just the interaction pattern in place
-# so it's easy to wire up later. The button opens a modalDialog (see
-# app.R's observeEvent(input$brief_preview_open, ...)).
-intelligence_brief_roadmap_ui <- function(objective) {
-  tagList(
-    roadmap_ui(objective),
-    bs4Dash::bs4Card(
-      title = "Export", width = 12, status = "secondary",
-      p(
-        style = "color: #6c757d;",
-        "Once the Intelligence Brief has real content, exporting will open an",
-        "editable preview so the brief can be reviewed and adjusted before it's",
-        "printed or shared. The button below previews that interaction pattern."
-      ),
-      actionButton("brief_preview_open", "Preview & Edit Brief", icon = icon("file-lines"))
-    )
-  )
-}
+
 
 # The one "Live" tile in the Intelligence Overview's roadmap strip --
 # Biological Threat, the only objective with a wired data source today.
@@ -109,8 +88,7 @@ live_tile_ui <- function() {
     ),
     onclick = "Shiny.setInputValue('overview_live_tile_click', 'click', {priority: 'event'});",
     icon("dna"),
-    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Biological Threat"),
-    span(class = "badge badge-primary", style = "font-size: 0.65rem; margin-top: 2px;", "Live")
+    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Biological Threat")
   )
 }
 
@@ -124,39 +102,51 @@ pathogen_genomics_tile_ui <- function() {
     ),
     onclick = "Shiny.setInputValue('overview_pg_tile_click', 'click', {priority: 'event'});",
     icon("microscope"),
-    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Pathogen Genomics"),
-    span(class = "badge badge-primary", style = "font-size: 0.65rem; margin-top: 2px;", "Live")
+    div(style = "font-size: 0.78rem; margin-top: 4px; font-weight: 600;", "Pathogen Genomics")
   )
 }
 
-# Placeholder skeleton shown inside the preview/edit modal -- editable, but
-# not backed by real data yet.
-intelligence_brief_preview_modal <- function() {
+# Preview/edit/export modal for the Intelligence Brief. The textarea is
+# pre-filled with the generated brief text (brief_markdown()); edits are what
+# get exported — the pipeline JSON stays untouched. The sign-off fields (lab,
+# performer, validator, date) are appended to every export and rendered as a
+# signature table in the HTML/PDF output. "Print / Save as PDF" opens a
+# formatted document window and triggers the browser print dialog.
+intelligence_brief_preview_modal <- function(content = NULL) {
   modalDialog(
-    title = "Preview & Edit Brief",
+    title = "Preview & Export Brief",
     size = "l",
     easyClose = TRUE,
     p(
       style = "color: #6c757d; font-size: 0.85rem;",
-      "This is a placeholder preview \u2014 content will be generated from the",
-      "assessment once the Intelligence Brief objective is wired in."
+      "Generated from the pipeline's intelligence_brief.json — edit freely",
+      "before exporting; the underlying file is not modified."
+    ),
+    fluidRow(
+      column(6, textInput("report_lab_name", "Laboratory / institution",
+                          width = "100%", placeholder = "e.g. National Public Health Lab")),
+      column(6, dateInput("report_date", "Report date", value = Sys.Date(),
+                          width = "100%"))
+    ),
+    fluidRow(
+      column(6, textInput("report_run_by", "Analysis performed by",
+                          width = "100%", placeholder = "Name of analyst")),
+      column(6, textInput("report_validated_by", "Reviewed / validated by",
+                          width = "100%", placeholder = "Name of validator"))
     ),
     textAreaInput(
-      "brief_preview_text", label = NULL, width = "100%", height = "320px",
-      value = paste(
-        "SPECIES / ASSESSMENT\n[to be filled in]\n\n",
-        "CONFIDENCE\n[to be filled in]\n\n",
-        "KEY FINDINGS\n[to be filled in]\n\n",
-        "RECOMMENDED ACTIONS\n[to be filled in]",
-        sep = ""
-      )
+      "brief_preview_text", label = NULL, width = "100%", height = "280px",
+      value = content %||% "No intelligence brief content available."
     ),
     footer = tagList(
       modalButton("Close"),
+      downloadButton("brief_download", "Download .md",
+                     class = "btn-outline-secondary"),
+      downloadButton("brief_download_html", "Download .html",
+                     class = "btn-outline-secondary"),
       actionButton(
         "brief_export_pdf", "Print / Save as PDF",
-        icon = icon("file-pdf"), class = "btn-secondary disabled",
-        title = "Available once Intelligence Brief content is wired in"
+        icon = icon("file-pdf"), class = "btn-secondary"
       )
     )
   )

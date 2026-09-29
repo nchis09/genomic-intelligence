@@ -1,6 +1,31 @@
-accession	strain	date	region	country	division	location	host
-SAMPLE-0001	SAMPLE-0001	15/07/2027	Africa	Uganda	Western Region	Kasese	human
-SAMPLE-0002	SAMPLE-0002	16/07/2027	Africa	Uganda	Western Region	Kasese	human
-SAMPLE-0003	SAMPLE-0003	17/07/2027	Africa	Uganda	Western Region	Kasese	human
-SAMPLE-0004	SAMPLE-0004	18/07/2027	Africa	Uganda	Western Region	Kasese	human
-SAMPLE-0005	SAMPLE-0005	19/07/2027	Africa	Uganda	Western Region	Kasese	human
+sample_id	accession	collection_date	geo_loc_name	country	sample_type	host
+UG_01	UG_01	2026-03-05	Hoima	Uganda	Human Plasma Sample	Human
+UG_02	UG_02	2026-07-05	Mubende	Uganda	Human Plasma Sample	Human
+UG_03	UG_03	2026-04-28	Kasese	Uganda	Human Plasma Sample	Human
+UG_04	UG_04	2026-08-02	Hoima	Uganda	Human Plasma Sample	Human
+UG_05	UG_05	2026-04-16	Mubende	Uganda	Human Plasma Sample	Human
+UG_06	UG_06	2026-01-24	Kasese	Uganda	Human Plasma Sample	Human
+UG_07	UG_07	2026-07-20	Hoima	Uganda	Human Plasma Sample	Human
+UG_08	UG_08	2026-12-22	Mubende	Uganda	Human Plasma Sample	Human
+UG_09	UG_09	2026-03-11	Kasese	Uganda	Human Plasma Sample	Human
+UG_10	UG_10	2026-06-17	Hoima	Uganda	Human Plasma Sample	Human
+UG_11	UG_11	2026-07-13	Mubende	Uganda	Human Plasma Sample	Human
+UG_12	UG_12	2026-04-06	Kasese	Uganda	Human Plasma Sample	Human
+UG_13	UG_13	2026-11-21	Hoima	Uganda	Human Plasma Sample	Human
+UG_14	UG_14	2026-10-15	Mubende	Uganda	Human Plasma Sample	Human
+UG_15	UG_15	2026-05-05	Kasese	Uganda	Human Plasma Sample	Human
+UG_16	UG_16	2026-10-29	Hoima	Uganda	Human Plasma Sample	Human
+UG_17	UG_17	2026-11-26	Mubende	Uganda	Human Plasma Sample	Human
+UG_18	UG_18	2026-09-09	Kasese	Uganda	Human Plasma Sample	Human
+UG_19	UG_19	2026-05-06	Hoima	Uganda	Human Plasma Sample	Human
+UG_20	UG_20	2026-10-07	Mubende	Uganda	Human Plasma Sample	Human
+UG_21	UG_21	2026-09-18	Kasese	Uganda	Human Plasma Sample	Human
+UG_22	UG_22	2026-12-12	Hoima	Uganda	Human Plasma Sample	Human
+UG_23	UG_23	2026-03-10	Mubende	Uganda	Human Plasma Sample	Human
+UG_24	UG_24	2026-11-30	Kasese	Uganda	Human Plasma Sample	Human
+UG_25	UG_25	2026-12-17	Hoima	Uganda	Human Plasma Sample	Human
+UG_26	UG_26	2026-04-28	Mubende	Uganda	Human Plasma Sample	Human
+UG_27	UG_27	2026-07-27	Kasese	Uganda	Human Plasma Sample	Human
+UG_28	UG_28	2026-12-21	Hoima	Uganda	Human Plasma Sample	Human
+UG_29	UG_29	2026-01-01	Mubende	Uganda	Human Plasma Sample	Human
+UG_30	UG_30	2026-08-18	Kasese	Uganda	Human Plasma Sample	Human

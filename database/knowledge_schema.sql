@@ -577,6 +577,87 @@ CREATE INDEX IF NOT EXISTS idx_tree_tips_country_date ON tree_tips(country, tip_
 CREATE INDEX IF NOT EXISTS idx_geo_admin2 ON geographic_locations(admin2);
 CREATE INDEX IF NOT EXISTS idx_geo_locality ON geographic_locations(locality);
 
+-- New TSV-based evidence tables (Ollama/TSV pipeline)
+CREATE TABLE IF NOT EXISTS evidence_extracted (
+    claim_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    pmid TEXT,
+    pmcid TEXT,
+    species TEXT,
+    domain TEXT,
+    topic TEXT,
+    claim_type TEXT,
+    product_name TEXT,
+    sensitivity TEXT,
+    specificity TEXT,
+    finding TEXT,
+    quote TEXT,
+    evidence_level TEXT,
+    population TEXT,
+    geography TEXT,
+    source_file TEXT,
+    details JSONB,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Normalised domain fields (one row per claim-field pair)
+CREATE TABLE IF NOT EXISTS evidence_fields (
+    claim_id BIGINT REFERENCES evidence_extracted(claim_id),
+    field_name TEXT,
+    field_value TEXT,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (claim_id, field_name)
+);
+
+CREATE TABLE IF NOT EXISTS countermeasures (
+    countermeasure_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    species TEXT,
+    countermeasure TEXT,
+    status TEXT,
+    best_evidence TEXT,
+    best_pmid TEXT,
+    n_supporting_papers INTEGER,
+    readiness_score REAL,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_id, species, countermeasure)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_gaps (
+    gap_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    species TEXT,
+    topic TEXT,
+    gap TEXT,
+    priority TEXT,
+    n_papers_touching_topic INTEGER,
+    notes TEXT,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Pre-generated per-domain narratives (local LLM at pipeline time).
+CREATE TABLE IF NOT EXISTS domain_summaries (
+    summary_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    species TEXT,
+    domain TEXT,
+    n_claims INTEGER,
+    n_papers INTEGER,
+    summary TEXT,
+    source TEXT,
+    model TEXT,
+    generated_at TEXT,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_id, species, domain)
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_extracted_run_species ON evidence_extracted(run_id, species);
+CREATE INDEX IF NOT EXISTS idx_evidence_extracted_topic ON evidence_extracted(topic);
+CREATE INDEX IF NOT EXISTS idx_evidence_extracted_pmid ON evidence_extracted(pmid);
+CREATE INDEX IF NOT EXISTS idx_countermeasures_run_species ON countermeasures(run_id, species);
+CREATE INDEX IF NOT EXISTS idx_knowledge_gaps_run_species ON knowledge_gaps(run_id, species);
+CREATE INDEX IF NOT EXISTS idx_domain_summaries_run_species ON domain_summaries(run_id, species);
+
 -- GIN indexes for JSONB-valued columns
 CREATE INDEX IF NOT EXISTS idx_literature_extractions_value_gin ON literature_extractions USING GIN (value);
 CREATE INDEX IF NOT EXISTS idx_literature_papers_authors_gin ON literature_papers USING GIN (authors);
