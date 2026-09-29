@@ -46,7 +46,6 @@ process BUILD_KNOWLEDGE_DB {
     def outdir_abs = new File(params.outdir).absolutePath
     args << "--results-dir ${outdir_abs}"
     args << "--bioinfo-dir ${bioinformatics_results}"
-    if (evidence_qc_ready)                                 args << "--evidence-qc-dir ${params.outdir}/evidence_qc/${meta.species}"
     // Connect to the pipeline-lifetime shared Postgres (started by
     // START_KNOWLEDGE_DB before any species processing begins) instead of
     // spinning up a throwaway per-species instance -- lets downstream figures

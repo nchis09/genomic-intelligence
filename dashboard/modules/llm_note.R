@@ -341,7 +341,21 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
     models <- vapply(tl$models %||% list(), function(m) m$name %||% m$model %||% "", character(1))
     models <- models[nzchar(models)]
     if (!length(models)) return(fail("No Ollama models installed (ollama pull <model>)"))
-    model <- models[1]
+    # Prefer non-thinking models — reasoning families (qwen3, deepseek-r1,
+    # gpt-oss) burn num_predict on hidden <think> tokens and often return
+    # truncated or empty visible text. Mirrors bin/extract_literature_evidence.py.
+    thinking <- c("qwen3", "deepseek", "gpt-oss")
+    non_thinking <- models[!vapply(tolower(models), function(n)
+      any(vapply(thinking, function(t) grepl(t, n, fixed = TRUE), logical(1))),
+      logical(1))]
+    qwen25 <- grep("^qwen2\\.5", non_thinking, value = TRUE)
+    if (length(qwen25)) {
+      model <- qwen25[1]
+    } else if (length(non_thinking)) {
+      model <- non_thinking[1]
+    } else {
+      model <- models[1]
+    }
   }
 
   body <- list(model = model, prompt = prompt, stream = FALSE,
@@ -360,6 +374,9 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
     jsonlite::fromJSON(httr::content(resp, "text", encoding = "UTF-8"))$response,
     error = function(e) NULL
   )
+  # Strip reasoning blocks — some models emit <think>...</think> inside
+  # `response`; keeping them would surface raw reasoning in the dashboard.
+  if (!is.null(txt)) txt <- gsub("<think>.*?</think>", "", txt)
   if (is.null(txt) || !nzchar(trimws(txt))) return(fail("Empty Ollama response"))
   list(text = trimws(txt), source = "ollama", model = model, error = NULL)
 }
@@ -393,7 +410,7 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
     "SUMMARY:\n", facts
   )
 
-  .ollama_generate(prompt, num_predict = 350, timeout = timeout)
+  .ollama_generate(prompt, num_predict = 800, timeout = timeout)
 }
 
 # ---------------------------------------------------------------------------

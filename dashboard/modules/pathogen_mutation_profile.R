@@ -29,6 +29,9 @@ pathogen_mutation_profile_ui <- function(species) {
     p(style = "color: #6c757d; margin-bottom: 16px;",
       "Query-vs-background mutation burden and protein-level MANOVA."),
 
+    # Pipeline-generated landscape narrative (MUTATION_SUMMARY)
+    uiOutput(mp_id(species, "landscape_note")),
+
     fluidRow(
       column(9,
         bs4Dash::bs4Card(
@@ -293,6 +296,40 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     if (is.null(df) || nrow(df) == 0) return(NULL)
     df |>
       mutate(mutation_id = as.character(mutation_uid))
+  })
+
+  # Pre-generated landscape narrative + per-protein function digests
+  # (MUTATION_SUMMARY): read once — no live LLM call in the dashboard.
+  landscape_note <- reactive({
+    f <- file.path(outdir(), "pathogen_mutation_profile", sp,
+                   "mutation_summary.json")
+    if (!file.exists(f) || !requireNamespace("jsonlite", quietly = TRUE))
+      return(NULL)
+    tryCatch(jsonlite::fromJSON(readLines(f, warn = FALSE),
+                                simplifyVector = FALSE),
+             error = function(e) NULL)
+  })
+
+  protein_summaries_data <- reactive({
+    f <- file.path(outdir(), "pathogen_mutation_profile", sp,
+                   "protein_summaries.tsv")
+    mp_read_table(f)
+  })
+
+  output[[mp_id(sp, "landscape_note")]] <- renderUI({
+    n <- landscape_note()
+    if (is.null(n) || is.null(n$text) || !nzchar(n$text)) return(NULL)
+    badge <- if (identical(n$source, "ollama")) {
+      tags$span(class = "badge badge-info", style = "margin-right:6px;",
+                paste0("AI \u00b7 ", n$model))
+    } else {
+      tags$span(class = "badge badge-secondary", style = "margin-right:6px;",
+                "Auto-summary")
+    }
+    div(style = "background:#eef4f8;border-left:4px solid #4A6C8C;border-radius:4px;padding:10px 12px;font-size:0.85rem;margin-bottom:12px;",
+      div(style = "margin-bottom:4px;", badge,
+          tags$small(class = "text-muted", "Mutation landscape")),
+      div(n$text))
   })
 
   aa_frequencies_data <- reactive({
@@ -1015,9 +1052,25 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       matched_ctx <- ctx |> filter(as.character(mutation_id) == as.character(mid))
       if (nrow(matched_ctx) > 0) {
         has_context <- TRUE
+        # Protein digest: condensed UniProt function text generated at
+        # pipeline time (MUTATION_SUMMARY -> protein_summaries.tsv).
+        digests <- protein_summaries_data()
+        digest_ui <- NULL
+        if (!is.null(digests) && nrow(digests) &&
+            !is.null(protein) && nzchar(protein)) {
+          m <- digests[trimws(digests$protein_name) == trimws(protein), ,
+                       drop = FALSE]
+          if (nrow(m) && nzchar(m$summary[1] %||% "")) {
+            digest_ui <- p(style = "margin: 0 0 8px 0; font-size: 0.85rem; font-weight: 500;",
+              tags$span(class = "badge badge-info",
+                        style = "margin-right: 6px;", "Summary"),
+              m$summary[1])
+          }
+        }
         context_ui <- div(
           style = "margin-top: 12px; padding: 12px; background: #eef6fc; border-left: 4px solid #3498db; border-radius: 4px;",
           h6("Functional / Domain context", style = "margin: 0 0 8px 0; font-weight: 700; color: #3498db;"),
+          digest_ui,
           lapply(seq_len(nrow(matched_ctx)), function(i) {
             row <- matched_ctx[i, ]
             sub_title <- case_when(
