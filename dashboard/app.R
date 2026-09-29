@@ -62,6 +62,11 @@ source("modules/assessment.R")
 source("modules/placeholder.R")
 source("modules/pathogen_transmission.R")
 source("modules/pathogen_geographic.R")
+source("modules/countermeasure_metaanalysis.R")
+source("modules/evidence_metaanalysis.R")
+source("modules/domain_views.R")
+source("modules/countermeasure_readiness.R")
+source("modules/evidence_knowledge_gaps.R")
 source("modules/intelligence_brief.R")
 source("modules/home.R")
 
@@ -550,6 +555,16 @@ server <- function(input, output, session) {
           list(text = obj$label, icon = icon(obj$icon), startExpanded = FALSE),
           lapply(species, function(sp) menuSubItem(text = toupper(sp), tabName = paste0("gt_", sp)))
         ))
+      } else if (identical(obj$id, "countermeasure_readiness") && length(species) > 0) {
+        do.call(menuItem, c(
+          list(text = obj$label, icon = icon(obj$icon), startExpanded = FALSE),
+          lapply(species, function(sp) menuSubItem(text = toupper(sp), tabName = paste0("cm_", sp)))
+        ))
+      } else if (identical(obj$id, "evidence_knowledge_gaps") && length(species) > 0) {
+        do.call(menuItem, c(
+          list(text = obj$label, icon = icon(obj$icon), startExpanded = FALSE),
+          lapply(species, function(sp) menuSubItem(text = toupper(sp), tabName = paste0("ekg_", sp)))
+        ))
       } else {
         menuItem(obj$label, tabName = roadmap_tab_name(obj$id), icon = icon(obj$icon))
       }
@@ -625,6 +640,10 @@ server <- function(input, output, session) {
         uiOutput("ts_roadmap_body")
       } else if (identical(obj$id, "geographic_temporal")) {
         uiOutput("gt_roadmap_body")
+      } else if (identical(obj$id, "countermeasure_readiness")) {
+        uiOutput("cm_roadmap_body")
+      } else if (identical(obj$id, "evidence_knowledge_gaps")) {
+        uiOutput("ekg_roadmap_body")
       } else {
         roadmap_ui(obj)
       }
@@ -637,6 +656,12 @@ server <- function(input, output, session) {
     gt_tabs <- lapply(species, function(sp) {
       tabItem(tabName = paste0("gt_", sp), geographic_temporal_ui(sp, species))
     })
+    cm_tabs <- lapply(species, function(sp) {
+      tabItem(tabName = paste0("cm_", sp), countermeasure_readiness_ui(sp))
+    })
+    ekg_tabs <- lapply(species, function(sp) {
+      tabItem(tabName = paste0("ekg_", sp), evidence_knowledge_gaps_ui(sp))
+    })
 
     do.call(tabItems, c(
       list(tabItem(tabName = "home", overview_ui())),
@@ -644,6 +669,8 @@ server <- function(input, output, session) {
       pg_tabs,
       ts_tabs,
       gt_tabs,
+      cm_tabs,
+      ekg_tabs,
       roadmap_tabs
     ))
   })
@@ -656,6 +683,8 @@ server <- function(input, output, session) {
       pathogen_mutation_profile_register(input, output, session, sp, outdir_r)
       transmission_register(input, output, session, sp, outdir_r)
       geographic_temporal_register(input, output, session, sp, outdir_r)
+      countermeasure_readiness_register(input, output, session, sp, outdir_r, species_rv)
+      evidence_knowledge_gaps_register(input, output, session, sp, outdir_r, species_rv)
 
       local({
         s <- sp
@@ -695,6 +724,14 @@ server <- function(input, output, session) {
   output$gt_roadmap_body <- renderUI({
     sp <- current_species(); if (is.null(sp)) return(NULL)
     geographic_temporal_ui(sp, species_rv())
+  })
+  output$cm_roadmap_body <- renderUI({
+    sp <- current_species(); if (is.null(sp)) return(NULL)
+    countermeasure_readiness_ui(sp)
+  })
+  output$ekg_roadmap_body <- renderUI({
+    sp <- current_species(); if (is.null(sp)) return(NULL)
+    evidence_knowledge_gaps_ui(sp)
   })
 
   output$overview_body <- renderUI({
@@ -887,6 +924,10 @@ server <- function(input, output, session) {
       tab <- paste0("ts_", sp)
     } else if (identical(tab, roadmap_tab_name("geographic_temporal")) && !is.null(sp)) {
       tab <- paste0("gt_", sp)
+    } else if (identical(tab, roadmap_tab_name("countermeasure_readiness")) && !is.null(sp)) {
+      tab <- paste0("cm_", sp)
+    } else if (identical(tab, roadmap_tab_name("evidence_knowledge_gaps")) && !is.null(sp)) {
+      tab <- paste0("ekg_", sp)
     }
     updateTabItems(session, "sidebarmenu", selected = tab)
   })

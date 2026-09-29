@@ -226,7 +226,12 @@ geographic_temporal_ui <- function(sp, all_species = sp) {
     ),
     br(),
     fluidRow(column(12, uiOutput(ns("gt_legend")))),
-    fluidRow(column(12, h5(icon("clock"), " Reconstruction narrative"), uiOutput(ns("gt_narrative"))))
+    fluidRow(column(12, uiOutput(ns("gt_geo_summary"))),
+             column(12, tags$details(
+               style = "margin-top:6px;",
+               tags$summary(style = "cursor:pointer;color:#4A6C8C;font-size:0.85rem;font-weight:600;",
+                            "Chronological event log"),
+               uiOutput(ns("gt_narrative")))))
   )
 }
 
@@ -513,6 +518,34 @@ geographic_temporal_register <- function(input, output, session, sp, outdir_r) {
         tags$span(class = "badge", style = "background:#6c757d;color:#fff;", "PROBABLE"), " broader geo/genetic proximity  ",
         tags$span(class = "badge", style = "background:#4A6C8C;color:#fff;", "CONTEXTUAL"), " epidemiological record  ",
         tags$span(class = "badge", style = "background:#2c3e50;color:#fff;", "OBSERVED"), " sampled genome")
+  })
+
+  # ---- Species spread narrative (pre-generated at pipeline time) -------------
+  geo_note_r <- reactive({
+    f <- file.path(outdir_r(), "transmission_context", sp, "geo_summary.json")
+    if (!file.exists(f) || !requireNamespace("jsonlite", quietly = TRUE))
+      return(NULL)
+    tryCatch(jsonlite::fromJSON(readLines(f, warn = FALSE),
+                                simplifyVector = FALSE),
+             error = function(e) NULL)
+  })
+
+  output[[ns("gt_geo_summary")]] <- renderUI({
+    n <- geo_note_r()
+    if (is.null(n) || is.null(n$text) || !nzchar(n$text))
+      return(div(class = "text-muted", style = "padding:6px 0;",
+                 "No spread narrative yet — rerun the pipeline so GEOGRAPHIC_SUMMARY writes geo_summary.json."))
+    badge <- if (identical(n$source, "ollama")) {
+      tags$span(class = "badge badge-info", style = "margin-right:6px;",
+                paste0("AI \u00b7 ", n$model))
+    } else {
+      tags$span(class = "badge badge-secondary", style = "margin-right:6px;",
+                "Auto-summary")
+    }
+    div(style = "background:#eef4f8;border-left:4px solid #4A6C8C;border-radius:4px;padding:10px 12px;font-size:0.9rem;margin-bottom:8px;",
+      div(style = "margin-bottom:4px;", badge,
+          tags$small(class = "text-muted", "Geographic spread — ", toupper(sp))),
+      div(n$text))
   })
 
   # ---- Narrative feed ----

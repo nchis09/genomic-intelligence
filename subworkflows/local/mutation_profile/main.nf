@@ -11,6 +11,7 @@
  */
 
 include { PATHOGEN_MUTATION_PROFILE } from '../../../modules/local/pathogen_mutation_profile/main'
+include { MUTATION_SUMMARY } from '../../../modules/local/mutation_summary/main'
 
 workflow MUTATION_PROFILE_WF {
     take:
@@ -19,8 +20,10 @@ workflow MUTATION_PROFILE_WF {
 
     main:
     PATHOGEN_MUTATION_PROFILE(ch_mutation_profile, ch_translations)
+    MUTATION_SUMMARY(PATHOGEN_MUTATION_PROFILE.out.tsv)
 
     emit:
     tsv     = PATHOGEN_MUTATION_PROFILE.out.tsv
     mqc_tsv = PATHOGEN_MUTATION_PROFILE.out.mqc_tsv
+    summary = MUTATION_SUMMARY.out.summary
 }
