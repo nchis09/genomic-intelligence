@@ -163,6 +163,25 @@ class TemporaryPostgres:
         pg_ctl = find_executable("pg_ctl")
         run_cmd([pg_ctl, "stop", "-D", str(self.data_dir), "-m", "fast"], check=False)
 
+    def drop_db(self):
+        """Drop the warehouse database if it exists. Used to guarantee each
+        pipeline run starts from a clean slate so stale rows (e.g. samples from
+        a previous dataset) never leak into the current run's outputs."""
+        env = {"PGUSER": self.superuser}
+        psql = find_executable("psql")
+        # Terminate any open connections to the db so DROP DATABASE succeeds.
+        run_cmd([
+            psql, "-h", self.host, "-p", str(self.port), "-U", self.superuser,
+            "-d", "template1",
+            "-c", f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                  f"WHERE datname = '{self.db_name}' AND pid <> pg_backend_pid()",
+        ], check=False, env=env, capture_output=True, text=True)
+        run_cmd([
+            psql, "-h", self.host, "-p", str(self.port), "-U", self.superuser,
+            "-d", "template1",
+            "-c", f"DROP DATABASE IF EXISTS {self.db_name}",
+        ], check=False, env=env, capture_output=True, text=True)
+
     def create_db(self):
         """Create the warehouse database if it doesn't already exist."""
         env = {"PGUSER": self.superuser}
@@ -636,12 +655,14 @@ def _update_samples_from_metadata(conn, run_id, metadata_path):
         return
     with conn.cursor() as cur:
         for row in rows:
-            sample = normalize_text(row.get("accession") or row.get("sample") or row.get("sample_name"))
+            sample = normalize_text(
+                row.get("accession") or row.get("sample_id") or row.get("sample") or row.get("sample_name")
+            )
             if not sample:
                 continue
             collection_date = normalize_date(row.get("date") or row.get("collection_date"))
             country = normalize_country(row.get("country"))
-            admin1 = normalize_text(row.get("region"))
+            admin1 = normalize_text(row.get("region") or row.get("division") or row.get("geo_loc_name"))
             admin2 = normalize_text(row.get("division"))
             locality = normalize_text(row.get("location"))
             host = normalize_text(row.get("host"))
@@ -974,7 +995,9 @@ def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
                         if not label:
                             continue
                         node_attrs = tip.get("node_attrs", {})
-                        tip_sample_id = sample_id_by_name.get(normalize_text(raw_name))
+                        # Try raw auspice name, then cleaned newick label against sample names
+                        clean_name = normalize_text(_clean_newick_name(raw_name))
+                        tip_sample_id = sample_id_by_name.get(normalize_text(raw_name)) or sample_id_by_name.get(clean_name)
                         is_query = bool(tip_sample_id)
                         tip_clade = normalize_text(_get_node_value(node_attrs, "clade"))
                         tip_outbreak = normalize_text(_get_node_value(node_attrs, "outbreak"))
@@ -994,21 +1017,33 @@ def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
                             tip_nuc = nuc_substitutions if nuc_substitutions is not None else tip_nuc
                             tip_aa = aa_substitutions if aa_substitutions is not None else tip_aa
 
+                        tip_country = normalize_country(_get_node_value(node_attrs, "country"))
+                        tip_admin1 = normalize_text(_get_node_value(node_attrs, "division"))
+                        tip_date = normalize_date(_get_node_value(node_attrs, "date"))
+                        tip_host = normalize_text(_get_node_value(node_attrs, "host"))
                         cur.execute(
                             """
-                            INSERT INTO tree_tips (tree_id, sample_id, label, is_query, clade, outbreak, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            INSERT INTO tree_tips (
+                                tree_id, sample_id, label, is_query, clade, outbreak, country, admin1,
+                                tip_date, host, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
-                            (tree_id, tip_sample_id, label, is_query, tip_clade, tip_outbreak, tip_div, tip_cov, tip_qc, tip_nuc, tip_aa),
+                            (tree_id, tip_sample_id, label, is_query, tip_clade, tip_outbreak, tip_country, tip_admin1,
+                             tip_date, tip_host, tip_div, tip_cov, tip_qc, tip_nuc, tip_aa),
                         )
                 elif tree_id:
                     # No Auspice tree available: at least record the query tip
                     cur.execute(
                         """
-                        INSERT INTO tree_tips (tree_id, sample_id, label, is_query, clade, outbreak, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO tree_tips (
+                            tree_id, sample_id, label, is_query, clade, outbreak, country, admin1,
+                            tip_date, host, div, genome_coverage, nextclade_qc, nuc_mutation_count, aa_mutation_count
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (tree_id, sample_id, _clean_newick_name(sample_name), True, clade, outbreak, divergence, coverage, nextclade_qc, nuc_substitutions, aa_substitutions),
+                        (tree_id, sample_id, _clean_newick_name(sample_name), True, clade, outbreak, country, admin1,
+                         collection_date, host, divergence, coverage, nextclade_qc, nuc_substitutions, aa_substitutions),
                     )
 
             # Register the TSV, NWK, and aligned FASTA in pipeline_outputs
@@ -1075,16 +1110,38 @@ def _collect_tips(tree, tips=None):
     return tips
 
 
+_SPECIES_TOKENS = ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan")
+
+
+def _detect_species_from_path(path):
+    """Detect the species code from a file path. Checks directory parts first,
+    then falls back to the filename so staged files like
+    'ebola_sudv_all-outbreaks.json' (no species directory) still resolve."""
+    path = Path(path)
+    for part in path.parts:
+        if part.lower() in _SPECIES_TOKENS:
+            return part.lower()
+    name = path.name.lower()
+    for token in _SPECIES_TOKENS:
+        if token in name:
+            return token
+    return None
+
+
 def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=None, species=None):
     results_dir = Path(results_dir)
     species_filter = normalize_text(species)
     # Auspice JSON files under nextstrain_ebola/<species>/auspice/
     auspice_files = []
-    if auspice_json and Path(auspice_json).exists():
+    direct_auspice = bool(auspice_json and Path(auspice_json).exists())
+    if direct_auspice:
         auspice_files = [Path(auspice_json)]
     else:
         auspice_files = sorted(results_dir.rglob("*all-outbreaks.json"))
-    if species_filter:
+    # Only apply the species filter when scanning the results tree. A directly
+    # passed (staged) file is already the correct one for this run — its path
+    # parts don't contain the species directory, so filtering would drop it.
+    if species_filter and not direct_auspice:
         auspice_files = [p for p in auspice_files if species_filter in [x.lower() for x in p.parts]]
     if not auspice_files:
         print("  SKIP: no Auspice JSON files found", file=sys.stderr)
@@ -1092,11 +1149,7 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
     loaded = 0
     with conn.cursor() as cur:
         for path in auspice_files:
-            species = None
-            for part in path.parts:
-                if part.lower() in ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan"):
-                    species = part.lower()
-                    break
+            species = _detect_species_from_path(path) or species_filter
             newick_candidates = sorted(results_dir.rglob("tree.nwk"))
             if species_filter:
                 newick_candidates = [p for p in newick_candidates if species_filter in [x.lower() for x in p.parts]]
@@ -1225,6 +1278,121 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
                 )
         conn.commit()
     print(f"  Loaded {len(auspice_files)} tree(s) and {loaded} tip(s)", file=sys.stderr)
+
+
+def _walk_tips_with_mutations(node, path=None, mutations=None):
+    if path is None:
+        path = [node]
+        mutations = [node.get("branch_attrs", {}).get("mutations", {})]
+    children = node.get("children", [])
+    if not children:
+        yield node, mutations
+    else:
+        for child in children:
+            child_path = path + [child]
+            child_mutations = mutations + [child.get("branch_attrs", {}).get("mutations", {})]
+            yield from _walk_tips_with_mutations(child, child_path, child_mutations)
+
+
+def load_background_from_auspice(conn, run_id, results_dir, species=None):
+    results_dir = Path(results_dir)
+    species_filter = normalize_text(species)
+    auspice_files = sorted(results_dir.rglob("*all-outbreaks.json"))
+    if species_filter:
+        auspice_files = [p for p in auspice_files if species_filter in [x.lower() for x in p.parts]]
+    if not auspice_files:
+        print("  SKIP: no Auspice JSON for background", file=sys.stderr)
+        return
+    loaded_samples = 0
+    loaded_muts = 0
+    with conn.cursor() as cur:
+        for path in auspice_files:
+            species = None
+            for part in path.parts:
+                if part.lower() in ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan"):
+                    species = part.lower()
+                    break
+            with open(path) as f:
+                data = json.load(f)
+            tree = data.get("tree") if isinstance(data, dict) else None
+            if not tree:
+                continue
+            cur.execute(
+                "SELECT sample_name FROM samples WHERE run_id = %s AND is_query = TRUE",
+                (run_id,),
+            )
+            query_labels = {r[0] for r in cur.fetchall()}
+
+            for tip, branch_mutations in _walk_tips_with_mutations(tree):
+                tip_attrs = tip.get("node_attrs", {})
+                label = normalize_text(tip.get("name"))
+                if not label or label in query_labels:
+                    continue
+                cur.execute(
+                    "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name = %s",
+                    (run_id, label),
+                )
+                if cur.fetchone():
+                    continue
+
+                country = normalize_country(_get_node_value(tip_attrs, "country"))
+                admin1 = normalize_text(_get_node_value(tip_attrs, "division"))
+                locality = normalize_text(_get_node_value(tip_attrs, "location"))
+                location_id = get_or_create_location(cur, country, admin1, None, locality)
+
+                cur.execute(
+                    """
+                    INSERT INTO samples (
+                        run_id, sample_name, pathogen, species, is_query,
+                        collection_date, country, host, outbreak, clade,
+                        best_dataset_file
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (run_id, sample_name) DO UPDATE
+                    SET is_query = EXCLUDED.is_query
+                    RETURNING sample_id
+                    """,
+                    (
+                        run_id,
+                        label,
+                        "orthoebolavirus",
+                        species,
+                        False,
+                        normalize_date(_get_node_value(tip_attrs, "date")),
+                        country,
+                        normalize_text(_get_node_value(tip_attrs, "host")),
+                        normalize_text(_get_node_value(tip_attrs, "outbreak")),
+                        normalize_text(_get_node_value(tip_attrs, "clade")),
+                        str(path),
+                    ),
+                )
+                sample_id = cur.fetchone()[0]
+                loaded_samples += 1
+
+                # Accumulate amino-acid mutations from every branch on the path
+                aa_muts = set()
+                for bm in branch_mutations:
+                    for gene, muts in bm.items():
+                        if gene == "nuc":
+                            continue
+                        for mut in muts:
+                            aa_muts.add(f"{gene}:{mut}")
+
+                for mut in sorted(aa_muts):
+                    parsed = _parse_mutation_column(mut)
+                    if not parsed:
+                        continue
+                    gene, ref_aa, pos, alt_aa = parsed
+                    protein_id = _protein_id_for_gene(cur, gene)
+                    mutation_id = _insert_mutation(cur, protein_id, gene, mut, ref_aa, pos, alt_aa)
+                    if not mutation_id:
+                        continue
+                    cur.execute(
+                        "INSERT INTO sample_mutation (sample_id, mutation_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                        (sample_id, mutation_id),
+                    )
+                    loaded_muts += 1
+            conn.commit()
+    print(f"  Loaded {loaded_samples} background samples and {loaded_muts} background mutations", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -1430,7 +1598,7 @@ def _first_col(row, *names):
     return None
 
 
-def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=None, rbioapi_dir=None):
+def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=None, rbioapi_dir=None, query_data_dir=None):
     search_dirs = []
     if uniprotr_dir:
         search_dirs.append(Path(uniprotr_dir))
@@ -1438,6 +1606,8 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
         search_dirs.append(Path(extractr_dir))
     if rbioapi_dir:
         search_dirs.append(Path(rbioapi_dir))
+    if query_data_dir:
+        search_dirs.append(Path(query_data_dir))
     if not search_dirs:
         print("  SKIP: no phenotype annotation directories provided", file=sys.stderr)
         return
@@ -1502,6 +1672,11 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
                 protein_id = _get_or_create_protein(cur, gene, acc, protein_name=protein_name, organism=organism, length=length)
                 # Functions
                 func_text = _first_col(row, "Function [CC]", "Function..CC.", "func.Function..CC.")
+                # Fallback for UniProtExtractR-style outputs that lack a Function column
+                if not func_text:
+                    func_text = _first_col(row, "Protein families", "Protein.families", "Protein.families.edit", "family.Protein.families.")
+                if not func_text:
+                    func_text = _first_col(row, "Subcellular location [CC]", "Subcellular location", "Subcellular.location", "Subcellular.location..CC.", "Subcellular.location..CC.edit", "loc.Subcellular.location..CC.")
                 if func_text:
                     cur.execute(
                         """
@@ -1532,13 +1707,14 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
                         cur.execute(
                             """
                             INSERT INTO protein_domains (protein_id, domain_name, start_pos, end_pos, source)
-                            VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING
                             """,
                             (protein_id, m.group(3), parse_int(m.group(1)), parse_int(m.group(2)), "UniProtKB"),
                         )
 
-        # rbioapi mutagenesis/variation -> mutation_phenotypes
-        for path in _rglob_dirs(search_dirs, ["*_mutagenesis.tsv", "*_variation.tsv"]):
+        # rbioapi mutagenesis -> mutation_phenotypes
+        for path in _rglob_dirs(search_dirs, ["*_mutagenesis.tsv"]):
             rows = read_tsv_or_csv(path)
             if not rows:
                 continue
@@ -1548,18 +1724,32 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
                 pos_end = parse_int(row.get("position_end"))
                 ref_aa = normalize_text(row.get("original_aa"))
                 alt_aa = normalize_text(row.get("alternative_aa"))
-                description = row.get("description") or row.get("consequence") or row.get("notes")
+                uniprot_accession = normalize_text(row.get("uniprot_accession"))
+
+                # Rich, source-specific field mapping
+                source_type = normalize_text(row.get("source_type")) or "uniprot"
+                source_species = row.get("source_species") or ""
+                raw_evidence = row.get("evidence") or ""
+
+                phenotype = "mutagenesis"
+                effect = row.get("description") or row.get("consequence") or row.get("notes") or ""
+                evidence = raw_evidence or source_species or str(path.name)
+                source = source_type or "uniprot"
+
                 mutation_id = None
-                if gene and pos_start:
+                if uniprot_accession and pos_start and ref_aa and alt_aa:
                     cur.execute(
                         """
-                        SELECT mutation_id FROM mutations
-                        WHERE position = %s AND ref_aa = %s AND alt_aa = %s
-                          AND (protein_id IN (SELECT protein_id FROM proteins WHERE protein_name = %s)
-                               OR gene_id = (SELECT gene_id FROM genes WHERE gene_name = %s LIMIT 1))
+                        SELECT m.mutation_id
+                        FROM mutations m
+                        LEFT JOIN proteins p ON m.protein_id = p.protein_id
+                        LEFT JOIN genes g ON m.gene_id = g.gene_id
+                        LEFT JOIN proteins gp ON g.gene_id = gp.gene_id
+                        WHERE m.position = %s AND m.ref_aa = %s AND m.alt_aa = %s
+                          AND (p.uniprot_accession = %s OR gp.uniprot_accession = %s OR g.gene_name = %s)
                         LIMIT 1
                         """,
-                        (pos_start, ref_aa, alt_aa, gene, gene),
+                        (pos_start, ref_aa, alt_aa, uniprot_accession, uniprot_accession, gene),
                     )
                     r = cur.fetchone()
                     if r:
@@ -1569,7 +1759,7 @@ def load_phenotype_annotations(conn, run_id, uniprotr_dir=None, extractr_dir=Non
                     INSERT INTO mutation_phenotypes (mutation_id, phenotype, effect, evidence, source)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (mutation_id, "mutagenesis" if "mutagenesis" in path.name else "variation", description, str(path.name), "rbioapi"),
+                    (mutation_id, phenotype, effect, evidence, source),
                 )
     conn.commit()
     print("  Loaded phenotype annotations", file=sys.stderr)
@@ -1704,18 +1894,19 @@ def _get_or_create_protein(cur, gene, uniprot_accession, protein_name=None, orga
         r = cur.fetchone()
         if r:
             return r[0]
-    # If no accession, look by gene placeholder
+    # If no accession, look by the full protein name or the short gene name
     name = protein_name or gene
+    short = gene or name
     cur.execute(
-        "SELECT protein_id FROM proteins WHERE uniprot_accession IS NULL AND protein_name = %s LIMIT 1",
-        (name,),
+        "SELECT protein_id, protein_name, organism, length FROM proteins WHERE uniprot_accession IS NULL AND (protein_name = %s OR protein_name = %s) LIMIT 1",
+        (name, short),
     )
     r = cur.fetchone()
     if r:
         if uniprot_accession:
             cur.execute(
-                "UPDATE proteins SET uniprot_accession = %s WHERE protein_id = %s",
-                (uniprot_accession, r[0]),
+                "UPDATE proteins SET uniprot_accession = %s, organism = COALESCE(%s, organism), length = COALESCE(%s, length) WHERE protein_id = %s",
+                (uniprot_accession, organism, length, r[0]),
             )
         return r[0]
     # Need a gene_id
@@ -1818,6 +2009,10 @@ def _load_epi_row(cur, dataset_id, row, dataset_type):
                 else:
                     record_date = d
 
+    # Some long-format datasets only carry a reference_date
+    if record_date is None and reference_date is not None:
+        record_date = reference_date
+
     # Location
     country = normalize_country(row.get("Country") or row.get("country") or row.get("COUNTRY") or row.get("location_country"))
     admin1 = normalize_text(row.get("region") or row.get("division") or row.get("REGION") or row.get("location_name"))
@@ -1872,6 +2067,13 @@ def _load_epi_row(cur, dataset_id, row, dataset_type):
         subtype = normalize_text(row.get("Ebola subtype"))
         if subtype:
             indicator_label = subtype
+
+        # The summary files use a Year(s) range; record the start year
+        years = normalize_text(row.get("Year(s)") or row.get("Year"))
+        if years and record_date is None:
+            m = re.search(r"\d{4}", years)
+            if m:
+                record_date = f"{m.group(0)}-01-01"
 
     cur.execute(
         """
@@ -1945,6 +2147,11 @@ SUMMARY_TABLES = [
     "literature_domains",
     "literature_papers",
     "literature_extractions",
+    "evidence_extracted",
+    "evidence_fields",
+    "countermeasures",
+    "knowledge_gaps",
+    "domain_summaries",
 ]
 
 
@@ -2019,7 +2226,7 @@ def parse_args():
     parser.add_argument("--iqtree", help="IQ-TREE2 treefile (Newick) to add to phylogenetic_trees")
     parser.add_argument("--query-data-dir", help="Directory of EXTRACT_QUERY_PROTEINS outputs (discovery.tsv, accessions.txt, query_proteins.fasta, etc.)")
     parser.add_argument("--hmm-dir", help="Directory of HMM_ANNOTATE outputs (*_hmm_*.txt)")
-    parser.add_argument("--evidence-qc-dir", help="Directory containing evidence_qc/<species>/<domain>/ output tree")
+    parser.add_argument("--evidence-qc-dir", help=argparse.SUPPRESS)  # deprecated: legacy QC loader removed
     parser.add_argument("--schema-path", type=Path, default=Path(__file__).parent.parent / "database" / "knowledge_schema.sql", help="SQL schema file to load")
     parser.add_argument("--views-path", type=Path, default=Path(__file__).parent.parent / "database" / "knowledge_views.sql", help="Analytical views SQL file to load")
     parser.add_argument("--db-host", help="Host of an already-running shared PostgreSQL instance (started by START_KNOWLEDGE_DB). When set, this script connects to it instead of managing its own temporary server, and skips the final dump/stop (owned by STOP_KNOWLEDGE_DB).")
@@ -2028,39 +2235,109 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_literature_evidence(conn, run_id, evidence_qc_dir):
-    """Ingest clean literature evidence JSONs and per-domain QC reports."""
-    evidence_qc_dir = Path(evidence_qc_dir)
-    if not evidence_qc_dir.exists():
-        print(f"  SKIP: evidence QC directory not found: {evidence_qc_dir}", file=sys.stderr)
+EVIDENCE_UNIVERSAL_COLS = {
+    "pmid", "pmcid", "species", "domain", "topic", "claim_type", "finding",
+    "quote", "evidence_level", "population", "geography", "source_file", "n",
+    "details",
+}
+
+
+def _domain_fields_from_header(header):
+    """Domain-specific fields live between the universal `n` and `details` cols."""
+    if "n" in header and "details" in header:
+        return header[header.index("n") + 1:header.index("details")]
+    return [h for h in header if h not in EVIDENCE_UNIVERSAL_COLS]
+
+
+def _load_paper_metadata(meta_dir):
+    """Index per-PMID metadata JSONs (fetch_pubmed_metadata output) by stem."""
+    out = {}
+    if not meta_dir or not meta_dir.exists():
+        return out
+    for p in meta_dir.glob("*.json"):
+        try:
+            out[p.stem] = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return out
+
+
+def load_literature_tables(conn, run_id, results_dir, species):
+    """Populate literature_domains / literature_papers / literature_extractions
+    from the published literature_retrieval outputs for one species.
+
+    - papers: the full searched universe (literature_search/<sp>/<domain>/results.tsv)
+      enriched by literature_metadata/<sp>/<domain>/*.json; status='clean' when the
+      paper produced >= 1 claim in that domain's evidence TSV, else 'searched'.
+    - domains: computed stats (total papers, claim/extraction counts, per-field
+      coverage, quote presence).
+    - extractions: paper x field rows derived from the claims (present + value +
+      quote) so the per-paper field view survives without the legacy QC JSONs.
+    """
+    species = normalize_text(species)
+    if not species or not results_dir:
         return
-    report_files = sorted(evidence_qc_dir.rglob("qc_report.json"))
-    if not report_files:
-        print(f"  SKIP: no evidence QC reports found under {evidence_qc_dir}", file=sys.stderr)
+    lit_root = Path(results_dir) / "literature_retrieval"
+    roots = {
+        "search": lit_root / "literature_search" / species,
+        "metadata": lit_root / "literature_metadata" / species,
+        "evidence": lit_root / "literature_evidence" / species,
+    }
+    domains = set()
+    for r in roots.values():
+        if r.exists():
+            domains |= {p.name for p in r.iterdir() if p.is_dir()}
+    if not domains:
+        print(f"  SKIP: no literature_retrieval outputs for {species}", file=sys.stderr)
         return
+
+    n_papers = n_ext = 0
     with conn.cursor() as cur:
-        for report_path in report_files:
-            with open(report_path, encoding="utf-8") as f:
-                report = json.load(f)
-            species = normalize_text(report.get("species"))
-            domain = normalize_text(report.get("domain"))
-            if not species or not domain:
-                continue
-            expected_fields = report.get("expected_fields")
-            summary = report.get("summary") or {}
-            confidence_distribution = summary.get("confidence_distribution")
-            field_coverage = summary.get("field_coverage")
-            quote_presence_rate = parse_float(summary.get("quote_presence_rate"))
-            duplicate_pmids = parse_int(summary.get("duplicate_pmids"))
-            total_papers = parse_int(report.get("total_papers"))
-            clean_count = parse_int(report.get("clean_count"))
-            failed_count = parse_int(report.get("failed_count"))
-            min_completeness = parse_float(report.get("min_completeness"))
+        for domain in sorted(domains):
+            tsv_path = roots["evidence"] / domain / "evidence_extracted.tsv"
+            log_path = roots["evidence"] / domain / "extraction_log.json"
+            search_rows = _tsv_to_rows(roots["search"] / domain / "results.tsv")
+            meta_by_id = _load_paper_metadata(roots["metadata"] / domain)
+
+            claims = _tsv_to_rows(tsv_path)
+            domain_fields = []
+            if claims:
+                domain_fields = _domain_fields_from_header(list(claims[0].keys()))
+            elif tsv_path.exists():
+                with open(tsv_path, encoding="utf-8", newline="") as f:
+                    domain_fields = _domain_fields_from_header(
+                        csv.DictReader(f, delimiter="\t").fieldnames or [])
+
+            log = {}
+            if log_path.exists():
+                try:
+                    log = json.loads(log_path.read_text(encoding="utf-8"))
+                except Exception:
+                    log = {}
+
+            # per-paper claim stats + field coverage
+            claims_by_pmid = {}
+            for row in claims:
+                p = normalize_text(row.get("pmid"))
+                if p:
+                    claims_by_pmid[p] = claims_by_pmid.get(p, 0) + 1
+            pmids_with_claims = set(claims_by_pmid)
+            n_claims = len(claims)
+            field_coverage = {}
+            for f_ in domain_fields:
+                n_pop = sum(1 for r in claims
+                            if normalize_text(r.get(f_)) not in (None, "", "null"))
+                field_coverage[f_] = n_pop / n_claims if n_claims else 0.0
+            quote_rate = (sum(1 for r in claims if r.get("quote", "").strip()) / n_claims
+                          if n_claims else 0.0)
+            dup_pmids = sum(1 for c in claims_by_pmid.values() if c > 1)
+
             cur.execute(
                 """
                 INSERT INTO literature_domains (
-                    run_id, species, domain, expected_fields, total_papers, clean_count, failed_count,
-                    min_completeness, confidence_distribution, field_coverage, quote_presence_rate, duplicate_pmids
+                    run_id, species, domain, expected_fields, total_papers, clean_count,
+                    failed_count, min_completeness, confidence_distribution,
+                    field_coverage, quote_presence_rate, duplicate_pmids
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (run_id, species, domain) DO UPDATE SET
                     expected_fields = EXCLUDED.expected_fields,
@@ -2076,37 +2353,29 @@ def load_literature_evidence(conn, run_id, evidence_qc_dir):
                 """,
                 (
                     run_id, species, domain,
-                    json.dumps(expected_fields) if expected_fields is not None else None,
-                    total_papers, clean_count, failed_count, min_completeness,
-                    json.dumps(confidence_distribution) if confidence_distribution is not None else None,
-                    json.dumps(field_coverage) if field_coverage is not None else None,
-                    quote_presence_rate, duplicate_pmids,
+                    json.dumps(domain_fields),
+                    len(search_rows) or parse_int(log.get("input_count")),
+                    sum(1 for r in log.get("results", []) if r.get("claims", 0) > 0) or None,
+                    parse_int(log.get("failed_count")),
+                    None, None,
+                    json.dumps(field_coverage), quote_rate, dup_pmids,
                 ),
             )
             domain_id = cur.fetchone()[0]
-            for p in (report.get("per_paper") or []):
-                if p.get("status") != "clean":
-                    continue
-                pmid = normalize_text(p.get("pmid"))
+
+            # ---- literature_papers -------------------------------------------
+            paper_id_by_pmid = {}
+            for srow in search_rows:
+                pmid = normalize_text(srow.get("id"))
                 if not pmid:
                     continue
-                clean_path = report_path.parent / "clean" / f"{pmid}.json"
-                if not clean_path.exists():
-                    print(f"  WARNING: clean file not found for {pmid} in {domain}", file=sys.stderr)
-                    continue
-                with open(clean_path, encoding="utf-8") as f:
-                    paper = json.load(f)
-                title = normalize_text(paper.get("title"))
-                authors = paper.get("authors")
-                year = normalize_text(paper.get("year"))
-                doi = normalize_text(paper.get("doi"))
-                journal = normalize_text(paper.get("journal"))
-                publication_date = normalize_text(paper.get("publication_date"))
-                keywords = paper.get("keywords")
-                pmcid = normalize_text(paper.get("pmcid"))
-                cited_by_count = parse_int(paper.get("cited_by_count"))
-                is_oa = paper.get("is_oa")
-                qc_score = parse_float(paper.get("qc_score"))
+                meta = meta_by_id.get(pmid) or {}
+                title = normalize_text(meta.get("title") or srow.get("title"))
+                authors = meta.get("authors") or ([srow["first_author"]] if srow.get("first_author") else None)
+                is_oa = srow.get("is_oa")
+                if isinstance(is_oa, str):
+                    is_oa = {"y": True, "yes": True, "true": True, "1": True,
+                             "n": False, "no": False, "false": False, "0": False}.get(is_oa.strip().lower())
                 cur.execute(
                     """
                     INSERT INTO literature_papers (
@@ -2114,57 +2383,399 @@ def load_literature_evidence(conn, run_id, evidence_qc_dir):
                         publication_date, keywords, pmcid, cited_by_count, is_oa, qc_score, status
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (run_id, pmid, species, domain) DO UPDATE SET
-                        title = EXCLUDED.title,
-                        authors = EXCLUDED.authors,
-                        year = EXCLUDED.year,
-                        doi = EXCLUDED.doi,
-                        journal = EXCLUDED.journal,
+                        title = EXCLUDED.title, authors = EXCLUDED.authors, year = EXCLUDED.year,
+                        doi = EXCLUDED.doi, journal = EXCLUDED.journal,
                         publication_date = EXCLUDED.publication_date,
-                        keywords = EXCLUDED.keywords,
-                        pmcid = EXCLUDED.pmcid,
-                        cited_by_count = EXCLUDED.cited_by_count,
-                        is_oa = EXCLUDED.is_oa,
-                        qc_score = EXCLUDED.qc_score,
+                        keywords = EXCLUDED.keywords, pmcid = EXCLUDED.pmcid,
+                        cited_by_count = EXCLUDED.cited_by_count, is_oa = EXCLUDED.is_oa,
                         status = EXCLUDED.status
                     RETURNING paper_id
                     """,
                     (
                         domain_id, run_id, pmid, species, domain, title,
-                        json.dumps(authors) if authors is not None else None,
-                        year, doi, journal, publication_date,
-                        json.dumps(keywords) if keywords is not None else None,
-                        pmcid, cited_by_count,
+                        json.dumps(authors) if authors else None,
+                        normalize_text(meta.get("year") or srow.get("year")),
+                        normalize_text(meta.get("doi") or srow.get("doi")),
+                        normalize_text(meta.get("journal")),
+                        normalize_text(meta.get("publication_date") or srow.get("publication_date")),
+                        json.dumps(meta.get("keywords")) if meta.get("keywords") else None,
+                        normalize_text(meta.get("pmcid")),
+                        parse_int(srow.get("cited_by_count")),
                         json.dumps(is_oa) if is_oa is not None else None,
-                        qc_score, "clean",
+                        None,
+                        "clean" if pmid in pmids_with_claims else "searched",
                     ),
                 )
-                paper_id = cur.fetchone()[0]
-                for extraction in paper.get("extraction", []):
-                    field = normalize_text(extraction.get("field"))
-                    if not field:
+                paper_id_by_pmid[pmid] = cur.fetchone()[0]
+                n_papers += 1
+
+            # papers with claims but missing from the search universe
+            for pmid in pmids_with_claims - set(paper_id_by_pmid):
+                meta = meta_by_id.get(pmid) or {}
+                cur.execute(
+                    """
+                    INSERT INTO literature_papers (
+                        domain_id, run_id, pmid, species, domain, title, authors, year, doi, journal,
+                        publication_date, keywords, pmcid, cited_by_count, is_oa, qc_score, status
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (run_id, pmid, species, domain) DO NOTHING
+                    RETURNING paper_id
+                    """,
+                    (
+                        domain_id, run_id, pmid, species, domain,
+                        normalize_text(meta.get("title")),
+                        json.dumps(meta.get("authors")) if meta.get("authors") else None,
+                        normalize_text(meta.get("year")),
+                        normalize_text(meta.get("doi")),
+                        normalize_text(meta.get("journal")),
+                        normalize_text(meta.get("publication_date")),
+                        json.dumps(meta.get("keywords")) if meta.get("keywords") else None,
+                        normalize_text(meta.get("pmcid")),
+                        None, None, None, "clean",
+                    ),
+                )
+                row = cur.fetchone()
+                if row:
+                    paper_id_by_pmid[pmid] = row[0]
+                    n_papers += 1
+
+            # ---- literature_extractions (paper x field, from claims) ---------
+            for row in claims:
+                pmid = normalize_text(row.get("pmid"))
+                paper_id = paper_id_by_pmid.get(pmid)
+                if not paper_id:
+                    continue
+                quote = normalize_text(row.get("quote"))
+                for f_ in domain_fields:
+                    val = normalize_text(row.get(f_))
+                    if val in (None, "", "null"):
                         continue
-                    present = bool(extraction.get("present"))
-                    value = extraction.get("value")
-                    quote = normalize_text(extraction.get("quote"))
-                    confidence = normalize_text(extraction.get("confidence"))
                     cur.execute(
                         """
                         INSERT INTO literature_extractions (paper_id, field, present, value, quote, confidence)
                         VALUES (%s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (paper_id, field) DO UPDATE SET
-                            present = EXCLUDED.present,
-                            value = EXCLUDED.value,
-                            quote = EXCLUDED.quote,
-                            confidence = EXCLUDED.confidence
+                        ON CONFLICT (paper_id, field) DO NOTHING
+                        """,
+                        (paper_id, f_, True, json.dumps(val), quote, None),
+                    )
+                    n_ext += 1
+    conn.commit()
+    print(f"  Loaded {n_papers} literature papers and {n_ext} field extractions "
+          f"for {species} across {len(domains)} domain(s)", file=sys.stderr)
+
+
+def load_evidence_extracted_tsvs(conn, run_id, results_dir, species):
+    """Ingest the new Ollama/TSV evidence_extracted files for the species."""
+    species = normalize_text(species)
+    if not species:
+        return
+    base = Path(results_dir) / "literature_retrieval" / "literature_evidence" / species
+    if not base.exists():
+        print(f"  SKIP: no published literature_evidence for {species}", file=sys.stderr)
+        return
+    tsv_paths = sorted(base.rglob("evidence_extracted.tsv"))
+    if not tsv_paths:
+        print(f"  SKIP: no evidence_extracted.tsv files under {base}", file=sys.stderr)
+        return
+
+    inserted = 0
+    with conn.cursor() as cur:
+        for tsv_path in tsv_paths:
+            with open(tsv_path, encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    for key in row:
+                        if row[key] is None:
+                            row[key] = ""
+                    details = row.get("details", "")
+                    if not details or not details.strip():
+                        details = "{}"
+                    cur.execute(
+                        """
+                        INSERT INTO evidence_extracted (
+                            run_id, pmid, pmcid, species, domain, topic, claim_type,
+                            product_name, sensitivity, specificity, finding, quote,
+                            evidence_level, population, geography, source_file, details
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING claim_id
                         """,
                         (
-                            paper_id, field, present,
-                            json.dumps(value) if value is not None else None,
-                            quote, confidence,
+                            run_id,
+                            normalize_text(row.get("pmid")),
+                            normalize_text(row.get("pmcid")),
+                            species,
+                            normalize_text(row.get("domain")),
+                            normalize_text(row.get("topic")),
+                            normalize_text(row.get("claim_type")),
+                            normalize_text(row.get("product_name")),
+                            normalize_text(row.get("sensitivity")),
+                            normalize_text(row.get("specificity")),
+                            row.get("finding", ""),
+                            row.get("quote", ""),
+                            normalize_text(row.get("evidence_level")),
+                            normalize_text(row.get("population")),
+                            normalize_text(row.get("geography")),
+                            normalize_text(row.get("source_file")),
+                            details,
                         ),
                     )
+                    claim_id = cur.fetchone()[0]
+                    try:
+                        detail_dict = json.loads(details)
+                    except Exception:
+                        detail_dict = {}
+                    if isinstance(detail_dict, dict):
+                        for fname, fval in detail_dict.items():
+                            fval_str = json.dumps(fval, ensure_ascii=False) if isinstance(fval, (list, dict, bool)) else str(fval)
+                            cur.execute(
+                                "INSERT INTO evidence_fields (claim_id, field_name, field_value) VALUES (%s, %s, %s)",
+                                (claim_id, fname, fval_str),
+                            )
+                    inserted += 1
     conn.commit()
-    print(f"  Loaded literature evidence from {len(report_files)} domain report(s)", file=sys.stderr)
+    print(f"  Loaded {inserted} evidence claims for {species}", file=sys.stderr)
+
+
+def _tsv_to_rows(tsv_path):
+    if not tsv_path or not Path(tsv_path).exists():
+        return []
+    with open(tsv_path, encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f, delimiter="\t"))
+
+
+def load_countermeasures_tsv(conn, run_id, results_dir, species):
+    species = normalize_text(species)
+    if not species:
+        return
+    tsv_path = Path(results_dir) / "countermeasures" / species / "countermeasure_readiness.tsv"
+    rows = _tsv_to_rows(tsv_path)
+    if not rows:
+        print(f"  SKIP: no countermeasure_readiness.tsv for {species}", file=sys.stderr)
+        return
+
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                INSERT INTO countermeasures (
+                    run_id, species, countermeasure, status, best_evidence,
+                    best_pmid, n_supporting_papers, readiness_score
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (run_id, species, countermeasure) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    best_evidence = EXCLUDED.best_evidence,
+                    best_pmid = EXCLUDED.best_pmid,
+                    n_supporting_papers = EXCLUDED.n_supporting_papers,
+                    readiness_score = EXCLUDED.readiness_score
+                """,
+                (
+                    run_id, species,
+                    normalize_text(row.get("countermeasure")),
+                    normalize_text(row.get("status")),
+                    row.get("best_evidence", ""),
+                    normalize_text(row.get("best_pmid")),
+                    parse_int(row.get("n_supporting_papers")),
+                    parse_float(row.get("readiness_score")),
+                ),
+            )
+    conn.commit()
+    print(f"  Loaded {len(rows)} countermeasure rows for {species}", file=sys.stderr)
+
+
+def load_knowledge_gaps_tsv(conn, run_id, results_dir, species):
+    species = normalize_text(species)
+    if not species:
+        return
+    tsv_path = Path(results_dir) / "knowledge_gaps" / species / "knowledge_gaps.tsv"
+    rows = _tsv_to_rows(tsv_path)
+    if not rows:
+        print(f"  SKIP: no knowledge_gaps.tsv for {species}", file=sys.stderr)
+        return
+
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                INSERT INTO knowledge_gaps (
+                    run_id, species, topic, gap, priority,
+                    n_papers_touching_topic, notes
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    run_id, species,
+                    normalize_text(row.get("topic")),
+                    row.get("gap", ""),
+                    normalize_text(row.get("priority")),
+                    parse_int(row.get("n_papers_touching_topic")),
+                    row.get("notes", ""),
+                ),
+            )
+    conn.commit()
+    print(f"  Loaded {len(rows)} knowledge gap rows for {species}", file=sys.stderr)
+
+
+def load_domain_summaries_tsv(conn, run_id, results_dir, species):
+    """Ingest literature_summaries/<species>/domain_summaries.tsv."""
+    species = normalize_text(species)
+    if not species:
+        return
+    tsv_path = (Path(results_dir) / "literature_retrieval" /
+                "literature_summaries" / species / "domain_summaries.tsv")
+    rows = _tsv_to_rows(tsv_path)
+    if not rows:
+        print(f"  SKIP: no domain_summaries.tsv for {species}", file=sys.stderr)
+        return
+
+    with conn.cursor() as cur:
+        for row in rows:
+            cur.execute(
+                """
+                INSERT INTO domain_summaries (
+                    run_id, species, domain, n_claims, n_papers,
+                    summary, source, model, generated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (run_id, species, domain) DO UPDATE SET
+                    n_claims = EXCLUDED.n_claims,
+                    n_papers = EXCLUDED.n_papers,
+                    summary = EXCLUDED.summary,
+                    source = EXCLUDED.source,
+                    model = EXCLUDED.model,
+                    generated_at = EXCLUDED.generated_at
+                """,
+                (
+                    run_id, species,
+                    normalize_text(row.get("domain")),
+                    parse_int(row.get("n_claims")),
+                    parse_int(row.get("n_papers")),
+                    row.get("summary", ""),
+                    normalize_text(row.get("source")),
+                    normalize_text(row.get("model")),
+                    normalize_text(row.get("generated_at")),
+                ),
+            )
+    conn.commit()
+    print(f"  Loaded {len(rows)} domain summaries for {species}", file=sys.stderr)
+
+
+def _ebov_clade_from_year_country(year, country, admin1=None, outbreak=None):
+    """Return a literature-based EBOV clade name from sampling metadata."""
+    if not year or year in (None, ""):
+        return None
+    try:
+        year = int(year)
+    except (ValueError, TypeError):
+        return None
+    country_norm = (country or "").lower().strip()
+    admin1_norm = (admin1 or "").lower().strip()
+    outbreak_norm = (outbreak or "").lower().strip()
+
+    drc = country_norm in {
+        "democratic republic of the congo",
+        "democratic republic of congo",
+        "drc",
+        "zaire",
+        "congo, dem republic",
+        "congo-kinshasa",
+        "congo",
+    }
+    west_africa = country_norm in {"guinea", "liberia", "sierra leone"}
+    if not (drc or west_africa):
+        return None
+
+    if drc:
+        if 1976 <= year <= 1977:
+            return "EBOV-Clade-1 (1976-1977)"
+        # Specific locations tied to Clade 3 (Boende/Bikoro, Equateur province)
+        clade3_tokens = ["bikoro", "boende", "equateur", "mondombe"]
+        if any(tok in admin1_norm for tok in clade3_tokens) or any(tok in outbreak_norm for tok in clade3_tokens):
+            return "EBOV-Clade-3 (2014/2018)"
+        if year == 2014:
+            return "EBOV-Clade-3 (2014/2018)"
+        # Specific locations tied to Clade 2 (Likati, Ituri, North Kivu)
+        clade2_tokens = ["likati", "ituri", "north kivu", "kivu", "mambasa", "mandima"]
+        if any(tok in admin1_norm for tok in clade2_tokens) or any(tok in outbreak_norm for tok in clade2_tokens):
+            return "EBOV-Clade-2 (2017-2020)"
+        if 2017 <= year <= 2020:
+            return "EBOV-Clade-2 (2017-2020)"
+        return None
+    if west_africa and 2013 <= year <= 2016:
+        return "EBOV-Clade-4 (Makona, 2013-2016)"
+    return None
+
+
+def _refine_ebov_clades(conn, run_id=None):
+    """Re-assign EBOV clades in samples, tree_tips, clades, and sample_clade."""
+    with conn.cursor() as cur:
+        # Reassign samples
+        cur.execute(
+            """
+            SELECT sample_id, collection_date, country, admin1, outbreak
+            FROM samples
+            WHERE species = %s
+            """,
+            ("ebov",),
+        )
+        sample_rows = cur.fetchall()
+        clade_ids = {}
+        for sample_id, collection_date, country, admin1, outbreak in sample_rows:
+            year = collection_date.year if collection_date else None
+            new_clade = _ebov_clade_from_year_country(year, country, admin1, outbreak)
+            if not new_clade:
+                continue
+            cur.execute(
+                "UPDATE samples SET clade = %s WHERE sample_id = %s",
+                (new_clade, sample_id),
+            )
+            # ensure the clade is present in the clades table
+            key = (run_id, "orthoebolavirus", "ebov", new_clade)
+            clade_id = clade_ids.get(key)
+            if clade_id is None:
+                cur.execute(
+                    """
+                    INSERT INTO clades (run_id, pathogen, species, clade_name)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (run_id, species, clade_name) DO UPDATE
+                    SET pathogen = EXCLUDED.pathogen
+                    RETURNING clade_id
+                    """,
+                    (run_id, "orthoebolavirus", "ebov", new_clade),
+                )
+                clade_id = cur.fetchone()[0]
+                clade_ids[key] = clade_id
+            cur.execute(
+                """
+                INSERT INTO sample_clade (sample_id, clade_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (sample_id, clade_id),
+            )
+
+        # Reassign tree tips
+        cur.execute(
+            """
+            SELECT t.tip_id, t.sample_id, t.tip_date, t.country, t.admin1, t.outbreak
+            FROM tree_tips t
+            JOIN phylogenetic_trees pt ON t.tree_id = pt.tree_id
+            WHERE pt.species = %s
+            """,
+            ("ebov",),
+        )
+        for tip_id, sample_id, tip_date, country, admin1, outbreak in cur.fetchall():
+            year = tip_date.year if tip_date else None
+            new_clade = _ebov_clade_from_year_country(year, country, admin1, outbreak)
+            if not new_clade:
+                continue
+            cur.execute(
+                "UPDATE tree_tips SET clade = %s WHERE tip_id = %s",
+                (new_clade, tip_id),
+            )
+            if sample_id:
+                cur.execute(
+                    "UPDATE samples SET clade = %s WHERE sample_id = %s",
+                    (new_clade, sample_id),
+                )
+    conn.commit()
 
 
 def main():
@@ -2265,12 +2876,16 @@ def main():
                 print("Loading mutations...", file=sys.stderr)
                 load_mutations(conn, args.meta_id, results_dir)
 
+                print("Loading background from Auspice...", file=sys.stderr)
+                load_background_from_auspice(conn, args.meta_id, results_dir, species=args.species)
+
                 print("Loading phenotype annotations...", file=sys.stderr)
                 load_phenotype_annotations(
                     conn, args.meta_id,
                     uniprotr_dir=args.uniprotr_dir,
                     extractr_dir=args.extractr_dir,
                     rbioapi_dir=args.rbioapi_dir,
+                    query_data_dir=args.query_data_dir,
                 )
 
                 print("Loading HMMER/Pfam annotations...", file=sys.stderr)
@@ -2285,8 +2900,15 @@ def main():
                 )
 
                 print("Loading literature evidence...", file=sys.stderr)
-                if args.evidence_qc_dir:
-                    load_literature_evidence(conn, args.meta_id, args.evidence_qc_dir)
+                if args.results_dir and args.species:
+                    load_evidence_extracted_tsvs(conn, args.meta_id, args.results_dir, args.species)
+                    load_literature_tables(conn, args.meta_id, args.results_dir, args.species)
+                    load_countermeasures_tsv(conn, args.meta_id, args.results_dir, args.species)
+                    load_knowledge_gaps_tsv(conn, args.meta_id, args.results_dir, args.species)
+                    load_domain_summaries_tsv(conn, args.meta_id, args.results_dir, args.species)
+
+                print("Refining EBOV clades...", file=sys.stderr)
+                _refine_ebov_clades(conn, args.meta_id)
 
             print("Writing MultiQC summary...", file=sys.stderr)
             write_mqc_summary(conn, args.meta_id, outdir, args.prefix)

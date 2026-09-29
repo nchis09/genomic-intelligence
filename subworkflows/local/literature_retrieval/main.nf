@@ -14,7 +14,7 @@ include { LITERATURE_SCREEN } from '../../../modules/local/literature_screen/mai
 include { LITERATURE_PDF } from '../../../modules/local/literature_pdf/main'
 include { LITERATURE_TEXT } from '../../../modules/local/literature_text/main'
 include { LITERATURE_EVIDENCE } from '../../../modules/local/literature_evidence/main'
-include { EVIDENCE_QC } from '../../../modules/local/evidence_qc/main'
+include { EVIDENCE_SUMMARY } from '../../../modules/local/evidence_summary/main'
 
 workflow LITERATURE_RETRIEVAL {
     take:
@@ -23,6 +23,7 @@ workflow LITERATURE_RETRIEVAL {
     main:
     def ch_lit_evidence = channel.empty()
     def ch_lit_qc = channel.empty()
+    def ch_lit_summaries = channel.empty()
 
     if (!params.skip_literature_search) {
         LITERATURE_SEARCH(
@@ -58,17 +59,21 @@ workflow LITERATURE_RETRIEVAL {
                     LITERATURE_TEXT(LITERATURE_PDF.out.pdfs)
                     if (!params.skip_literature_evidence) {
                         // Join text files with metadata JSONs by meta (species + domain)
-                        // so LITERATURE_EVIDENCE can merge metadata into output JSONs
                         ch_text_with_meta = LITERATURE_TEXT.out.text.join(ch_pubmed_results, by: [0])
-                        LITERATURE_EVIDENCE(ch_text_with_meta, file("${projectDir}/database/evidence_rules.yml"))
+                        LITERATURE_EVIDENCE(ch_text_with_meta, file("${projectDir}/database/evidence_templates.yml"))
+                        ch_lit_evidence = LITERATURE_EVIDENCE.out.tsv
+                        ch_lit_qc = LITERATURE_EVIDENCE.out.log
 
-                        if (!params.skip_evidence_qc) {
-                            EVIDENCE_QC(LITERATURE_EVIDENCE.out.evidence, file("${projectDir}/database/evidence_templates.yml"))
-                            ch_lit_evidence = EVIDENCE_QC.out.clean
-                            ch_lit_qc = EVIDENCE_QC.out.report_json
-                        } else {
-                            ch_lit_evidence = LITERATURE_EVIDENCE.out.evidence
-                        }
+                        // Group the per-domain TSVs by species and ask the local
+                        // LLM for one narrative per domain + a species overview —
+                        // the dashboard displays these without calling the LLM.
+                        EVIDENCE_SUMMARY(
+                            ch_lit_evidence
+                                .map { meta, tsv -> [meta.species, meta, tsv] }
+                                .groupTuple(by: 0)
+                                .map { _species, metas, tsvs -> [metas[0], tsvs] }
+                        )
+                        ch_lit_summaries = EVIDENCE_SUMMARY.out.summaries
                     }
                 }
             }
@@ -83,6 +88,7 @@ workflow LITERATURE_RETRIEVAL {
     emit:
     lit_results = ch_lit_results  // channel: [ meta, [ */results.* files ] ]
     pubmed_metadata = ch_pubmed_results  // channel: [ meta, [ *.json files ] ]
-    lit_evidence = ch_lit_evidence  // channel: [ meta, [ clean/*.json files ] ]
-    lit_qc_report = ch_lit_qc  // channel: [ meta, qc_report.json ]
+    lit_evidence = ch_lit_evidence  // channel: [ meta, evidence_extracted.tsv ]
+    lit_qc_report = ch_lit_qc  // channel: [ meta, extraction_log.json ]
+    lit_summaries = ch_lit_summaries  // channel: [ meta, domain_summaries.tsv ]
 }

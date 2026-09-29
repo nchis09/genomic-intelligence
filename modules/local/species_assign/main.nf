@@ -218,8 +218,9 @@ process SPECIES_ASSIGN {
             reader = csv.DictReader(f, delimiter="\\t")
             meta_header = reader.fieldnames
             for row in reader:
-                # Try common ID columns
-                row_id = row.get("strain") or row.get("name") or row.get("sample") or row.get("seqName") or ""
+                # Try common ID columns (in priority order)
+                row_id = (row.get("strain") or row.get("accession") or row.get("name")
+                          or row.get("sample") or row.get("sample_id") or row.get("seqName") or "")
                 if row_id:
                     meta_rows[row_id] = row
 
@@ -235,20 +236,35 @@ process SPECIES_ASSIGN {
                 if sample in sequences:
                     f.write(sequences[sample] + "\\n")
 
-        # Write metadata
+        # Write metadata. Downstream augur merge keys rows on `accession`, so
+        # guarantee that column exists: copy the detected ID column into
+        # `accession` when the source metadata used a different name
+        # (e.g. sample_id, strain, seqName).
         meta_out = f"{prefix}_species_{species}.metadata.tsv"
         with open(meta_out, "w") as f:
             if meta_header:
-                writer = csv.DictWriter(f, fieldnames=meta_header, delimiter="\\t")
+                out_header = list(meta_header)
+                if "accession" not in out_header:
+                    out_header = ["accession"] + out_header
+                # All user-supplied sequences are queries; the nextstrain
+                # subsample config filters on is_query=="true".
+                if "is_query" not in out_header:
+                    out_header.append("is_query")
+                writer = csv.DictWriter(f, fieldnames=out_header, delimiter="\\t",
+                                        extrasaction="ignore")
                 writer.writeheader()
                 for sample in samples:
                     if sample in meta_rows:
-                        writer.writerow(meta_rows[sample])
+                        row = dict(meta_rows[sample])
+                        if not row.get("accession"):
+                            row["accession"] = sample
+                        row["is_query"] = "true"
+                        writer.writerow(row)
             else:
                 # Minimal metadata with just sample names
-                f.write("strain\\n")
+                f.write("accession\\tstrain\\tis_query\\n")
                 for sample in samples:
-                    f.write(f"{sample}\\n")
+                    f.write(f"{sample}\\t{sample}\\ttrue\\n")
 
         species_groups_output.append({
             "pathogen": pathogen,

@@ -29,12 +29,16 @@ process HMM_ANNOTATE {
     def prefix  = task.ext.prefix ?: "${meta.id}"
     def evalue  = task.ext.evalue ?: params.hmm_evalue ?: 1e-5
     """
+    # hmmscan rejects gap ('-') and stop ('*') characters in input sequences;
+    # strip them from sequence lines (headers untouched) into a sanitized FASTA.
+    awk '{if (/^>/) print; else {gsub(/[-*]/, ""); print}}' ${query_fasta} > ${prefix}_query_proteins.sanitized.fasta
+
     hmmscan --noali \
         --tblout ${prefix}_hmm_sequence_table.txt \
         --domtblout ${prefix}_hmm_domain_table.txt \
         --pfamtblout ${prefix}_hmm_pfam_table.txt \
         -E ${evalue} --domE ${evalue} \
-        ${hmm_db_dir}/hmm_db.hmm ${query_fasta} > ${prefix}_hmm_report.txt
+        ${hmm_db_dir}/hmm_db.hmm ${prefix}_query_proteins.sanitized.fasta > ${prefix}_hmm_report.txt
 
     python3 ${projectDir}/bin/parse_hmmscan.py \
         --tblout ${prefix}_hmm_sequence_table.txt \
