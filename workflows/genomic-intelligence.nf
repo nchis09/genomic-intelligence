@@ -13,6 +13,7 @@ include { REPORTING              } from '../subworkflows/local/reporting/main'
 include { COMPUTE_TRANSMISSION_CONTEXT } from '../modules/local/compute_transmission_context/main'
 include { GENERATE_TREE_NOTES          } from '../modules/local/generate_tree_notes/main'
 include { GENERATE_SPREAD_ASSESSMENT   } from '../modules/local/generate_spread_assessment/main'
+include { GEOGRAPHIC_SUMMARY           } from '../modules/local/geographic_summary/main'
 include { GENERATE_INTELLIGENCE_BRIEF  } from '../modules/local/generate_intelligence_brief/main'
 
 /*
@@ -149,6 +150,16 @@ workflow GENOMIC_INTELLIGENCE {
                     COMPUTE_TRANSMISSION_CONTEXT.out.tsv,
                     file("${projectDir}/dashboard/modules/llm_note.R"),
                     file("${projectDir}/dashboard/modules/pathogen_transmission.R")
+                )
+            }
+
+            // Pre-generate the per-species geographic spread narrative
+            // (LLM over the transmission-context tables; template fallback —
+            // geo_summary.json is always written).
+            if (!params.skip_geo_summary) {
+                GEOGRAPHIC_SUMMARY(
+                    COMPUTE_TRANSMISSION_CONTEXT.out.tsv,
+                    file("${projectDir}/dashboard/modules/llm_note.R")
                 )
             }
         }
