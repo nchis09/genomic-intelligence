@@ -12,7 +12,7 @@ process NEXTCLADE_DATASETGET {
     val tag
 
     output:
-    path "$prefix"     , emit: dataset
+    tuple val(dataset), path("$prefix"), emit: dataset
     tuple val("${task.process}"), val('nextclade'), eval("nextclade --version 2>&1 | sed 's/.*nextclade \\([^ ]*\\).*/\\1/'"), emit: versions_nextclade, topic: versions
     tuple val("${task.process}"), val('nextclade-dataset'), eval("grep 'tag' ${prefix}/pathogen.json | sed 's/.*tag.: .\\([0-9-]\\+Z\\).*/\\1/'"), emit: versions_nextclade_dataset, topic: versions
 

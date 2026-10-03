@@ -37,13 +37,17 @@ workflow CLASSIFICATION {
     ch_fasta = ch_samplesheet.map { meta, fasta, _metadata -> [ meta, fasta ] }
 
     // Combine each sample FASTA with each downloaded dataset
-    // so Nextclade runs once per sample × dataset combination
-    // Add dataset name to meta.id to avoid filename collisions
+    // so Nextclade runs once per sample × dataset combination.
+    // meta.id gains a suffix derived from the dataset path minus its source
+    // prefix (e.g. nextstrain/orthoebolavirus/bdbv -> "orthoebolavirus_bdbv",
+    // community/moncla-lab/iav-h5/ha/all-clades -> "moncla-lab_iav-h5_ha_all-clades")
+    // -- unique per dataset, unlike the leaf dir name alone which collides
+    // across datasets (mpox/all-clades vs iav-h5/ha/all-clades).
     ch_nextclade_input = ch_fasta
         .combine(NEXTCLADE_DATASETGET.out.dataset)
-        .map { meta, fasta, dataset ->
-            def dataset_suffix = dataset.name  // directory name (e.g., "bdbv", "sudan")
-            def new_meta = meta + [id: "${meta.id}_${dataset_suffix}"]
+        .map { meta, fasta, ds_name, dataset ->
+            def dataset_suffix = ds_name.tokenize('/').drop(1).join('_')
+            def new_meta = meta + [id: "${meta.id}_${dataset_suffix}", dataset: ds_name]
             [ new_meta, fasta, dataset ]
         }
 
@@ -75,6 +79,8 @@ workflow CLASSIFICATION {
                 id: "${group.pathogen}_${group.species}",
                 pathogen: group.pathogen,
                 species: group.species,
+                dataset: group.dataset,
+                internal_only: group.internal_only ?: false,
                 query_samples: group.samples.join(',')
             ]
             def fasta = file(group.fasta)
@@ -86,5 +92,6 @@ workflow CLASSIFICATION {
     species_groups = ch_species_groups             // channel: [ meta(pathogen, species), fasta, metadata ]
     tsv            = NEXTCLADE_RUN.out.tsv         // channel: [ meta, tsv ]
     json           = NEXTCLADE_RUN.out.json        // channel: [ meta, json ]
+    aligned        = NEXTCLADE_RUN.out.fasta_aligned // channel: [ meta(dataset), fasta ] — per-dataset aligned queries
     assignments    = SPECIES_ASSIGN.out.assignments // path: species_assignments.tsv
 }

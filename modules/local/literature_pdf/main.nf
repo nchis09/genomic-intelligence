@@ -15,7 +15,7 @@ process LITERATURE_PDF {
     tuple val(meta), path("*.json")
 
     output:
-    tuple val(meta), path("*.pdf"), optional: true, emit: pdfs
+    tuple val(meta), path("*.{pdf,xml}"), optional: true, emit: pdfs
     path "pdf_download_summary.json", emit: summary
 
     when:

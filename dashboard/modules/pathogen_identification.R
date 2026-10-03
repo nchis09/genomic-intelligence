@@ -144,6 +144,112 @@ pi_metric_chart <- function(sel_df, metric, color_map, dark_mode = FALSE) {
   p
 }
 
+# Single grouped-bar plot: metric sections on the x-axis, one coloured bar per
+# selected sample inside each section. Metrics differ wildly in scale
+# (percentages vs distances vs raw QC scores) so each section is normalised to
+# its own max — the bars compare samples within a metric, and raw values are
+# shown as labels/hover.
+pi_metrics_grouped_bars <- function(sel_df, color_map, dark_mode = FALSE) {
+  font_color <- if (dark_mode) "#e0e0e0" else "#333333"
+  grid_color <- if (dark_mode) "#4a5568" else "#e9ecef"
+
+  rows <- list()
+  for (metric in PI_METRICS) {
+    col <- metric$col
+    vals <- suppressWarnings(as.numeric(sel_df[[col]]))
+    if (all(is.na(vals))) next
+    display_vals <- if (metric$pct) vals * 100 else vals
+    mx <- max(display_vals, na.rm = TRUE)
+    if (!is.finite(mx) || mx <= 0) mx <- 1
+    rows[[length(rows) + 1]] <- data.frame(
+      metric  = gsub("\n", " ", metric$label),
+      sample  = sel_df$sample,
+      val     = display_vals,
+      pct_max = display_vals / mx * 100,
+      label   = sprintf(if (metric$pct) "%.1f%%" else "%.4g", display_vals),
+      stringsAsFactors = FALSE
+    )
+  }
+  if (!length(rows)) return(NULL)
+  dd <- do.call(rbind, rows)
+  dd$metric <- factor(dd$metric, levels = unique(dd$metric))
+  dd$sample <- factor(dd$sample, levels = sel_df$sample)
+
+  plot_ly(
+    data = dd, x = ~metric, y = ~pct_max, color = ~sample,
+    colors = setNames(unname(color_map[levels(dd$sample)]), levels(dd$sample)),
+    type = "bar",
+    hovertemplate = "<b>%{fullData.name}</b><br>%{x}: %{text}<extra></extra>",
+    text = ~label, textposition = "outside",
+    textfont = list(size = 9),
+    marker = list(line = list(color = "rgba(0,0,0,0.15)", width = 1))
+  ) %>%
+    layout(
+      barmode = "group",
+      title = list(text = "Genomic metrics — bars scaled per metric (max = 100%); labels show raw values",
+                   font = list(size = 13, color = font_color), x = 0.5),
+      xaxis = list(title = "", tickangle = -20,
+                   tickfont = list(size = 10, color = font_color),
+                   gridcolor = grid_color),
+      yaxis = list(title = "% of section max", rangemode = "tozero",
+                   range = c(0, 118),
+                   tickfont = list(color = font_color), gridcolor = grid_color),
+      legend = list(orientation = "h", y = -0.28, font = list(color = font_color)),
+      margin = list(t = 60, b = 90, l = 60, r = 20, pad = 8),
+      paper_bgcolor = "transparent", plot_bgcolor = "transparent",
+      font = list(color = font_color),
+      height = 420
+    ) %>%
+    config(displayModeBar = FALSE)
+}
+
+# Bar chart for one metric: one bar per selected sample, coloured by sample.
+pi_metric_bars <- function(sel_df, metric, color_map, dark_mode = FALSE) {
+  font_color <- if (dark_mode) "#e0e0e0" else "#333333"
+  grid_color <- if (dark_mode) "#4a5568" else "#e9ecef"
+
+  col  <- metric$col
+  vals <- suppressWarnings(as.numeric(sel_df[[col]]))
+  if (all(is.na(vals))) return(NULL)
+
+  display_vals <- if (metric$pct) vals * 100 else vals
+  labels <- sprintf(if (metric$pct) "%.1f%%" else "%.4f", display_vals)
+  colors <- color_map[sel_df$sample]
+  colors[is.na(colors)] <- PI_PARCOORDS_COLORS[seq_along(colors)]
+
+  plot_ly(
+    x = sel_df$sample, y = display_vals,
+    type = "bar",
+    marker = list(color = unname(colors), line = list(color = "rgba(0,0,0,0.15)", width = 1)),
+    text = labels, textposition = "outside",
+    textfont = list(size = 10, color = unname(colors)),
+    hoverinfo = "x+y",
+    showlegend = FALSE
+  ) %>%
+    layout(
+      title = list(text = paste0("<b>", gsub("\n", " ", metric$label), "</b>",
+                                 "<br><sup>", metric$subtitle, "</sup>"),
+                   font = list(size = 13, color = font_color), x = 0.5, y = 0.95),
+      xaxis = list(title = "", tickangle = -30,
+                   tickfont = list(size = 10, color = font_color),
+                   categoryorder = "array", categoryarray = sel_df$sample,
+                   gridcolor = grid_color),
+      yaxis = list(
+        title = "",
+        tickformat = if (metric$pct) ".0f" else ".4f",
+        tickfont = list(color = font_color),
+        range = list(0, max(display_vals, na.rm = TRUE) * 1.25),
+        automargin = TRUE,
+        gridcolor = grid_color
+      ),
+      margin = list(t = 85, b = 50, l = 55, r = 20, pad = 8),
+      paper_bgcolor = "transparent", plot_bgcolor = "transparent",
+      font = list(color = font_color),
+      height = 310
+    ) %>%
+    config(displayModeBar = FALSE)
+}
+
 # ---------------------------------------------------------------------------
 # Parallel coordinates data for D3 r2d3
 # ---------------------------------------------------------------------------
@@ -443,35 +549,23 @@ pathogen_identification_register <- function(input, output, session, species, ou
       ),
       fluidRow(
         column(width = 12,
-          uiOutput(pi_id(sp, "parcoords_chart"))
+          plotly::plotlyOutput(pi_id(sp, "metric_grouped_plot"), height = "440px")
         )
       )
     )
   })
 
-  # -- Render parallel coordinates chart
-  output[[pi_id(sp, "parcoords_chart")]] <- renderUI({
+  # -- Single grouped-bar comparison: metric sections on x, one coloured bar
+  #   per sample. Replaces the old parallel-coordinates view — connecting
+  #   unrelated metrics with continuous lines implied a trend that doesn't exist.
+  output[[pi_id(sp, "metric_grouped_plot")]] <- plotly::renderPlotly({
     sel <- selected_samples()
     req(length(sel) >= 2)
     dark <- isTRUE(input$is_dark_mode)
     df <- summary_data()
     sel_df <- df[df$sample %in% sel, , drop = FALSE]
     sel_df <- sel_df[match(sel, sel_df$sample), , drop = FALSE]
-    data <- pi_parcoords_data(sel_df, color_map(), dark_mode = dark)
-    req(!is.null(data))
-    chart_id <- pi_id(sp, "parcoords_chart")
-    json_data <- jsonlite::toJSON(data, auto_unbox = TRUE)
-    js_candidates <- c(
-      file.path(getwd(), "www", "parcoords_ui.js"),
-      file.path(getwd(), "dashboard", "www", "parcoords_ui.js")
-    )
-    js_path <- js_candidates[file.exists(js_candidates)][1]
-    cache_bust <- if (!is.na(js_path)) as.integer(file.info(js_path)$mtime) else Sys.time()
-    tagList(
-      singleton(tags$script(src = "https://d3js.org/d3.v7.min.js")),
-      tags$script(src = paste0("parcoords_ui.js?v=", cache_bust)),
-      tags$script(HTML(paste0("drawParcoords('", chart_id, "', ", json_data, ");")))
-    )
+    pi_metrics_grouped_bars(sel_df, color_map(), dark_mode = dark)
   })
 
   # -- Second reset button (inside chart section)

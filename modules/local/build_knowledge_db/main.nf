@@ -26,6 +26,7 @@ process BUILD_KNOWLEDGE_DB {
     args << "--schema-path ${schema_file}"
     args << "--views-path ${views_file}"
     if (meta.species) args << "--species ${meta.species}"
+    if (meta.pathogen) args << "--pathogen ${meta.pathogen}"
     if (!species_assignments.name.startsWith('NO_FILE')) args << "--species-assignments ${species_assignments}"
     if (!metadata_tsv.name.startsWith('NO_FILE'))          args << "--metadata-tsv ${metadata_tsv}"
     if (!epi_raw_dir.name.startsWith('NO_FILE'))           args << "--epi-raw-dir ${epi_raw_dir}"
@@ -41,13 +42,11 @@ process BUILD_KNOWLEDGE_DB {
     def hmm_list = hmm_files instanceof List ? hmm_files : [hmm_files]
     def hmm_real = hmm_list.findAll { !it.name.startsWith('NO_FILE') }
     if (!hmm_real)                                          args << "--hmm-dir hmm"
-    args << "--species-screening-only"
     // Resolve params.outdir to an absolute path so the loader can find
     // classification/, nextclade/results/, etc. at the pipeline output root.
     def outdir_abs = new File(params.outdir).absolutePath
     args << "--results-dir ${outdir_abs}"
     args << "--bioinfo-dir ${bioinformatics_results}"
-    if (evidence_qc_ready)                                 args << "--evidence-qc-dir ${params.outdir}/evidence_qc/${meta.species}"
     // Connect to the pipeline-lifetime shared Postgres (started by
     // START_KNOWLEDGE_DB before any species processing begins) instead of
     // spinning up a throwaway per-species instance -- lets downstream figures

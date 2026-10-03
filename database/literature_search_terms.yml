@@ -40,6 +40,43 @@ species_synonyms:
       - "RESTV"
     broad:
       - "Reston ebolavirus"
+  h5n1:
+    exact:
+      - "H5N1"
+      - "HPAI H5N1"
+      - "highly pathogenic avian influenza A(H5N1)"
+    broad:
+      - "avian influenza H5N1"
+      - "influenza A(H5N1)"
+  h5nx:
+    exact:
+      - "H5Nx"
+      - "H5N1"
+      - "HPAI H5"
+    broad:
+      - "avian influenza H5"
+      - "clade 2.3.4.4"
+  h1n1pdm:
+    exact:
+      - "H1N1"
+      - "pH1N1"
+      - "pdm09"
+    broad:
+      - "2009 pandemic H1N1"
+      - "influenza A(H1N1)pdm09"
+  h3n2:
+    exact:
+      - "H3N2"
+    broad:
+      - "influenza A(H3N2)"
+      - "seasonal influenza H3N2"
+  vic:
+    exact:
+      - "B/Victoria"
+      - "Victoria lineage"
+    broad:
+      - "influenza B Victoria"
+      - "influenza B/Victoria"
 
 # Terms applied to every species search in addition to species-specific synonyms.
 # Keep this minimal; "orthoebolavirus" is the only shared, higher-order term.
@@ -106,6 +143,42 @@ excluded_terms:
     - "TAFV"
     - "Marburg"
     - "MARV"
+  h5n1:
+    - "H3N2"
+    - "H1N1"
+    - "pdm09"
+    - "H7N9"
+    - "Ebola"
+    - "Marburg"
+  h5nx:
+    - "H3N2"
+    - "H1N1"
+    - "pdm09"
+    - "H7N9"
+    - "Ebola"
+    - "Marburg"
+  h1n1pdm:
+    - "H3N2"
+    - "H5N1"
+    - "H5Nx"
+    - "H7N9"
+    - "Ebola"
+    - "Marburg"
+  h3n2:
+    - "H5N1"
+    - "H5Nx"
+    - "H1N1"
+    - "pdm09"
+    - "Ebola"
+    - "Marburg"
+  vic:
+    - "H5N1"
+    - "H3N2"
+    - "H1N1"
+    - "H7N9"
+    - "Yamagata"
+    - "Ebola"
+    - "Marburg"
 
 # Optional per-domain exclusion terms. A paper containing any of these terms is
 # dropped from that domain's results even if it matches a required/related term,

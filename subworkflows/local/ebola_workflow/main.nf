@@ -39,6 +39,7 @@ workflow EBOLA_WORKFLOW {
     ch_lit_results = LITERATURE_RETRIEVAL.out.lit_results
     ch_lit_evidence = LITERATURE_RETRIEVAL.out.lit_evidence
     ch_lit_qc       = LITERATURE_RETRIEVAL.out.lit_qc_report
+    ch_lit_summaries = LITERATURE_RETRIEVAL.out.lit_summaries
 
     //
     // SUBWORKFLOW: Phenotype annotation (UniprotR + UniProtExtractR + rbioapi)
@@ -153,9 +154,8 @@ workflow EBOLA_WORKFLOW {
             .map { meta, dir -> [ meta, (dir && !dir.name.startsWith('NO_FILE')) ? dir : no_file_rbioapi ] }
 
         ch_auspice_for_kw = ch_auspice_results
-            .join(BIOINFORMATICS_AND_EPIDEMIOLOGICAL.out.tree, by: 0, remainder: true)
-            .map { meta, auspice, _results, tree ->
-                [ meta, (auspice && !auspice.name.startsWith('NO_FILE')) ? auspice : no_file_auspice, (tree && !tree.name.startsWith('NO_FILE')) ? tree : no_file_tree ]
+            .map { meta, auspice, _results ->
+                [ meta, (auspice && !auspice.name.startsWith('NO_FILE')) ? auspice : no_file_auspice, no_file_tree ]
             }
 
         ch_hmm_for_kw = params.skip_phenotype_annotation
@@ -180,11 +180,13 @@ workflow EBOLA_WORKFLOW {
                 [ meta, assignments, metadata, epi_dir, epi_summary, bioinfo_dir, uniprotr_dir, extractr_dir, rbioapi_dir, auspice, tree, query_data, hmm ]
             }
 
-        // Add a per-species boolean trigger so BUILD_KNOWLEDGE_DB waits for EVIDENCE_QC.
+        // Per-species gate: BUILD_KNOWLEDGE_DB waits for every domain's
+        // extraction log AND the per-species domain summaries to be published.
         ch_evidence_qc_ready = (params.skip_literature_evidence || params.skip_evidence_qc)
             ? channel.empty()
             : ch_lit_qc
                 .map { meta, report -> [ meta.species, true ] }
+                .concat(ch_lit_summaries.map { meta, sum -> [ meta.species, true ] })
                 .groupTuple(by: 0)
                 .map { species, reports -> [ species, true ] }
 

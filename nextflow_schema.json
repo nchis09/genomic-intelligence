@@ -121,11 +121,47 @@
                     "description": "NCBI Entrez contact email (required for PubMed metadata fetch).",
                     "fa_icon": "fas fa-envelope"
                 },
+                "literature_min_year": {
+                    "type": "integer",
+                    "default": null,
+                    "description": "Earliest publication year for the Europe PMC search (default: current year - 5).",
+                    "fa_icon": "fas fa-calendar"
+                },
+                "literature_max_year": {
+                    "type": "integer",
+                    "default": null,
+                    "description": "Latest publication year for the Europe PMC search (default: current year).",
+                    "fa_icon": "fas fa-calendar"
+                },
+                "asreview_top_n": {
+                    "type": "integer",
+                    "default": 25,
+                    "description": "Maximum number of top-ranked papers per species/domain carried into PDF download and LLM extraction.",
+                    "fa_icon": "fas fa-sort-amount-down"
+                },
+                "asreview_min_year": {
+                    "type": "integer",
+                    "default": null,
+                    "description": "Publication-year floor for screening (defaults to literature_min_year).",
+                    "fa_icon": "fas fa-calendar"
+                },
                 "skip_evidence_qc": {
                     "type": "boolean",
                     "default": false,
                     "description": "Set to true to skip QC validation of extraction JSONs.",
                     "fa_icon": "fas fa-check-circle"
+                },
+                "skip_mutation_profile": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set to true to skip the overall mutation profile (query vs background) analysis.",
+                    "fa_icon": "fas fa-dna"
+                },
+                "skip_intelligence_brief": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set to true to skip pre-generating the per-species intelligence_brief.json consumed by the dashboard's Intelligence Brief pages.",
+                    "fa_icon": "fas fa-file-lines"
                 },
                 "evidence_qc_min_completeness": {
                     "type": "number",

@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS phylogenetic_trees (
     newick TEXT
 );
 ALTER TABLE phylogenetic_trees ADD COLUMN IF NOT EXISTS tree_method TEXT;
+ALTER TABLE phylogenetic_trees ADD COLUMN IF NOT EXISTS segment TEXT;
 
 CREATE TABLE IF NOT EXISTS tree_tips (
     tip_id SERIAL PRIMARY KEY,
@@ -136,13 +137,15 @@ CREATE TABLE IF NOT EXISTS tree_tips (
     nuc_mutation_count INTEGER
 );
 
--- Remove duplicate (run_id, species, tree_method) tree/tip rows before enforcing uniqueness.
--- This keeps the latest tree for each combination (highest tree_id).
+-- Remove duplicate (run_id, species, tree_method, segment) tree/tip rows before
+-- enforcing uniqueness. This keeps the latest tree for each combination
+-- (highest tree_id). `segment` is part of the key: segmented pathogens
+-- (influenza) produce one tree per segment per species.
 DELETE FROM tree_tips
 WHERE tree_id IN (
     SELECT tree_id FROM (
         SELECT tree_id,
-               row_number() OVER (PARTITION BY run_id, species, tree_method ORDER BY tree_id DESC) AS rn
+               row_number() OVER (PARTITION BY run_id, species, tree_method, segment ORDER BY tree_id DESC) AS rn
         FROM phylogenetic_trees
     ) t WHERE t.rn > 1
 );
@@ -151,12 +154,12 @@ DELETE FROM phylogenetic_trees
 WHERE tree_id IN (
     SELECT tree_id FROM (
         SELECT tree_id,
-               row_number() OVER (PARTITION BY run_id, species, tree_method ORDER BY tree_id DESC) AS rn
+               row_number() OVER (PARTITION BY run_id, species, tree_method, segment ORDER BY tree_id DESC) AS rn
         FROM phylogenetic_trees
     ) t WHERE t.rn > 1
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_phylogenetic_trees_run_species_method ON phylogenetic_trees(run_id, species, tree_method);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_phylogenetic_trees_run_species_method ON phylogenetic_trees(run_id, species, tree_method, segment);
 
 CREATE TABLE IF NOT EXISTS outbreaks (
     outbreak_id SERIAL PRIMARY KEY,
@@ -396,6 +399,59 @@ CREATE TABLE IF NOT EXISTS sample_geo_location (
 );
 
 ALTER TABLE tree_tips ADD COLUMN IF NOT EXISTS clade TEXT;
+ALTER TABLE tree_tips ADD COLUMN IF NOT EXISTS segment TEXT;
+ALTER TABLE tree_tips ADD COLUMN IF NOT EXISTS is_candidate BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS subtype TEXT;
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS genoflu_genotype TEXT;
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS genoflu_constellation JSONB;
+
+ALTER TABLE reference_genomes ADD COLUMN IF NOT EXISTS segment TEXT;
+ALTER TABLE genes ADD COLUMN IF NOT EXISTS segment TEXT;
+ALTER TABLE mutations ADD COLUMN IF NOT EXISTS segment TEXT;
+
+-- Influenza (segmented-genome) entities ------------------------------------
+-- sample_segments: one row per (isolate, segment) typed record — the unit of
+-- influenza biology. record_id is the Nextclade-level record name
+-- (e.g. Sample0003_Seg5); segment='untyped' marks records with sequence but no
+-- segment call (genome-level hits) so they remain inspectable.
+CREATE TABLE IF NOT EXISTS sample_segments (
+    segment_id SERIAL PRIMARY KEY,
+    sample_id INTEGER REFERENCES samples(sample_id),
+    segment TEXT,
+    record_id TEXT,
+    dataset_file TEXT,
+    qc_score REAL,
+    coverage REAL,
+    cds_coverage REAL,
+    clade TEXT,
+    genoflu_genotype TEXT,
+    genoflu_match_pct REAL,
+    genoflu_mismatches INTEGER,
+    is_untyped BOOLEAN DEFAULT FALSE,
+    UNIQUE(sample_id, segment, record_id)
+);
+
+-- influenza_features: flexible per-sample/per-segment markers (cleavage motif,
+-- genotype constellation, mugration region, reassortment flags, seasonal
+-- antigenic metrics). EAV so new markers don't need schema changes.
+CREATE TABLE IF NOT EXISTS influenza_features (
+    feature_id SERIAL PRIMARY KEY,
+    sample_id INTEGER REFERENCES samples(sample_id),
+    segment TEXT,
+    feature_type TEXT NOT NULL,
+    value TEXT,
+    confidence TEXT,
+    source TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sample_segments_sample ON sample_segments(sample_id);
+CREATE INDEX IF NOT EXISTS idx_sample_segments_segment ON sample_segments(segment);
+CREATE INDEX IF NOT EXISTS idx_sample_segments_clade ON sample_segments(clade);
+CREATE INDEX IF NOT EXISTS idx_influenza_features_sample ON influenza_features(sample_id);
+CREATE INDEX IF NOT EXISTS idx_influenza_features_type ON influenza_features(feature_type);
+CREATE INDEX IF NOT EXISTS idx_tree_tips_segment ON tree_tips(segment);
+CREATE INDEX IF NOT EXISTS idx_phylogenetic_trees_segment ON phylogenetic_trees(segment);
 
 CREATE TABLE IF NOT EXISTS clades (
     clade_id SERIAL PRIMARY KEY,
@@ -576,6 +632,87 @@ CREATE INDEX IF NOT EXISTS idx_epi_records_dataset_date_country ON epidemiologic
 CREATE INDEX IF NOT EXISTS idx_tree_tips_country_date ON tree_tips(country, tip_date);
 CREATE INDEX IF NOT EXISTS idx_geo_admin2 ON geographic_locations(admin2);
 CREATE INDEX IF NOT EXISTS idx_geo_locality ON geographic_locations(locality);
+
+-- New TSV-based evidence tables (Ollama/TSV pipeline)
+CREATE TABLE IF NOT EXISTS evidence_extracted (
+    claim_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    pmid TEXT,
+    pmcid TEXT,
+    species TEXT,
+    domain TEXT,
+    topic TEXT,
+    claim_type TEXT,
+    product_name TEXT,
+    sensitivity TEXT,
+    specificity TEXT,
+    finding TEXT,
+    quote TEXT,
+    evidence_level TEXT,
+    population TEXT,
+    geography TEXT,
+    source_file TEXT,
+    details JSONB,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Normalised domain fields (one row per claim-field pair)
+CREATE TABLE IF NOT EXISTS evidence_fields (
+    claim_id BIGINT REFERENCES evidence_extracted(claim_id),
+    field_name TEXT,
+    field_value TEXT,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (claim_id, field_name)
+);
+
+CREATE TABLE IF NOT EXISTS countermeasures (
+    countermeasure_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    species TEXT,
+    countermeasure TEXT,
+    status TEXT,
+    best_evidence TEXT,
+    best_pmid TEXT,
+    n_supporting_papers INTEGER,
+    readiness_score REAL,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_id, species, countermeasure)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_gaps (
+    gap_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    species TEXT,
+    topic TEXT,
+    gap TEXT,
+    priority TEXT,
+    n_papers_touching_topic INTEGER,
+    notes TEXT,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Pre-generated per-domain narratives (local LLM at pipeline time).
+CREATE TABLE IF NOT EXISTS domain_summaries (
+    summary_id SERIAL PRIMARY KEY,
+    run_id TEXT REFERENCES analysis_runs(run_id),
+    species TEXT,
+    domain TEXT,
+    n_claims INTEGER,
+    n_papers INTEGER,
+    summary TEXT,
+    source TEXT,
+    model TEXT,
+    generated_at TEXT,
+    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_id, species, domain)
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_extracted_run_species ON evidence_extracted(run_id, species);
+CREATE INDEX IF NOT EXISTS idx_evidence_extracted_topic ON evidence_extracted(topic);
+CREATE INDEX IF NOT EXISTS idx_evidence_extracted_pmid ON evidence_extracted(pmid);
+CREATE INDEX IF NOT EXISTS idx_countermeasures_run_species ON countermeasures(run_id, species);
+CREATE INDEX IF NOT EXISTS idx_knowledge_gaps_run_species ON knowledge_gaps(run_id, species);
+CREATE INDEX IF NOT EXISTS idx_domain_summaries_run_species ON domain_summaries(run_id, species);
 
 -- GIN indexes for JSONB-valued columns
 CREATE INDEX IF NOT EXISTS idx_literature_extractions_value_gin ON literature_extractions USING GIN (value);

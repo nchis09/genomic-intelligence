@@ -7,8 +7,14 @@ include { CLASSIFICATION         } from '../subworkflows/local/classification/ma
 include { PATHOGEN_ROUTER        } from '../subworkflows/local/pathogen_router/main'
 include { KNOWLEDGE_WAREHOUSE    } from '../subworkflows/local/knowledge_warehouse/main'
 include { PATHOGEN_IDENTIFICATION_WF } from '../subworkflows/local/pathogen_identification/main'
+include { MUTATION_PROFILE_WF    } from '../subworkflows/local/mutation_profile/main'
 
 include { REPORTING              } from '../subworkflows/local/reporting/main'
+include { COMPUTE_TRANSMISSION_CONTEXT } from '../modules/local/compute_transmission_context/main'
+include { GENERATE_TREE_NOTES          } from '../modules/local/generate_tree_notes/main'
+include { GENERATE_SPREAD_ASSESSMENT   } from '../modules/local/generate_spread_assessment/main'
+include { GEOGRAPHIC_SUMMARY           } from '../modules/local/geographic_summary/main'
+include { GENERATE_INTELLIGENCE_BRIEF  } from '../modules/local/generate_intelligence_brief/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -66,10 +72,17 @@ workflow GENOMIC_INTELLIGENCE {
         .map { _meta, json -> json }
         .collect()
 
+    // All Nextclade aligned FASTAs (one per sample x dataset) — broadcast so
+    // pathogen workflows can pull per-segment query sequences from the
+    // winning dataset's alignment (used by the avian influenza workflow).
+    ch_nextclade_aligned_all = CLASSIFICATION.out.aligned
+        .collect()
+
     PATHOGEN_ROUTER(
         CLASSIFICATION.out.species_groups,
         ch_nextclade_json_all,
-        CLASSIFICATION.out.assignments
+        CLASSIFICATION.out.assignments,
+        ch_nextclade_aligned_all
     )
 
     //
@@ -86,7 +99,10 @@ workflow GENOMIC_INTELLIGENCE {
     def ch_duckdb_dump = nextflow.Channel.empty()
     def ch_pathogen_id_tsv = nextflow.Channel.empty()
     def ch_pathogen_id_mqc = nextflow.Channel.empty()
+    def ch_mutation_profile_tsv = nextflow.Channel.empty()
+    def ch_mutation_profile_mqc = nextflow.Channel.empty()
     def ch_multiqc_report = nextflow.Channel.empty()
+    def ch_intelligence_brief = nextflow.Channel.empty()
 
     db_host = nextflow.Channel.value(params.kw_db_host)
     db_port = nextflow.Channel.value(params.kw_db_port)
@@ -107,6 +123,119 @@ workflow GENOMIC_INTELLIGENCE {
             PATHOGEN_IDENTIFICATION_WF(ch_pathogen_id)
             ch_pathogen_id_tsv = PATHOGEN_IDENTIFICATION_WF.out.tsv
             ch_pathogen_id_mqc = PATHOGEN_IDENTIFICATION_WF.out.mqc_tsv
+        }
+
+        if (!params.skip_mutation_profile) {
+            ch_knowledge_db
+                .combine(ch_duckdb_dump)
+                .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
+                .set { ch_mutation_profile }
+
+            // Derive translations directory from Nextstrain/Nextclade outputs.
+            // Path layout is per-pathogen: Ebola publishes
+            // nextstrain_ebola/<species>/results/<species>/translations while
+            // avian flu's segment-focused build nests under
+            // avian_flu/<subtype>/results/<subtype>/<segment>/<time>/translations
+            // (glob any level) — fall back to NO_TRANSLATIONS when absent.
+            ch_translations = ch_knowledge_db
+                .map { meta, kw_dir ->
+                    def trans = null
+                    if (meta.pathogen == 'orthoebolavirus') {
+                        trans = file("${params.outdir}/nextstrain_ebola/${meta.species}/results/${meta.species}/translations")
+                    } else if (meta.pathogen == 'avian_influenza') {
+                        trans = file("${params.outdir}/avian_flu/${meta.species}/results/${meta.species}/ha/all-time/translations")
+                    } else if (meta.pathogen == 'influenza') {
+                        // seasonal-flu writes translations under the snakemake
+                        // workdir at builds/<build>/<segment>/translations — keep
+                        // NO_TRANSLATIONS until a mutation-profile stage is wired.
+                        trans = null
+                    }
+                    (trans && trans.exists()) ? trans : file("NO_TRANSLATIONS")
+                }
+
+            MUTATION_PROFILE_WF(ch_mutation_profile, ch_translations)
+            ch_mutation_profile_tsv = MUTATION_PROFILE_WF.out.tsv
+            ch_mutation_profile_mqc = MUTATION_PROFILE_WF.out.mqc_tsv
+        }
+
+        if (!params.skip_transmission_context) {
+            ch_transmission_input = ch_knowledge_db
+                .combine(ch_duckdb_dump)
+                .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
+            COMPUTE_TRANSMISSION_CONTEXT(ch_transmission_input)
+
+            // Pre-generate the per-query Transmission & Spread assessment
+            // (LLM narrative over the context tables; template fallback when
+            // Ollama is unreachable — spread_assessment.json is always written).
+            if (!params.skip_spread_assessment) {
+                GENERATE_SPREAD_ASSESSMENT(
+                    COMPUTE_TRANSMISSION_CONTEXT.out.tsv,
+                    file("${projectDir}/dashboard/modules/llm_note.R"),
+                    file("${projectDir}/dashboard/modules/pathogen_transmission.R")
+                )
+            }
+
+            // Pre-generate the per-species geographic spread narrative
+            // (LLM over the transmission-context tables; template fallback —
+            // geo_summary.json is always written).
+            if (!params.skip_geo_summary) {
+                GEOGRAPHIC_SUMMARY(
+                    COMPUTE_TRANSMISSION_CONTEXT.out.tsv,
+                    file("${projectDir}/dashboard/modules/llm_note.R")
+                )
+            }
+        }
+
+        // Pre-generate the LLM tree-interpretation note per species so the
+        // dashboard renders it instantly (falls back to a template note when
+        // Ollama is unreachable — the JSON is always written).
+        if (!params.skip_tree_notes) {
+            ch_tree_notes_input = ch_knowledge_db
+                .combine(ch_duckdb_dump)
+                .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
+            GENERATE_TREE_NOTES(
+                ch_tree_notes_input,
+                file("${projectDir}/dashboard/modules/llm_note.R")
+            )
+        }
+
+        //
+        // Terminal aggregation step: the Intelligence Brief is the front-page
+        // product of the whole run. It joins every optional upstream output on
+        // `meta` (per species) — stages skipped via --skip_* contribute an
+        // empty file list, which the R script records as a data gap. The join
+        // also guarantees the brief only starts once all upstream work for
+        // that species has finished.
+        //
+        if (!params.skip_intelligence_brief) {
+            ch_brief_base = ch_knowledge_db
+                .combine(ch_duckdb_dump)
+                .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
+            ch_brief_empty = ch_brief_base.map { meta, db -> tuple(meta, []) }
+
+            ch_brief_pi = params.skip_pathogen_identification ? ch_brief_empty
+                : PATHOGEN_IDENTIFICATION_WF.out.tsv
+            ch_brief_tc = params.skip_transmission_context ? ch_brief_empty
+                : COMPUTE_TRANSMISSION_CONTEXT.out.tsv
+            ch_brief_mp = params.skip_mutation_profile ? ch_brief_empty
+                : MUTATION_PROFILE_WF.out.tsv
+            ch_brief_tn = params.skip_tree_notes ? ch_brief_empty
+                : GENERATE_TREE_NOTES.out.json
+            ch_brief_sa = (params.skip_transmission_context || params.skip_spread_assessment)
+                ? ch_brief_empty
+                : GENERATE_SPREAD_ASSESSMENT.out.json
+
+            GENERATE_INTELLIGENCE_BRIEF(
+                ch_brief_base
+                    .join(ch_brief_pi)
+                    .join(ch_brief_tc)
+                    .join(ch_brief_mp)
+                    .join(ch_brief_tn)
+                    .join(ch_brief_sa),
+                file("${projectDir}/dashboard/modules/llm_note.R"),
+                file("${projectDir}/dashboard/modules/intelligence_brief.R")
+            )
+            ch_intelligence_brief = GENERATE_INTELLIGENCE_BRIEF.out.json
         }
 
     }
@@ -140,6 +269,7 @@ workflow GENOMIC_INTELLIGENCE {
     knowledge_db        = ch_knowledge_db
     knowledge_db_summary = ch_knowledge_db_summary
     identification_tsv   = ch_pathogen_id_tsv
+    intelligence_brief   = ch_intelligence_brief
     multiqc_report       = ch_multiqc_report
 }
 
