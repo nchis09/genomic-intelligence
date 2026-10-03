@@ -11,9 +11,11 @@ dependencies:
   - nextflow>=24.0
   # Nextstrain toolkit
   - nextstrain-cli>=8.0
-  - augur>=25.0
+  - augur>=34.0
   - auspice>=2.53
   - nextclade>=3.0
+  # zstd: seasonal-flu ingest fetches LAPIS payloads compressed with zstd
+  - zstd
   # Workflow manager (nextstrain/ebola uses Snakemake)
   - snakemake>=8.0
   # Alignment
@@ -24,11 +26,21 @@ dependencies:
   # Molecular clock / timetree
   - treetime>=0.11
   # Sequence utilities
+  # blast: makeblastdb/blastn for GENOFLU_ASSIGN (vendored GenoFLU-multi)
+  - blast
   - seqkit>=2.6
   - biopython>=1.83
   - csvtk>=0.30
-  # Ingest dependencies (used by the Nextstrain Ebola auto-ingest step)
+  # Ingest dependencies
+  # (ncbi-datasets + tsv-select/tsv-filter are used by the avian-flu NCBI
+  # ingest; jq is used by the Ebola ingest)
+  - ncbi-datasets-cli>=16.0
+  - tsv-utils>=2.2
   - jq
+  # openpyxl: vendored GenoFLU-multi (avian ingest) reads xlsx reference tables
+  - openpyxl
   - pip:
       - bio
       - pandas>=2.0
+      # epiweeks: seasonal-flu build scripts/calculate_epiweek.py
+      - epiweeks

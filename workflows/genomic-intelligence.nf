@@ -72,10 +72,17 @@ workflow GENOMIC_INTELLIGENCE {
         .map { _meta, json -> json }
         .collect()
 
+    // All Nextclade aligned FASTAs (one per sample x dataset) — broadcast so
+    // pathogen workflows can pull per-segment query sequences from the
+    // winning dataset's alignment (used by the avian influenza workflow).
+    ch_nextclade_aligned_all = CLASSIFICATION.out.aligned
+        .collect()
+
     PATHOGEN_ROUTER(
         CLASSIFICATION.out.species_groups,
         ch_nextclade_json_all,
-        CLASSIFICATION.out.assignments
+        CLASSIFICATION.out.assignments,
+        ch_nextclade_aligned_all
     )
 
     //
@@ -124,11 +131,26 @@ workflow GENOMIC_INTELLIGENCE {
                 .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
                 .set { ch_mutation_profile }
 
-            // Derive translations directory from Nextstrain/Nextclade outputs
+            // Derive translations directory from Nextstrain/Nextclade outputs.
+            // Path layout is per-pathogen: Ebola publishes
+            // nextstrain_ebola/<species>/results/<species>/translations while
+            // avian flu's segment-focused build nests under
+            // avian_flu/<subtype>/results/<subtype>/<segment>/<time>/translations
+            // (glob any level) — fall back to NO_TRANSLATIONS when absent.
             ch_translations = ch_knowledge_db
                 .map { meta, kw_dir ->
-                    def trans = file("${params.outdir}/nextstrain_ebola/${meta.species}/results/${meta.species}/translations")
-                    trans.exists() ? trans : file("NO_TRANSLATIONS")
+                    def trans = null
+                    if (meta.pathogen == 'orthoebolavirus') {
+                        trans = file("${params.outdir}/nextstrain_ebola/${meta.species}/results/${meta.species}/translations")
+                    } else if (meta.pathogen == 'avian_influenza') {
+                        trans = file("${params.outdir}/avian_flu/${meta.species}/results/${meta.species}/ha/all-time/translations")
+                    } else if (meta.pathogen == 'influenza') {
+                        // seasonal-flu writes translations under the snakemake
+                        // workdir at builds/<build>/<segment>/translations — keep
+                        // NO_TRANSLATIONS until a mutation-profile stage is wired.
+                        trans = null
+                    }
+                    (trans && trans.exists()) ? trans : file("NO_TRANSLATIONS")
                 }
 
             MUTATION_PROFILE_WF(ch_mutation_profile, ch_translations)

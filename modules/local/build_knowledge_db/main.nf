@@ -26,6 +26,7 @@ process BUILD_KNOWLEDGE_DB {
     args << "--schema-path ${schema_file}"
     args << "--views-path ${views_file}"
     if (meta.species) args << "--species ${meta.species}"
+    if (meta.pathogen) args << "--pathogen ${meta.pathogen}"
     if (!species_assignments.name.startsWith('NO_FILE')) args << "--species-assignments ${species_assignments}"
     if (!metadata_tsv.name.startsWith('NO_FILE'))          args << "--metadata-tsv ${metadata_tsv}"
     if (!epi_raw_dir.name.startsWith('NO_FILE'))           args << "--epi-raw-dir ${epi_raw_dir}"

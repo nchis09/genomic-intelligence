@@ -451,7 +451,10 @@ def register_pipeline_outputs(conn, run_id, results_dir, stage=None):
     if not results_dir.exists():
         print(f"  SKIP: results directory not found: {results_dir}", file=sys.stderr)
         return 0
-    files = sorted(p for p in results_dir.rglob("*") if p.is_file())
+    files = sorted(
+        p for p in results_dir.rglob("*")
+        if p.is_file() and _provenance_keep(p)
+    )
     if not files:
         print(f"  No files found under {results_dir}", file=sys.stderr)
         return 0
@@ -493,7 +496,7 @@ def register_file_output(conn, run_id, stage, path):
 
 def load_reference_genomes_and_genes(conn, run_id, results_dir):
     results_dir = Path(results_dir)
-    zip_files = sorted(results_dir.rglob("nextclade-dataset.zip"))
+    zip_files = sorted(p for p in results_dir.rglob("nextclade-dataset.zip") if _published(p))
     if not zip_files:
         print("  SKIP: no nextclade-dataset.zip found", file=sys.stderr)
         return
@@ -687,7 +690,7 @@ def _update_samples_from_metadata(conn, run_id, metadata_path):
 
 
 def _update_samples_from_metadata_extended(conn, run_id, results_dir):
-    files = sorted(results_dir.rglob("metadata_extended.tsv"))
+    files = sorted(p for p in results_dir.rglob("metadata_extended.tsv") if _published(p))
     if not files:
         return
     with conn.cursor() as cur:
@@ -753,7 +756,7 @@ def register_nextstrain_msa(conn, run_id, results_dir, species=None):
     """
     results_dir = Path(results_dir)
     species_filter = normalize_text(species)
-    align_files = sorted(results_dir.rglob("alignment.fasta"))
+    align_files = sorted(p for p in results_dir.rglob("alignment.fasta") if _published(p))
     if species_filter:
         align_files = [p for p in align_files if species_filter in [x.lower() for x in p.parts]]
     if not align_files:
@@ -980,11 +983,12 @@ def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
                 if newick:
                     cur.execute(
                         """
-                        INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_method, tree_source, newick)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_method, tree_source, newick, segment)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                         RETURNING tree_id
                         """,
-                        (run_id, pathogen, row_species, "nextclade", tree_source, newick),
+                        (run_id, pathogen, row_species, "nextclade", tree_source, newick,
+                         _detect_segment_from_path(newick_path if newick_path.exists() else tsv_path)),
                     )
                     tree_id = cur.fetchone()[0]
 
@@ -1110,7 +1114,25 @@ def _collect_tips(tree, tips=None):
     return tips
 
 
-_SPECIES_TOKENS = ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan")
+_SPECIES_TOKENS = ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan",
+                   # influenza — longer tokens first ('h1n1' is a prefix of 'h1n1pdm')
+                   "h1n1pdm", "h3n2", "h2n2", "h1n1", "h5nx", "vic", "yam")
+
+
+_FLU_SEGMENTS = {"pb2", "pb1", "pa", "ha", "np", "na", "mp", "ns"}
+_SEGMENT_RE = re.compile(r"(?:^|[_\-/\\.])(pb2|pb1|pa|ha|np|na|mp|ns)(?=[_\-/.]|$)")
+
+
+def _detect_segment_from_path(path):
+    """Detect a flu segment from a path — directory part (results/<sp>/<seg>/)
+    or filename token (avian-flu_h5nx_ha_all-time.json, h3n2_pgirl_pb2.json,
+    avian_flu_h3n2_mp.aligned.fasta). Returns None for non-segmented paths."""
+    p = Path(path)
+    for part in p.parts[::-1]:
+        if part.lower() in _FLU_SEGMENTS:
+            return part.lower()
+    matches = _SEGMENT_RE.findall(p.name.lower())
+    return matches[-1] if matches else None
 
 
 def _detect_species_from_path(path):
@@ -1128,16 +1150,31 @@ def _detect_species_from_path(path):
     return None
 
 
-def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=None, species=None):
+def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=None, species=None, pathogen="orthoebolavirus"):
     results_dir = Path(results_dir)
     species_filter = normalize_text(species)
+    pathogen = pathogen or "orthoebolavirus"
     # Auspice JSON files under nextstrain_ebola/<species>/auspice/
     auspice_files = []
     direct_auspice = bool(auspice_json and Path(auspice_json).exists())
     if direct_auspice:
         auspice_files = [Path(auspice_json)]
     else:
-        auspice_files = sorted(results_dir.rglob("*all-outbreaks.json"))
+        # Gather all known auspice layouts at once — species filter runs after,
+        # so a shared results/ dir (mixed pathogens) doesn't lock us into the
+        # first pattern group that hits.
+        auspice_files = sorted(p for p in results_dir.rglob("*all-outbreaks.json") if _published(p))
+        # Avian influenza segment builds: auspice/avian-flu_<subtype>_<seg>_<time>.json
+        auspice_files += sorted(
+            p for p in results_dir.rglob("avian-flu_*.json")
+            if "tip-frequencies" not in p.name and _published(p)
+        )
+        # Seasonal influenza pgirl builds: auspice/<lineage>_pgirl_<seg>.json
+        auspice_files += sorted(
+            p for p in results_dir.rglob("*_pgirl_*.json")
+            if "tip-frequencies" not in p.name and _published(p)
+        )
+        auspice_files = sorted(set(auspice_files))
     # Only apply the species filter when scanning the results tree. A directly
     # passed (staged) file is already the correct one for this run — its path
     # parts don't contain the species directory, so filtering would drop it.
@@ -1150,22 +1187,32 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
     with conn.cursor() as cur:
         for path in auspice_files:
             species = _detect_species_from_path(path) or species_filter
-            newick_candidates = sorted(results_dir.rglob("tree.nwk"))
+            seg = _detect_segment_from_path(path)
+            # Segment-aware newick: prefer the sibling tree.nwk in the same
+            # all-time/<seg> dir; else glob filtered by species+segment.
+            newick_candidates = [path.parent / "tree.nwk"] if (path.parent / "tree.nwk").exists() \
+                else sorted(p for p in results_dir.rglob("tree.nwk") if _published(p))
             if species_filter:
-                newick_candidates = [p for p in newick_candidates if species_filter in [x.lower() for x in p.parts]]
+                newick_candidates = [p for p in newick_candidates if species_filter in [x.lower() for x in p.parts]] \
+                    or newick_candidates
+            if seg:
+                seg_matches = [p for p in newick_candidates if _detect_segment_from_path(p) == seg]
+                if seg_matches:
+                    newick_candidates = seg_matches
             newick = newick_candidates[0].read_text().strip() if newick_candidates else None
             tree_source = str(newick_candidates[0]) if newick_candidates else str(path)
+            seg = _detect_segment_from_path(path)
             cur.execute(
                 """
-                INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_method, tree_source, newick)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_method, tree_source, newick, segment)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING tree_id
                 """,
-                (run_id, "orthoebolavirus", species, "nextstrain", tree_source, newick),
+                (run_id, pathogen, species, "nextstrain", tree_source, newick, seg),
             )
             tree_id = cur.fetchone()[0]
             # Load tip metadata if present
-            tip_candidates = sorted(results_dir.rglob("*_tip_metadata.tsv"))
+            tip_candidates = sorted(p for p in results_dir.rglob("*_tip_metadata.tsv") if _published(p))
             if species_filter:
                 tip_candidates = [p for p in tip_candidates if species_filter in [x.lower() for x in p.parts]]
             tip_path = tip_candidates[0] if tip_candidates else None
@@ -1175,11 +1222,15 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
                     if not label:
                         continue
                     is_query = str(row.get("is_query", "")).strip().lower() in ("true", "1", "yes")
+                    # _gN tips are per-segment candidate aliases of an isolate,
+                    # not separate samples — mark them so queries can exclude
+                    is_candidate = bool(re.search(r"_g\d+$", label))
                     sample_id = None
-                    if is_query:
+                    lookup = re.sub(r"_g\d+$", "", label)
+                    if is_query or is_candidate:
                         cur.execute(
                             "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name = %s",
-                            (run_id, label),
+                            (run_id, lookup),
                         )
                         r = cur.fetchone()
                         if r:
@@ -1191,14 +1242,16 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
                     cur.execute(
                         """
                         INSERT INTO tree_tips (
-                            tree_id, sample_id, label, is_query, ppx_accession, insdc_accession,
+                            tree_id, sample_id, label, is_query, clade, ppx_accession, insdc_accession,
                             country, admin1, admin2, locality, host, outbreak, tip_date, div,
-                            genome_coverage, nextclade_qc, aa_mutation_count, nuc_mutation_count
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            genome_coverage, nextclade_qc, aa_mutation_count, nuc_mutation_count,
+                            segment, is_candidate
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT DO NOTHING
                         """,
                         (
                             tree_id, sample_id, label, is_query,
+                            normalize_text(row.get("clade")),
                             normalize_text(row.get("PPX_accession")),
                             normalize_text(row.get("INSDC_accession")),
                             country,
@@ -1213,6 +1266,8 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
                             normalize_text(row.get("nextclade_qc")),
                             parse_int(row.get("aa_mutation_count")),
                             parse_int(row.get("nuc_mutation_count")),
+                            seg,
+                            is_candidate,
                         ),
                     )
                     loaded += 1
@@ -1225,28 +1280,41 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
                     if not label:
                         continue
                     node_attrs = tip.get("node_attrs", {})
+                    is_candidate = bool(re.search(r"_g\d+$", label))
+                    lookup = re.sub(r"_g\d+$", "", label)
                     cur.execute(
                         "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name = %s",
-                        (run_id, label),
+                        (run_id, lookup),
                     )
                     r = cur.fetchone()
                     sample_id = r[0] if r else None
-                    is_query = sample_id is not None
+                    is_query = sample_id is not None and not is_candidate
                     country = normalize_country(_get_node_value(node_attrs, "country"))
                     admin1 = normalize_text(_get_node_value(node_attrs, "division"))
                     locality = normalize_text(_get_node_value(node_attrs, "location"))
                     location_id = get_or_create_location(cur, country, admin1, None, locality)
+                    # Clade naming differs per build: seasonal uses
+                    # clade_membership, avian carries label_clade/genoflu.
+                    tip_clade = normalize_text(
+                        _get_node_value(node_attrs, "clade_membership")
+                        or _get_node_value(node_attrs, "label_clade")
+                        or _get_node_value(node_attrs, "clade")
+                    )
+                    if tip_clade in ("?", ""):
+                        tip_clade = None
                     cur.execute(
                         """
                         INSERT INTO tree_tips (
-                            tree_id, sample_id, label, is_query, ppx_accession, insdc_accession,
+                            tree_id, sample_id, label, is_query, clade, ppx_accession, insdc_accession,
                             country, admin1, admin2, locality, host, outbreak, tip_date, div,
-                            genome_coverage, nextclade_qc, aa_mutation_count, nuc_mutation_count
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            genome_coverage, nextclade_qc, aa_mutation_count, nuc_mutation_count,
+                            segment, is_candidate
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT DO NOTHING
                         """,
                         (
                             tree_id, sample_id, label, is_query,
+                            tip_clade,
                             normalize_text(_get_node_value(node_attrs, "PPX_accession")),
                             normalize_text(_get_node_value(node_attrs, "INSDC_accession")),
                             country,
@@ -1261,6 +1329,8 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
                             normalize_text(_get_node_value(node_attrs, "nextclade_qc")),
                             parse_int(_get_node_value(node_attrs, "aa_mutation_count")),
                             parse_int(_get_node_value(node_attrs, "nuc_mutation_count")),
+                            seg,
+                            is_candidate,
                         ),
                     )
                     loaded += 1
@@ -1271,10 +1341,11 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
                 newick = iqtree_path.read_text().strip()
                 cur.execute(
                     """
-                    INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_method, tree_source, newick)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO phylogenetic_trees (run_id, pathogen, species, tree_method, tree_source, newick, segment)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (run_id, "orthoebolavirus", species, "iqtree2", str(iqtree_path), newick),
+                    (run_id, pathogen, species, "iqtree2", str(iqtree_path), newick,
+                     _detect_segment_from_path(iqtree_path)),
                 )
         conn.commit()
     print(f"  Loaded {len(auspice_files)} tree(s) and {loaded} tip(s)", file=sys.stderr)
@@ -1294,10 +1365,21 @@ def _walk_tips_with_mutations(node, path=None, mutations=None):
             yield from _walk_tips_with_mutations(child, child_path, child_mutations)
 
 
-def load_background_from_auspice(conn, run_id, results_dir, species=None):
+def load_background_from_auspice(conn, run_id, results_dir, species=None, pathogen="orthoebolavirus"):
     results_dir = Path(results_dir)
     species_filter = normalize_text(species)
-    auspice_files = sorted(results_dir.rglob("*all-outbreaks.json"))
+    pathogen = pathogen or "orthoebolavirus"
+    auspice_files = sorted(p for p in results_dir.rglob("*all-outbreaks.json") if _published(p))
+    auspice_files += sorted(
+        p for p in results_dir.rglob("avian-flu_*.json")
+        if "tip-frequencies" not in p.name and _published(p)
+    )
+    # Seasonal influenza pgirl builds: <lineage>_pgirl_<segment>.json
+    auspice_files += sorted(
+        p for p in results_dir.rglob("*_pgirl_*.json")
+        if "tip-frequencies" not in p.name and _published(p)
+    )
+    auspice_files = sorted(set(auspice_files))
     if species_filter:
         auspice_files = [p for p in auspice_files if species_filter in [x.lower() for x in p.parts]]
     if not auspice_files:
@@ -1307,11 +1389,7 @@ def load_background_from_auspice(conn, run_id, results_dir, species=None):
     loaded_muts = 0
     with conn.cursor() as cur:
         for path in auspice_files:
-            species = None
-            for part in path.parts:
-                if part.lower() in ("bdbv", "sudv", "ebov", "zaire", "tafv", "restv", "sudan"):
-                    species = part.lower()
-                    break
+            species = _detect_species_from_path(path) or species_filter
             with open(path) as f:
                 data = json.load(f)
             tree = data.get("tree") if isinstance(data, dict) else None
@@ -1354,7 +1432,7 @@ def load_background_from_auspice(conn, run_id, results_dir, species=None):
                     (
                         run_id,
                         label,
-                        "orthoebolavirus",
+                        pathogen,
                         species,
                         False,
                         normalize_date(_get_node_value(tip_attrs, "date")),
@@ -1403,7 +1481,7 @@ def load_mutations(conn, run_id, results_dir):
     results_dir = Path(results_dir)
     with conn.cursor() as cur:
         # From query_mutations.tsv
-        for path in sorted(results_dir.rglob("*_query_mutations.tsv")):
+        for path in sorted(p for p in results_dir.rglob("*_query_mutations.tsv") if _published(p)):
             for row in read_tsv_or_csv(path):
                 sample = normalize_text(row.get("sample"))
                 gene = normalize_text(row.get("gene"))
@@ -1430,7 +1508,7 @@ def load_mutations(conn, run_id, results_dir):
                     )
 
         # From Nextclade TSV aaSubstitutions (filter to matching species from filename)
-        for path in sorted(results_dir.rglob("nextclade.tsv")) + sorted(results_dir.rglob("*_nextclade.tsv")):
+        for path in sorted(p for p in results_dir.rglob("nextclade.tsv") if _published(p)) + sorted(p for p in results_dir.rglob("*_nextclade.tsv") if _published(p)):
             file_species = _infer_species_from_path(path)
             for row in read_tsv_or_csv(path):
                 sample = normalize_text(row.get("seqName"))
@@ -1469,7 +1547,7 @@ def load_mutations(conn, run_id, results_dir):
                     )
 
         # From mutation_matrix.tsv: if a row label matches a sample name and value == 1
-        for path in sorted(results_dir.rglob("*_mutation_matrix.tsv")):
+        for path in sorted(p for p in results_dir.rglob("*_mutation_matrix.tsv") if _published(p)):
             rows = read_tsv_or_csv(path)
             if not rows:
                 continue
@@ -1931,7 +2009,7 @@ def _get_or_create_protein(cur, gene, uniprot_accession, protein_name=None, orga
 # Epidemiological data
 # ---------------------------------------------------------------------------
 
-def load_epi_data(conn, run_id, epi_raw_dir, epi_search_summary=None, species=None):
+def load_epi_data(conn, run_id, epi_raw_dir, epi_search_summary=None, species=None, pathogen="orthoebolavirus"):
     if not epi_raw_dir:
         print("  SKIP: no epi raw directory provided", file=sys.stderr)
         return
@@ -1959,16 +2037,16 @@ def load_epi_data(conn, run_id, epi_raw_dir, epi_search_summary=None, species=No
 
             # Detect dataset type from filename/columns
             dataset_type = _infer_dataset_type(csv_path.name, rows[0].keys())
-            pathogen = None
-            if species:
-                pathogen = "orthoebolavirus"
+            epi_pathogen = pathogen or "orthoebolavirus"
+            if not species:
+                epi_pathogen = None
             cur.execute(
                 """
                 INSERT INTO epidemiological_datasets (run_id, dataset_name, source, row_count, pathogen, species, dataset_type)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING dataset_id
                 """,
-                (run_id, csv_path.stem, "HDX", len(rows), pathogen, species, dataset_type),
+                (run_id, csv_path.stem, "HDX", len(rows), epi_pathogen, species, dataset_type),
             )
             dataset_id = cur.fetchone()[0]
 
@@ -2219,6 +2297,7 @@ def parse_args():
     parser.add_argument("--epi-raw-dir", help="Directory containing epidemiological CSVs")
     parser.add_argument("--epi-search-summary", help="rhdx_search_results.tsv")
     parser.add_argument("--species", help="Current run's species short code (e.g. bdbv, sudv)")
+    parser.add_argument("--pathogen", default="orthoebolavirus", help="Pathogen family for rows this run loads (e.g. orthoebolavirus, avian_influenza)")
     parser.add_argument("--uniprotr-dir", help="UniProtR annotation output directory")
     parser.add_argument("--extractr-dir", help="UniProtExtractR annotation output directory")
     parser.add_argument("--rbioapi-dir", help="rbioapi annotation output directory")
@@ -2778,6 +2857,458 @@ def _refine_ebov_clades(conn, run_id=None):
     conn.commit()
 
 
+# ---------------------------------------------------------------------------
+# Influenza (segmented genome) loaders
+# ---------------------------------------------------------------------------
+
+_FLU_PATHOGENS = {"influenza", "iav", "flu", "avian_influenza", "influenza_a"}
+_FLU_SPECIES_TOKENS = {"h5nx", "h5n1", "h5n2", "h5n3", "h5n4", "h5n5", "h5n6",
+                     "h5n7", "h5n8", "h5n9", "h3n2", "h1n1pdm", "h1n1", "h2n2",
+                     "vic", "yam", "b"}
+_CANDIDATE_RE = re.compile(r"_g\d+$")
+
+
+def _is_influenza(pathogen, results_dir):
+    """Dispatch on the declared pathogen first, then fall back to signature
+    files so a results/ tree alone still resolves correctly."""
+    p = (pathogen or "").lower()
+    if p in _FLU_PATHOGENS or p in _FLU_SPECIES_TOKENS:
+        return True
+    rd = Path(results_dir)
+    for pat in ("avian-flu_*_all-time.json", "*_pgirl_*.json"):
+        if any(rd.rglob(pat)):
+            return True
+    return (rd / "genoflu" / "genoflu_results.tsv").exists()
+
+
+def _published(path):
+    """True when a discovered path is under the published results/ tree —
+    results/work/ duplicates every artifact per task and must be skipped."""
+    return "work" not in [x.lower() for x in Path(path).parts]
+
+
+def _flu_segment_dirs(results_dir):
+    """Yield (segment, dir) for both build layouts:
+    avian   -> avian_flu/<sp>/results/<sp>/<seg>/all-time/
+    seasonal-> seasonal_flu/<ln>/builds/<build>/<seg>/   (files directly inside)
+    """
+    results_dir = Path(results_dir)
+    out = []
+    for p in results_dir.rglob("*"):
+        if not p.is_dir() or p.name.lower() not in _FLU_SEGMENTS:
+            continue
+        if "work" in [x.lower() for x in p.parts]:
+            continue  # results/work/ holds duplicated task dirs
+        if not _published(p):
+            continue
+        seg_dir = p / "all-time" if (p / "all-time").is_dir() else p
+        if any((seg_dir / f).exists() for f in ("tree.nwk", "muts.json", "aa-muts.json")):
+            out.append((p.name.lower(), seg_dir))
+    return sorted(set(out))
+
+
+def _sample_id(cur, run_id, name, create_isolate=False, pathogen=None, species=None):
+    """Look up a sample row by name; for influenza, isolate-level names
+    (Sample0001) differ from record-level names (Sample0001_Seg5). With
+    create_isolate the isolate row is created on demand — tree tips and
+    features carry bare isolate ids."""
+    name = normalize_text(name)
+    if not name:
+        return None
+    cur.execute(
+        "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name = %s",
+        (run_id, name),
+    )
+    r = cur.fetchone()
+    if r:
+        return r[0]
+    if create_isolate:
+        cur.execute(
+            """
+            INSERT INTO samples (run_id, sample_name, pathogen, species, is_query)
+            VALUES (%s, %s, %s, %s, TRUE)
+            ON CONFLICT (run_id, sample_name) DO UPDATE
+            SET is_query = TRUE
+            RETURNING sample_id
+            """,
+            (run_id, name, pathogen, species),
+        )
+        return cur.fetchone()[0]
+    # Record-level fallback for segment-level lookups
+    cur.execute(
+        "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name LIKE %s",
+        (run_id, name + "\\_Seg%"),
+    )
+    r = cur.fetchone()
+    return r[0] if r else None
+
+
+def _add_influenza_feature(cur, sample_id, segment, feature_type, value, source, confidence=None):
+    """Idempotent feature insert — no unique constraint on the table, so guard
+    with NOT EXISTS on the natural key."""
+    cur.execute(
+        """
+        INSERT INTO influenza_features (sample_id, segment, feature_type, value, confidence, source)
+        SELECT %s, %s, %s, %s, %s, %s
+        WHERE NOT EXISTS (
+            SELECT 1 FROM influenza_features
+            WHERE sample_id = %s AND feature_type = %s
+              AND segment IS NOT DISTINCT FROM %s
+              AND value IS NOT DISTINCT FROM %s
+        )
+        """,
+        (sample_id, segment, feature_type, value, confidence, source,
+         sample_id, feature_type, segment, value),
+    )
+
+
+def load_sample_segments(conn, run_id, results_dir, species=None, pathogen=None):
+    """Populate sample_segments from species_assignments.tsv enriched with
+    per-record Nextclade clade/QC columns. Creates isolate-level sample rows
+    so tree tips (isolate-named) and features link cleanly."""
+    results_dir = Path(results_dir)
+    tsv = results_dir / "classification" / "species_assignments.tsv"
+    if not tsv.exists():
+        print("  SKIP sample_segments: no species_assignments.tsv", file=sys.stderr)
+        return
+
+    # record -> nextclade row (clade, coverage, qc). Every record appears in
+    # multiple dataset TSVs — key by (dataset filename, seqName) so we can pick
+    # the row from the record's own best_dataset_file; fall back to the row
+    # with a non-empty clade otherwise.
+    nc_by_file = {}
+    nc_any = {}
+    for path in sorted(results_dir.rglob("*.tsv")):
+        if not _published(path):
+            continue  # results/work/ holds duplicated task dirs
+        if "nextclade" not in str(path):
+            continue
+        try:
+            rows = read_tsv_or_csv(path)
+        except Exception:
+            continue
+        if not rows or "seqName" not in rows[0]:
+            continue
+        fmap = nc_by_file.setdefault(path.name, {})
+        for r in rows:
+            seq = normalize_text(r.get("seqName"))
+            fmap[seq] = r
+            if seq and (seq not in nc_any or normalize_text(r.get("clade"))):
+                nc_any[seq] = r
+
+    n_seg = 0
+    with conn.cursor() as cur:
+        for row in read_tsv_or_csv(tsv):
+            isolate = normalize_text(row.get("isolate")) or normalize_text(row.get("sample"))
+            record = normalize_text(row.get("sample"))
+            if not isolate or not record:
+                continue
+            seg = normalize_text(row.get("segment"))
+            is_untyped = seg in ("genome", "")
+            seg_val = "untyped" if is_untyped else seg
+            iso_id = _sample_id(cur, run_id, isolate, create_isolate=True,
+                                pathogen=pathogen or normalize_text(row.get("pathogen")),
+                                species=normalize_text(row.get("species")))
+            # subtype = the resolved species label (h5nx/h3n2) on isolate +
+            # record rows alike
+            cur.execute(
+                "UPDATE samples SET subtype = COALESCE(%s, subtype), species = COALESCE(species, %s) WHERE sample_id = %s",
+                (normalize_text(row.get("species")), normalize_text(row.get("species")), iso_id),
+            )
+            cur.execute(
+                "UPDATE samples SET subtype = COALESCE(%s, subtype) WHERE run_id = %s AND sample_name = %s",
+                (normalize_text(row.get("species")), run_id, record),
+            )
+            nrow = nc_by_file.get(normalize_text(row.get("best_dataset_file")) or "", {}).get(record) \
+                or nc_any.get(record) or {}
+            clade = normalize_text(nrow.get("clade"))
+            cur.execute(
+                """
+                INSERT INTO sample_segments (
+                    sample_id, segment, record_id, dataset_file, qc_score,
+                    coverage, cds_coverage, clade, is_untyped
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (sample_id, segment, record_id) DO UPDATE SET
+                    dataset_file = EXCLUDED.dataset_file,
+                    qc_score = EXCLUDED.qc_score,
+                    coverage = EXCLUDED.coverage,
+                    cds_coverage = EXCLUDED.cds_coverage,
+                    clade = EXCLUDED.clade,
+                    is_untyped = EXCLUDED.is_untyped
+                """,
+                (
+                    iso_id, seg_val, record,
+                    normalize_text(row.get("best_dataset_file")),
+                    parse_float(row.get("qc_score")),
+                    parse_float(nrow.get("coverage")),
+                    parse_float(nrow.get("cdsCoverage")),
+                    clade if clade not in ("?", "") else None,
+                    is_untyped,
+                ),
+            )
+            n_seg += 1
+            if str(row.get("reassortment_suspected", "")).lower() in ("true", "1", "yes"):
+                _add_influenza_feature(cur, iso_id, seg_val, "reassortment_suspected", "true", "species_assign")
+    conn.commit()
+    print(f"  Loaded {n_seg} sample_segments rows", file=sys.stderr)
+
+
+def load_influenza_genoflu(conn, run_id, results_dir):
+    """results/genoflu/genoflu_results.tsv -> samples.genoflu_* and
+    sample_segments.genoflu_* for each isolate."""
+    tsv = Path(results_dir) / "genoflu" / "genoflu_results.tsv"
+    if not tsv.exists():
+        return
+    n = 0
+    with conn.cursor() as cur:
+        for row in read_tsv_or_csv(tsv):
+            strain = normalize_text(row.get("Strain"))
+            if not strain:
+                continue
+            sid = _sample_id(cur, run_id, strain, create_isolate=True)
+            if not sid:
+                continue
+            genotype = normalize_text(row.get("Genotype"))
+            titles = [t.strip() for t in str(row.get("Genotype Sample Title List", "")).split(",") if t.strip()]
+            pcts = [p.strip().rstrip("%") for p in str(row.get("Genotype Percent Match List", "")).split(",")]
+            mism = [m.strip() for m in str(row.get("Genotype Mismatch List", "")).split(",")]
+            constellation = {}
+            for i, t in enumerate(titles):
+                # 'ea6:23-004612-001:PB2' -> genotype:ref_strain:SEGMENT
+                parts = t.rsplit(":", 2)
+                if len(parts) != 3:
+                    continue
+                geno, ref_strain, seg = parts[0], parts[1], parts[2].lower()
+                constellation[seg] = {
+                    "genotype": geno,
+                    "ref_strain": ref_strain,
+                    "match_pct": parse_float(pcts[i]) if i < len(pcts) else None,
+                    "mismatches": parse_int(mism[i]) if i < len(mism) else None,
+                }
+            cur.execute(
+                """
+                UPDATE samples SET genoflu_genotype = %s, genoflu_constellation = %s
+                WHERE sample_id = %s
+                """,
+                (genotype, json.dumps(constellation) if constellation else None, sid),
+            )
+            for seg, info in constellation.items():
+                cur.execute(
+                    """
+                    UPDATE sample_segments
+                    SET genoflu_genotype = %s, genoflu_match_pct = %s, genoflu_mismatches = %s
+                    WHERE sample_id = %s AND segment = %s
+                    """,
+                    (info["genotype"], info["match_pct"], info["mismatches"], sid, seg),
+                )
+            _add_influenza_feature(cur, sid, None, "genoflu_constellation",
+                                   json.dumps(constellation) if constellation else genotype, "genoflu")
+            n += 1
+    conn.commit()
+    print(f"  Loaded GenoFLU calls for {n} isolates", file=sys.stderr)
+
+
+def load_influenza_features(conn, run_id, results_dir):
+    """Per-segment biological features: cleavage motif/sequence (ha),
+    mugration region traits, epiweeks and seasonal antigenic distances."""
+    loaded = 0
+    with conn.cursor() as cur:
+        for seg, seg_dir in _flu_segment_dirs(results_dir):
+            # cleavage site (ha only) — includes tips later pruned by refine
+            for fname, ftype in (("cleavage-site.json", "furin_cleavage_motif"),
+                                 ("cleavage-site-sequences.json", "cleavage_site_sequence")):
+                f = seg_dir / fname
+                if not f.exists():
+                    continue
+                data = json.load(open(f))
+                for name, attrs in (data.get("nodes") or {}).items():
+                    sid = _sample_id(cur, run_id, _CANDIDATE_RE.sub("", normalize_text(name) or ""))
+                    val = normalize_text((attrs or {}).get(ftype)) if isinstance(attrs, dict) else None
+                    if sid and val:
+                        _add_influenza_feature(cur, sid, seg, ftype, val, "augur")
+                        loaded += 1
+            # seasonal clade calls (clades.json carries clade_membership)
+            f = seg_dir / "clades.json"
+            if f.exists():
+                data = json.load(open(f))
+                for name, attrs in (data.get("nodes") or {}).items():
+                    sid = _sample_id(cur, run_id, _CANDIDATE_RE.sub("", normalize_text(name) or ""))
+                    clade = normalize_text((attrs or {}).get("clade_membership")) if isinstance(attrs, dict) else None
+                    if sid and clade:
+                        cur.execute(
+                            "UPDATE sample_segments SET clade = %s WHERE sample_id = %s AND segment = %s",
+                            (clade, sid, seg),
+                        )
+                        cur.execute(
+                            "UPDATE samples SET clade = COALESCE(clade, %s) WHERE sample_id = %s",
+                            (clade, sid),
+                        )
+                        loaded += 1
+            # mugration region trait
+            f = seg_dir / "traits.json"
+            if f.exists():
+                data = json.load(open(f))
+                for name, attrs in (data.get("nodes") or {}).items():
+                    sid = _sample_id(cur, run_id, _CANDIDATE_RE.sub("", normalize_text(name) or ""))
+                    region = normalize_text((attrs or {}).get("region")) if isinstance(attrs, dict) else None
+                    if sid and region:
+                        _add_influenza_feature(cur, sid, seg, "mugration_region", region, "augur",
+                                               confidence=json.dumps((attrs or {}).get("region_confidence")))
+                        loaded += 1
+        # seasonal distances.json (ha/na antigenic metrics) + epiweeks
+        for f in sorted(p for p in Path(results_dir).rglob("distances.json")
+                        if "work" not in [x.lower() for x in p.parts]):
+            seg = _detect_segment_from_path(f)
+            data = json.load(open(f))
+            for name, attrs in (data.get("nodes") or {}).items():
+                sid = _sample_id(cur, run_id, normalize_text(name) or "")
+                if sid and isinstance(attrs, dict):
+                    _add_influenza_feature(cur, sid, seg, "antigenic_distances", json.dumps(attrs), "augur")
+                    loaded += 1
+        for f in sorted(p for p in Path(results_dir).rglob("epiweeks.json")
+                        if "work" not in [x.lower() for x in p.parts]):
+            data = json.load(open(f))
+            for name, attrs in (data.get("nodes") or {}).items():
+                sid = _sample_id(cur, run_id, normalize_text(name) or "")
+                if sid and isinstance(attrs, dict):
+                    for k in ("epiweek", "year_month"):
+                        if attrs.get(k):
+                            _add_influenza_feature(cur, sid, None, k, normalize_text(attrs.get(k)), "augur")
+                            loaded += 1
+    conn.commit()
+    print(f"  Loaded {loaded} influenza features", file=sys.stderr)
+
+
+def load_influenza_metadata(conn, run_id, results_dir, species=None):
+    """metadata-with-clade.tsv / metadata.tsv carry label_clade, h5_clade,
+    genoflu_* columns — fold non-empty query values back into samples."""
+    results_dir = Path(results_dir)
+    candidates = sorted(p for p in results_dir.rglob("metadata-with-clade.tsv") if _published(p)) + \
+                 sorted(p for p in results_dir.rglob("*.metadata.tsv") if _published(p))
+    n = 0
+    with conn.cursor() as cur:
+        for path in candidates:
+            for row in read_tsv_or_csv(path):
+                name = normalize_text(row.get("strain") or row.get("accession") or row.get("query_strain"))
+                if not name:
+                    continue
+                sid = _sample_id(cur, run_id, name)
+                if not sid:
+                    continue
+                clade = normalize_text(
+                    row.get("label_clade") or row.get("h5_clade")
+                    or row.get("gisaid_clade") or row.get("subclade_nextclade_ha")
+                )
+                if clade in ("?", ""):
+                    clade = None
+                cur.execute(
+                    "UPDATE samples SET clade = COALESCE(%s, clade), host = COALESCE(host, %s), country = COALESCE(country, %s) WHERE sample_id = %s",
+                    (clade, normalize_text(row.get("host")), normalize_country(row.get("country")), sid),
+                )
+                n += 1
+    conn.commit()
+    print(f"  Enriched {n} samples from build metadata", file=sys.stderr)
+
+
+def load_influenza_segment_mutations(conn, run_id, results_dir):
+    """aa-muts.json / muts.json per segment -> mutations (segment-scoped) +
+    sample_mutation links for query tips only (background tips are too many)."""
+    loaded = 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT sample_id, sample_name FROM samples WHERE run_id = %s AND is_query = TRUE", (run_id,))
+        query_ids = {name: sid for sid, name in cur.fetchall()}
+        if not query_ids:
+            return
+        for seg, seg_dir in _flu_segment_dirs(results_dir):
+            for fname in ("aa-muts.json", "nt-muts.json", "muts.json"):
+                f = seg_dir / fname
+                if not f.exists():
+                    continue
+                data = json.load(open(f))
+                for name, attrs in (data.get("nodes") or {}).items():
+                    sid = query_ids.get(_CANDIDATE_RE.sub("", normalize_text(name) or ""))
+                    if not sid or not isinstance(attrs, dict):
+                        continue
+                    for mut in attrs.get("muts") or []:
+                        cur.execute(
+                            """
+                            INSERT INTO mutations (mutation_label, mutation_type, segment)
+                            VALUES (%s, 'nt', %s) ON CONFLICT DO NOTHING RETURNING mutation_id
+                            """,
+                            (mut, seg),
+                        )
+                        r = cur.fetchone()
+                        if r is None:
+                            cur.execute(
+                                "SELECT mutation_id FROM mutations WHERE mutation_label = %s AND mutation_type = 'nt' AND segment IS NOT DISTINCT FROM %s",
+                                (mut, seg),
+                            )
+                            r = cur.fetchone()
+                        if r:
+                            cur.execute(
+                                "INSERT INTO sample_mutation (sample_id, mutation_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                                (sid, r[0]),
+                            )
+                            loaded += 1
+                    for gene, muts in (attrs.get("aa_muts") or {}).items():
+                        for mut in muts or []:
+                            cur.execute(
+                                """
+                                INSERT INTO mutations (mutation_label, mutation_type, segment)
+                                VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING mutation_id
+                                """,
+                                (f"{gene}:{mut}", "aa", seg),
+                            )
+                            r = cur.fetchone()
+                            if r is None:
+                                cur.execute(
+                                    "SELECT mutation_id FROM mutations WHERE mutation_label = %s AND mutation_type = 'aa' AND segment IS NOT DISTINCT FROM %s",
+                                    (f"{gene}:{mut}", seg),
+                                )
+                                r = cur.fetchone()
+                            if r:
+                                cur.execute(
+                                    "INSERT INTO sample_mutation (sample_id, mutation_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                                    (sid, r[0]),
+                                )
+                                loaded += 1
+    conn.commit()
+    print(f"  Loaded {loaded} segment mutations for query isolates", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline output provenance ignore-list
+# ---------------------------------------------------------------------------
+
+def _provenance_keep(path):
+    """Which published files are worth registering: curated per-segment/build
+    artifacts, not logs, vendored-repo copies, downloaded datasets, or bulky
+    regenerable intermediates."""
+    p = Path(path)
+    parts = set(part.lower() for part in p.parts)
+    if parts & {".snakemake", "benchmarks", "logs", "config", "scripts",
+                "translations", "work"}:
+        return False
+    if any(part.startswith("ds_") for part in parts):
+        return False
+    name = p.name.lower()
+    if name.startswith("."):  # .command.*, .exitcode, .gitignore
+        return False
+    if name.endswith((".log", ".iqtree.log", ".done", ".ckp", ".ckp.gz",
+                      ".phy", ".bam")) \
+       or name in ("tree-raw.nwk", "tree_raw.nwk", "tree_common.nwk",
+                   "colors.tsv", "aligned.fasta.insertions.csv"):
+        return False
+    if name in ("sequences.fasta", "filtered.fasta", "aligned.fasta",
+                "masked.fasta", "aligned-delim.fasta",
+                "aligned-delim.fasta.uniqueseq.phy",
+                "aligned.fasta.to_align.fasta",
+                "sequences_ha.fasta") or name.startswith("sequences_") \
+       or name.startswith("tree_without_outgroup"):
+        return False
+    return True
+
+
 def main():
     args = parse_args()
     outdir = Path(args.outdir).resolve()
@@ -2869,15 +3400,30 @@ def main():
                 species_screening_only=args.species_screening_only,
             )
 
+            is_flu = _is_influenza(args.pathogen, results_dir)
+            if not args.species_screening_only and is_flu:
+                # Create isolate-level sample rows first so segment tree tips
+                # (which carry bare isolate names) link to them.
+                print("Loading influenza sample segments...", file=sys.stderr)
+                load_sample_segments(conn, args.meta_id, results_dir,
+                                     species=args.species, pathogen=args.pathogen)
+
             if not args.species_screening_only:
                 print("Loading phylogenetic trees and tips...", file=sys.stderr)
-                load_trees_and_tips(conn, args.meta_id, results_dir, auspice_json=args.auspice_json, iqtree=args.iqtree, species=args.species)
+                load_trees_and_tips(conn, args.meta_id, results_dir, auspice_json=args.auspice_json, iqtree=args.iqtree, species=args.species, pathogen=args.pathogen)
+
+                if is_flu:
+                    print("Loading influenza-specific data...", file=sys.stderr)
+                    load_influenza_genoflu(conn, args.meta_id, results_dir)
+                    load_influenza_features(conn, args.meta_id, results_dir)
+                    load_influenza_metadata(conn, args.meta_id, results_dir, species=args.species)
+                    load_influenza_segment_mutations(conn, args.meta_id, results_dir)
 
                 print("Loading mutations...", file=sys.stderr)
                 load_mutations(conn, args.meta_id, results_dir)
 
                 print("Loading background from Auspice...", file=sys.stderr)
-                load_background_from_auspice(conn, args.meta_id, results_dir, species=args.species)
+                load_background_from_auspice(conn, args.meta_id, results_dir, species=args.species, pathogen=args.pathogen)
 
                 print("Loading phenotype annotations...", file=sys.stderr)
                 load_phenotype_annotations(
@@ -2897,6 +3443,7 @@ def main():
                     epi_raw_dir=args.epi_raw_dir,
                     epi_search_summary=args.epi_search_summary,
                     species=args.species,
+                    pathogen=args.pathogen,
                 )
 
                 print("Loading literature evidence...", file=sys.stderr)

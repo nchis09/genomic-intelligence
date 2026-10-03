@@ -99,7 +99,65 @@ Provide a consensus FASTA file and a metadata TSV file:
 - `sequences.fasta` — one or more consensus sequences (multiple pathogen species can be mixed; the pipeline assigns species using Nextclade).
 - `metadata.tsv` — sample metadata with at least `strain`, `date`, and `country` columns.
 
+### Segmented genomes (influenza)
+
+Influenza isolates are submitted as **one FASTA record per segment**, all in the same `sequences.fasta` (segments from multiple isolates can be mixed freely). Because the pipeline screens each record independently against every dataset, the only requirement is a consistent naming convention:
+
+```text
+>{LABID}_{segment}
+```
+
+- `LABID` — your lab/sample identifier; everything before the last `_<segment>` token. All segments of one isolate share the same `LABID`.
+- `segment` — any label: `seg4`, `seg6`, `HA`, `NA`, `pb2`, … This is **advisory only** — the pipeline verifies which segment each record actually is during Nextclade screening, so a mislabelled segment is still routed correctly.
+
+```text
+>SAMPLE001_seg4    ← HA segment of isolate SAMPLE001
+>SAMPLE001_seg6    ← NA segment of isolate SAMPLE001
+>SAMPLE002_seg4    ← HA of a different isolate
+```
+
+`metadata.tsv` uses the same format for every pathogen — **one row per sample/isolate** (keyed by `strain`, `sample_id`, `accession` or `name`), which is automatically fanned out to every `LABID_*` segment record. For non-segmented pathogens (Ebola, …) this is simply one row per genome:
+
+```text
+strain      date         country
+SAMPLE001   2026-03-05   Uganda
+SAMPLE002   2026-03-07   Uganda
+UG_01       2026-01-01   DRC
+```
+
+If your records have real GenBank accessions, either use the accession as the record header/metadata id itself, or keep it in an `accession` column — when the pipeline needs to rewrite `accession` to the record id (segment fan-out), the original value is preserved as `genbank_accession`.
+
+Header rules that will break tools if violated:
+
+- No spaces in the id (text after the first space is ignored).
+- No `()`, `,`, `:`, `;`, `[`, `]` or `/` — these break tree/Newick handling downstream.
+- Every record id must be unique — never use the same header twice.
+
+### How lineage assignment works
+
+Screening is two-pass:
+
+1. **Per record** — every record is scored against every dataset; `qc.overallScore` (lower is better) picks the best hit. Records whose best score exceeds `--nextclade_max_score` (default `100`; ~0-30 means a real same-lineage match) are treated as **untyped** — they cannot decide anything on their own, so contaminant or junk sequences cannot create phantom pathogen groups.
+2. **Per isolate** — records sharing a `LABID` prefix form an isolate, and the isolate's lineage is decided by its **HA record first, then NA**. All other segments inherit that call (`lineage_source=inherited` in `species_assignments.tsv`).
+
+Consequences:
+
+- An isolate only enters a seasonal-flu build when it has a typed **HA or NA** record of a supported lineage (`h1n1pdm`, `h3n2`, `vic` — generic Flu B and Yamagata records are placed in the `vic` build). Submitting only internal segments (PB2, PB1, PA, NP, MP, NS) yields a screened, reported group marked internal-only — **no tree build is run** for it.
+- `species_assignments.tsv` reports both levels: `species` = the isolate's final call, `record_species` = what the record itself typed as, plus `segment`, `lineage_source` (`ha`/`na`/`record`/`inherited`/`none`) and `reassortment_suspected` (flagged when a typed record disagrees with its isolate's consensus — except avian NA records, which can only hit seasonal NA datasets anyway).
+
 The literature stages query NCBI Entrez, so a contact email is required via `--pubmed_email` (use `--pdf_email` to set a different contact for the Unpaywall PDF resolver).
+
+Literature tuning flags (defaults live in `nextflow.config`; override with `--<flag>`):
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--literature_min_year` | current − 5 | Earliest publication year searched. |
+| `--literature_max_year` | current | Latest publication year searched. |
+| `--literature_search_max_results` | `200` | Max Europe PMC hits per species × domain. |
+| `--asreview_top_n` | `25` | Maximum papers per species × domain carried into PDF + LLM stages — the main volume knob. `asreview_n_stop` is auto-raised to ≥ `top_n` so the ranking can fill the requested slots. |
+| `--asreview_min_year` | `literature_min_year` | Publication-year floor applied during screening. |
+| `--asreview_n_prior_included` / `--asreview_n_prior_excluded` | `5` / `5` | Keyword-seeded ASReview priors. |
+| `--skip_literature_search` / `--skip_pubmed_metadata` / `--skip_literature_deduplication` / `--skip_literature_screening` / `--skip_literature_pdf` / `--skip_literature_text` / `--skip_literature_evidence` / `--skip_evidence_qc` | `false` | Skip individual literature stages. |
 
 Now, you can run the pipeline using:
 

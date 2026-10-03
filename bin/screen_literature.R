@@ -147,7 +147,7 @@ screen_in <- df %>%
   select(record_id, title, abstract, included) %>%
   mutate(title = as.character(title), abstract = as.character(abstract), included = as.integer(included))
 
-write.csv(screen_in, file.path(outdir, "screen_input.csv"), row.names = FALSE, na = "")
+write.csv(screen_in, "screen_input.csv", row.names = FALSE, na = "")
 
 # Edge case: if there is no variation, just keep the keyword-matched records.
 if (seed_included == 0 || seed_excluded == 0) {
@@ -181,7 +181,9 @@ n_prior_exc <- min(n_prior_excluded, seed_excluded)
 # It must be at least the priors + 1 so the model runs and a last ranking
 # table is generated.
 min_stop <- n_prior_inc + n_prior_exc + 1
-n_stop_val <- min(nrow(screen_in), max(min_stop, n_stop))
+# n_stop must also reach top_n — the exported ranking table can never be
+# longer than the number of label actions, so top_n slots stay unfilled.
+n_stop_val <- min(nrow(screen_in), max(min_stop, n_stop, top_n))
 
 # Run asreview simulate. The model is seeded with n_prior included/excluded
 # records and then performs n_stop label actions before saving the project.
@@ -196,7 +198,7 @@ sim_cmd <- c(
   "--seed", "42"
 )
 
-sim_log <- file.path(outdir, "asreview_simulate.log")
+sim_log <- "asreview_simulate.log"
 status <- system2("asreview", args = sim_cmd[-1], stdout = sim_log, stderr = sim_log)
 
 if (status != 0 || !file.exists("screen.asreview")) {
