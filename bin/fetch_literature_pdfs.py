@@ -90,11 +90,50 @@ def _safe_get(
     return None
 
 
-def _write_pdf(outdir: Path, pmid: str, content: bytes) -> Path:
-    pdf_path = outdir / f"{pmid}.pdf"
+def _write_pdf(outdir: Path, pmid: str, content: bytes, ext: str = "pdf") -> Path:
+    pdf_path = outdir / f"{pmid}.{ext}"
     with open(pdf_path, "wb") as fh:
         fh.write(content)
     return pdf_path
+
+
+def _try_europepmc_xml(
+    record: Dict[str, Any],
+    timeout: int,
+    retries: int,
+    sleep: float,
+    search_client: SearchClient,
+) -> tuple[Optional[bytes], Optional[str]]:
+    """Last-resort full text via the Europe PMC JATS XML endpoint.
+
+    The OA subset serves fullTextXml for many records whose fullTextPdf
+    returns 404, so a paper can have full text available even when every
+    PDF resolver fails. Returns the raw JATS XML bytes.
+    """
+    pmid = record.get("pmid", "")
+    doi = record.get("doi", "")
+    pmcid = record.get("pmcid", "")
+    if not pmcid:
+        pmcid = _resolve_pmcid(pmid, doi, search_client)
+    if not pmcid:
+        return None, "No PMCID available for Europe PMC fullTextXml lookup"
+
+    url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, timeout=timeout)
+            if r.status_code == 404:
+                return None, "Europe PMC fullTextXml not available (not in OA subset)"
+            r.raise_for_status()
+            content = r.content
+            if b"<article" in content[:500]:
+                return content, None
+            return None, "Europe PMC fullTextXml response was not JATS XML"
+        except Exception as exc:
+            if attempt == retries - 1:
+                return None, f"Europe PMC fullTextXml error: {exc}"
+            time.sleep(sleep)
+    return None, "Europe PMC fullTextXml failed"
 
 
 def _resolve_pmcid(
@@ -374,7 +413,19 @@ def _download_pdf(
         result["error"] = err
         time.sleep(sleep)
 
+    # Last resort: Europe PMC fullTextXml — JATS XML is served for many
+    # records whose OA PDF is unavailable; downstream text extraction
+    # handles .xml directly.
+    result["source"] = "europepmc_xml"
+    content, err = _try_europepmc_xml(record, timeout, retries, sleep, search_client)
+    attempts.append({"source": "europepmc_xml", "status": "success" if content is not None else "failed", "error": err or ""})
     result["attempts"] = attempts
+    if content is not None:
+        result["status"] = "success"
+        result["format"] = "xml"
+        result["pdf_bytes"] = len(content)
+        return result, content
+    result["error"] = err
     return result, None
 
 
@@ -423,8 +474,9 @@ def main() -> None:
             unpaywall_client=unpaywall_client,
         )
         if content is not None:
-            _write_pdf(outdir, result["pmid"], content)
-            print(f"[fetch] Downloaded PDF for PMID {result['pmid']} from {result['source']}", file=sys.stderr)
+            ext = "xml" if result.get("format") == "xml" else "pdf"
+            _write_pdf(outdir, result["pmid"], content, ext)
+            print(f"[fetch] Downloaded {ext.upper()} for PMID {result['pmid']} from {result['source']}", file=sys.stderr)
         else:
             print(f"[fetch] No PDF for PMID {result['pmid']}: {result['error']}", file=sys.stderr)
         summary.append(result)

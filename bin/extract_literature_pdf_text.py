@@ -86,6 +86,41 @@ def _extract_with_pdfplumber(pdf_path: Path) -> Tuple[Optional[str], Optional[st
         return None, f"pdfplumber extraction failed: {exc}"
 
 
+def _extract_with_jats(xml_path: Path) -> Tuple[Optional[str], Optional[str]]:
+    """Extract plain text from a JATS XML file (Europe PMC fullTextXml).
+
+    Tries ElementTree first; falls back to tag-stripping for environments
+    where expat is not importable.
+    """
+    import re
+    try:
+        raw = xml_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return None, f"JATS XML read failed: {exc}"
+
+    try:
+        import xml.etree.ElementTree as ET
+        tree = ET.fromstring(raw)
+        node = tree.find("body") or tree
+        text = " ".join(node.itertext())
+    except Exception:
+        # Tag-strip fallback: drop DOCTYPE/comments, remove tags, collapse
+        # runs of whitespace.
+        text = re.sub(r"<!DOCTYPE[^>]*>", " ", raw, flags=re.S)
+        text = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"&amp;", "&", text)
+        text = re.sub(r"&lt;", "<", text)
+        text = re.sub(r"&gt;", ">", text)
+        text = re.sub(r"&#x([0-9A-Fa-f]+);", lambda m: chr(int(m.group(1), 16)), text)
+        text = re.sub(r"&#(\d+);", lambda m: chr(int(m.group(1))), text)
+
+    text = "\n\n".join(line.strip() for line in text.splitlines() if line.strip())
+    if not text.strip():
+        return None, "JATS XML produced empty text"
+    return text, None
+
+
 def _extract_text(pdf_path: Path) -> Tuple[Optional[str], Optional[str], str]:
     """Try pymupdf first, then pdfplumber. Return (text, error, source)."""
     if _has_pymupdf():
@@ -130,8 +165,9 @@ def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
 
     pdfs = sorted(input_dir.glob("*.pdf"))
-    if not pdfs:
-        print("[extract_text] No PDFs found to process.", file=sys.stderr)
+    xmls = sorted(input_dir.glob("*.xml"))
+    if not pdfs and not xmls:
+        print("[extract_text] No PDFs/XMLs found to process.", file=sys.stderr)
 
     summary: List[Dict[str, Any]] = []
     for pdf in pdfs:
@@ -168,10 +204,45 @@ def main() -> None:
         if args.sleep:
             time.sleep(args.sleep)
 
+    # JATS XML full-text fallbacks from Europe PMC (papers whose PDF was
+    # unavailable but whose XML is in the OA subset).
+    for xml in xmls:
+        pmid = _pmid_from_filename(xml)
+        target = outdir / f"{pmid}.{args.format}"
+
+        text, err = _extract_with_jats(xml)
+        chars = len(text) if text is not None else 0
+
+        if text is not None:
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            print(f"[extract_text] Extracted PMID {pmid} ({chars} chars) via jats", file=sys.stderr)
+            summary.append({
+                "pmid": pmid,
+                "status": "success",
+                "source": "jats",
+                "error": None,
+                "pages": 0,
+                "chars": chars,
+            })
+        else:
+            print(f"[extract_text] Failed PMID {pmid}: {err}", file=sys.stderr)
+            summary.append({
+                "pmid": pmid,
+                "status": "failed",
+                "source": "jats",
+                "error": err,
+                "pages": 0,
+                "chars": 0,
+            })
+
+        if args.sleep:
+            time.sleep(args.sleep)
+
     summary_record = {
         "species": args.species,
         "domain": args.domain,
-        "input_count": len(pdfs),
+        "input_count": len(pdfs) + len(xmls),
         "success_count": sum(1 for s in summary if s["status"] == "success"),
         "failed_count": sum(1 for s in summary if s["status"] != "success"),
         "results": summary,

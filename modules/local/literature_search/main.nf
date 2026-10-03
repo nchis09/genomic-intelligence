@@ -29,6 +29,8 @@ process LITERATURE_SEARCH {
 
     script:
     def max_results = params.literature_search_max_results ?: 1000
+    def min_year    = params.literature_min_year ? "--min-year ${params.literature_min_year}" : ""
+    def max_year    = params.literature_max_year ? "--max-year ${params.literature_max_year}" : ""
     """
     [ -n "\${CONDA_PREFIX}" ] && export PATH="\${CONDA_PREFIX}/bin:\${PATH}"
 
@@ -45,6 +47,7 @@ process LITERATURE_SEARCH {
         --species "${meta.species}" \
         --terms-yaml "${terms_yaml}" \
         --max-results ${max_results} \
+        ${min_year} ${max_year} \
         --outdir .
     """
 }

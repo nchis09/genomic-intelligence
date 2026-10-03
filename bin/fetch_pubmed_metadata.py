@@ -123,7 +123,7 @@ def parse_article(article: Dict[str, Any]) -> Dict[str, Any]:
             authors.append(name)
 
     article_ids: Dict[str, str] = {}
-    for aid in article_data.get("ArticleIdList", []):
+    for aid in article.get("PubmedData", {}).get("ArticleIdList", []):
         if not isinstance(aid, dict):
             continue
         id_type = aid.get("IdType", "")

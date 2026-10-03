@@ -48,6 +48,8 @@ PATHOGEN_DISPLAY_NAMES = {
     "sarscov2": "SARS-CoV-2 Workflow",
     "flu": "Influenza Workflow",
     "influenza": "Influenza Workflow",
+    "avian_influenza": "Avian Influenza Workflow",
+    "iav-h5": "Avian Influenza Workflow",
     "mpox": "Mpox Workflow",
     "dengue": "Dengue Workflow",
     "measles": "Measles Workflow",

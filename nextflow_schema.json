@@ -121,6 +121,30 @@
                     "description": "NCBI Entrez contact email (required for PubMed metadata fetch).",
                     "fa_icon": "fas fa-envelope"
                 },
+                "literature_min_year": {
+                    "type": "integer",
+                    "default": null,
+                    "description": "Earliest publication year for the Europe PMC search (default: current year - 5).",
+                    "fa_icon": "fas fa-calendar"
+                },
+                "literature_max_year": {
+                    "type": "integer",
+                    "default": null,
+                    "description": "Latest publication year for the Europe PMC search (default: current year).",
+                    "fa_icon": "fas fa-calendar"
+                },
+                "asreview_top_n": {
+                    "type": "integer",
+                    "default": 25,
+                    "description": "Maximum number of top-ranked papers per species/domain carried into PDF download and LLM extraction.",
+                    "fa_icon": "fas fa-sort-amount-down"
+                },
+                "asreview_min_year": {
+                    "type": "integer",
+                    "default": null,
+                    "description": "Publication-year floor for screening (defaults to literature_min_year).",
+                    "fa_icon": "fas fa-calendar"
+                },
                 "skip_evidence_qc": {
                     "type": "boolean",
                     "default": false,

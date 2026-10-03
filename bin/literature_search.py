@@ -3,7 +3,8 @@
 Search Europe PMC for per-species, per-domain literature and save results as JSON/TSV.
 
 One Europe PMC query is built per domain using the species synonyms from the YAML.
-The species group, domain group, and a 10-year publication date filter are AND-ed.
+The species group, domain group, and a configurable publication-year window
+(default: current year - 5 … current year) are AND-ed.
 """
 
 import argparse
@@ -38,7 +39,7 @@ def build_query_value(terms: list) -> str:
 def build_query(species_terms: list, domain_terms: list, from_date: str, to_date: str) -> str:
     """
     Build a Europe PMC `query` string.
-    The species and domain term groups are AND-ed with a 10-year date range.
+    The species and domain term groups are AND-ed with the publication-date range.
     """
     species_group = build_query_value(species_terms)
     domain_group = build_query_value(domain_terms)
@@ -180,13 +181,18 @@ def search_europepmc(
     per_page: int = 100,
     sleep: float = 1.0,
     max_retries: int = 2,
+    min_year: int = None,
+    max_year: int = None,
 ) -> list:
     """Paginate Europe PMC `search` requests up to `max_results`."""
     results = []
     cursor = "*"
 
-    min_date = (datetime.date.today() - datetime.timedelta(days=10 * 365)).isoformat()
-    max_date = datetime.date.today().isoformat()
+    today = datetime.date.today()
+    lo = min_year or (today.year - 5)
+    hi = max_year or today.year
+    min_date = datetime.date(lo, 1, 1).isoformat()
+    max_date = datetime.date(hi, 12, 31).isoformat()
 
     while len(results) < max_results:
         query = build_query(species_terms, domain_terms, min_date, max_date)
@@ -264,6 +270,10 @@ def main():
     parser.add_argument("--mailto", default=None, help="Unused legacy OpenAlex email argument")
     parser.add_argument("--api-key", default=None, help="Unused legacy OpenAlex API key argument")
     parser.add_argument("--outdir", required=True, help="Output directory")
+    parser.add_argument("--min-year", type=int, default=None,
+                        help="Earliest publication year (default: current year - 5)")
+    parser.add_argument("--max-year", type=int, default=None,
+                        help="Latest publication year (default: current year)")
     args = parser.parse_args()
 
     with open(args.terms_yaml, "r", encoding="utf-8") as fh:
@@ -319,6 +329,8 @@ def main():
                 species_terms=species_search_terms,
                 domain_terms=domain_search_terms,
                 max_results=args.max_results,
+                min_year=args.min_year,
+                max_year=args.max_year,
             )
             works = filter_and_score(
                 raw,

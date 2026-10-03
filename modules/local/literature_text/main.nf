@@ -11,7 +11,7 @@ process LITERATURE_TEXT {
     conda "${projectDir}/envs/pgirl_text.yml"
 
     input:
-    tuple val(meta), path("*.pdf")
+    tuple val(meta), path("*")
 
     output:
     tuple val(meta), path("*.txt"), optional: true, emit: text
