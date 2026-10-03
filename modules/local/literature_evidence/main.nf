@@ -1,10 +1,10 @@
 /*
  * Local module: LITERATURE_EVIDENCE
  *
- * Extracts structured, quotable, confidence-scored evidence from full-text
- * .txt files using MedSpaCy (spaCy + clinical NLP) with rule-based matching,
- * ConText negation detection, and section-aware confidence scoring.
- * Merges PubMed metadata (title, year, authors, journal, DOI) into output JSON.
+ * Extracts concrete, quotable evidence claims from full-text .txt paper files
+ * using a local Ollama model. Outputs a per-domain TSV (evidence_extracted.tsv)
+ * and an extraction log (extraction_log.json) instead of the previous
+ * per-paper JSONs.
  */
 
 process LITERATURE_EVIDENCE {
@@ -15,34 +15,39 @@ process LITERATURE_EVIDENCE {
 
     input:
     tuple val(meta), path("*.txt"), path("*.json")
-    path rules_yml
+    path templates_yml
 
     output:
-    tuple val(meta), path("evidence/*.json"), optional: true, emit: evidence
+    tuple val(meta), path("evidence_extracted.tsv"), emit: tsv
+    tuple val(meta), path("extraction_log.json"), emit: log
 
     when:
     !params.skip_literature_evidence && !params.skip_literature_text && (task.ext.when == null || task.ext.when)
 
     script:
-    def metadata_arg = params.skip_pubmed_metadata ? "" : "--metadata-dir metadata"
+    def ollama_host  = task.ext.ollama_host  ?: params.ollama_host  ?: 'http://localhost:11434'
+    def ollama_model = task.ext.ollama_model ?: params.ollama_model ?: ''
+    def ollama_n_ctx = task.ext.ollama_n_ctx ?: params.ollama_n_ctx ?: '4096'
+    def ollama_temp  = task.ext.ollama_temperature ?: params.ollama_temperature ?: '0.1'
     """
-    [ -n "\${CONDA_PREFIX}" ] && export PATH="\${CONDA_PREFIX}/bin:\${PATH}"
+    [ -n "\${CONDA_PREFIX}" ] && export PATH="\${CONDA_PREFIX}/bin:\$PATH"
 
     # --- Stage metadata JSONs into metadata/ subdirectory ---
     mkdir -p metadata
     mv *.json metadata/ 2>/dev/null || true
 
-    # --- Run MedSpaCy evidence extraction ---
-    # Output `*.json` files are written to evidence/ and published by
-    # the publishDir block in conf/modules.config.
+    # --- Run Ollama evidence extraction ---
     set -e
-    mkdir -p evidence
-    python ${projectDir}/bin/extract_evidence_medspacy.py \
+    python3 ${projectDir}/bin/extract_literature_evidence.py \
         --input-dir . \
-        --outdir evidence/ \
+        --metadata-dir metadata \
+        --outdir . \
         --species "${meta.species}" \
         --domain "${meta.domain}" \
-        --rules-yml "${rules_yml}" \
-        ${metadata_arg}
+        --templates-yml "${templates_yml}" \
+        --ollama-host "${ollama_host}" \
+        --ollama-model "${ollama_model}" \
+        --n-ctx ${ollama_n_ctx} \
+        --temperature ${ollama_temp}
     """
 }

@@ -217,7 +217,7 @@ dataset_species_column <- list(
     values = list(
       bdbv = "Bundibugyo virus",
       sudv = "Sudan virus",
-      zaire = "Zaire virus",
+      ebov = "Zaire virus",
       "tai-forest" = "Ta\u00ef Forest virus",
       reston = "Reston virus"
     )
