@@ -159,6 +159,14 @@ Literature tuning flags (defaults live in `nextflow.config`; override with `--<f
 | `--asreview_n_prior_included` / `--asreview_n_prior_excluded` | `5` / `5` | Keyword-seeded ASReview priors. |
 | `--skip_literature_search` / `--skip_pubmed_metadata` / `--skip_literature_deduplication` / `--skip_literature_screening` / `--skip_literature_pdf` / `--skip_literature_text` / `--skip_literature_evidence` / `--skip_evidence_qc` | `false` | Skip individual literature stages. |
 
+Epidemiological data flags (WHO FluNet for influenza; HDX for Ebola):
+
+|| Flag | Default | What it does |
+|| --- | --- | --- |
+|| `--epi_min_year` | current − 5 | Earliest ISO year for WHO FluNet surveillance fetch. |
+|| `--epi_max_year` | current | Latest ISO year for WHO FluNet surveillance fetch. |
+|| `--skip_epi_data` | `false` | Skip epidemiological data fetch. |
+
 Now, you can run the pipeline using:
 
 ```bash

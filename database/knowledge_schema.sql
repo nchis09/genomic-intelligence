@@ -300,6 +300,91 @@ CREATE TABLE IF NOT EXISTS epidemiological_records (
     raw_data JSONB
 );
 
+CREATE TABLE IF NOT EXISTS influenza_epidemiological_records (
+    record_id SERIAL PRIMARY KEY,
+    dataset_id INTEGER REFERENCES epidemiological_datasets(dataset_id),
+    record_date DATE,
+    country TEXT,
+    location_code TEXT,
+    location_code_type TEXT,
+    who_region TEXT,
+    influenza_transmission_zone TEXT,
+    surveillance_site_type TEXT,
+    year INTEGER,
+    week INTEGER,
+    mmwr_weekstartdate DATE,
+    mmwr_year INTEGER,
+    mmwr_week INTEGER,
+    fluseason TEXT,
+    hemisphere TEXT,
+    origin_source TEXT,
+    specimens_received INTEGER,
+    specimens_processed INTEGER,
+    ah1 INTEGER,
+    ah1n1pdm09 INTEGER,
+    ah3 INTEGER,
+    ah5 INTEGER,
+    ah7n9 INTEGER,
+    a_not_subtyped INTEGER,
+    a_not_subtypable INTEGER,
+    a_other_subtype TEXT,
+    a_other_subtype_details TEXT,
+    inf_a INTEGER,
+    b_vic_2del INTEGER,
+    b_vic_3del INTEGER,
+    b_vic_nodel INTEGER,
+    b_vic_delunk INTEGER,
+    b_yam INTEGER,
+    b_not_determined INTEGER,
+    inf_b INTEGER,
+    inf_all INTEGER,
+    inf_negative INTEGER,
+    ili_activity TEXT,
+    adeno INTEGER,
+    boca INTEGER,
+    human_corona INTEGER,
+    metapneumo INTEGER,
+    parainfluenza INTEGER,
+    rhino INTEGER,
+    rsv_processed INTEGER,
+    rsv INTEGER,
+    other_resp_virus INTEGER,
+    other_resp_virus_details TEXT,
+    lab_result_comment TEXT,
+    wcr_comment TEXT,
+    iso2 TEXT,
+    isoyw TEXT,
+    mmwryw TEXT,
+    psource_subtype_inf TEXT,
+    psource_ppos_inf TEXT,
+    psource_rsv TEXT,
+    raw_data JSONB
+);
+
+CREATE TABLE IF NOT EXISTS empresi_avian_influenza (
+    record_id SERIAL PRIMARY KEY,
+    dataset_id INTEGER REFERENCES epidemiological_datasets(dataset_id),
+    global_id TEXT,
+    lat REAL,
+    lon REAL,
+    country TEXT,
+    locality TEXT,
+    region TEXT,
+    location TEXT,
+    observation_date DATE,
+    report_date DATE,
+    display_date DATE,
+    animal_type TEXT,
+    host_type TEXT,
+    species_affected TEXT,
+    humans_affected INTEGER,
+    humans_deaths INTEGER,
+    diagnosis_source TEXT,
+    diagnosis_status TEXT,
+    disease TEXT,
+    raw_data JSONB
+);
+
 CREATE TABLE IF NOT EXISTS surveillance_records (
     surveillance_id SERIAL PRIMARY KEY,
     sample_id INTEGER REFERENCES samples(sample_id),
@@ -723,3 +808,13 @@ CREATE INDEX IF NOT EXISTS idx_literature_domains_expected_fields_gin ON literat
 CREATE INDEX IF NOT EXISTS idx_literature_domains_field_coverage_gin ON literature_domains USING GIN (field_coverage);
 CREATE INDEX IF NOT EXISTS idx_literature_domains_confidence_distribution_gin ON literature_domains USING GIN (confidence_distribution);
 CREATE INDEX IF NOT EXISTS idx_epi_records_raw_data_gin ON epidemiological_records USING GIN (raw_data);
+CREATE INDEX IF NOT EXISTS idx_influenza_epi_dataset_id ON influenza_epidemiological_records(dataset_id);
+CREATE INDEX IF NOT EXISTS idx_influenza_epi_record_date ON influenza_epidemiological_records(record_date);
+CREATE INDEX IF NOT EXISTS idx_influenza_epi_country ON influenza_epidemiological_records(country);
+CREATE INDEX IF NOT EXISTS idx_influenza_epi_year_week ON influenza_epidemiological_records(year, week);
+CREATE INDEX IF NOT EXISTS idx_influenza_epi_raw_data_gin ON influenza_epidemiological_records USING GIN (raw_data);
+CREATE INDEX IF NOT EXISTS idx_empresi_avian_dataset_id ON empresi_avian_influenza(dataset_id);
+CREATE INDEX IF NOT EXISTS idx_empresi_avian_observation_date ON empresi_avian_influenza(observation_date);
+CREATE INDEX IF NOT EXISTS idx_empresi_avian_country ON empresi_avian_influenza(country);
+CREATE INDEX IF NOT EXISTS idx_empresi_avian_host_type ON empresi_avian_influenza(host_type);
+CREATE INDEX IF NOT EXISTS idx_empresi_avian_raw_data_gin ON empresi_avian_influenza USING GIN (raw_data);
