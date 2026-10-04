@@ -18,9 +18,18 @@ SELECT
      )) AS n_mutations,
     (SELECT COUNT(*) FROM phylogenetic_trees pt WHERE pt.run_id = ar.run_id) AS n_trees,
     (SELECT COUNT(*) FROM epidemiological_datasets ed WHERE ed.run_id = ar.run_id) AS n_epi_datasets,
-    (SELECT COUNT(*) FROM epidemiological_records er
-     JOIN epidemiological_datasets ed ON er.dataset_id = ed.dataset_id
-     WHERE ed.run_id = ar.run_id) AS n_epi_records,
+    ((SELECT COUNT(*) FROM epidemiological_records er
+      JOIN epidemiological_datasets ed ON er.dataset_id = ed.dataset_id
+      WHERE ed.run_id = ar.run_id) +
+     (SELECT COUNT(*) FROM influenza_epidemiological_records ir
+      JOIN epidemiological_datasets ed ON ir.dataset_id = ed.dataset_id
+      WHERE ed.run_id = ar.run_id) +
+     (SELECT COUNT(*) FROM empresi_avian_influenza eri
+      JOIN epidemiological_datasets ed ON eri.dataset_id = ed.dataset_id
+      WHERE ed.run_id = ar.run_id)) AS n_epi_records,
+    (SELECT COUNT(*) FROM empresi_avian_influenza eri
+     JOIN epidemiological_datasets ed ON eri.dataset_id = ed.dataset_id
+     WHERE ed.run_id = ar.run_id) AS n_empresi_avian_records,
     (SELECT COUNT(*) FROM literature_domains ld WHERE ld.run_id = ar.run_id) AS n_literature_domains,
     (SELECT COUNT(*) FROM literature_papers lp WHERE lp.run_id = ar.run_id) AS n_literature_papers,
     (SELECT COUNT(*) FROM literature_extractions le

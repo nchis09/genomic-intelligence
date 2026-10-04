@@ -2037,21 +2037,36 @@ def load_epi_data(conn, run_id, epi_raw_dir, epi_search_summary=None, species=No
 
             # Detect dataset type from filename/columns
             dataset_type = _infer_dataset_type(csv_path.name, rows[0].keys())
+            if "flunet" in csv_path.name.lower():
+                dataset_type = "flunet"
+            elif "empresi" in csv_path.name.lower():
+                dataset_type = "empresi"
             epi_pathogen = pathogen or "orthoebolavirus"
             if not species:
                 epi_pathogen = None
+            if "flunet" in csv_path.name.lower():
+                source = "WHO FluNet"
+            elif "empresi" in csv_path.name.lower():
+                source = "FAO EMPRES-i"
+            else:
+                source = "HDX"
             cur.execute(
                 """
                 INSERT INTO epidemiological_datasets (run_id, dataset_name, source, row_count, pathogen, species, dataset_type)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING dataset_id
                 """,
-                (run_id, csv_path.stem, "HDX", len(rows), epi_pathogen, species, dataset_type),
+                (run_id, csv_path.stem, source, len(rows), epi_pathogen, species, dataset_type),
             )
             dataset_id = cur.fetchone()[0]
 
-            for row in rows:
-                _load_epi_row(cur, dataset_id, row, dataset_type)
+            if dataset_type == "flunet":
+                load_flunet_data(cur, dataset_id, rows)
+            elif dataset_type == "empresi":
+                load_empresi_data(cur, dataset_id, rows)
+            else:
+                for row in rows:
+                    _load_epi_row(cur, dataset_id, row, dataset_type)
     conn.commit()
     print(f"  Loaded {len(csv_files)} epidemiological datasets", file=sys.stderr)
 
@@ -2206,6 +2221,172 @@ def _parse_indicator(text):
     return measure, classification, period
 
 
+def load_flunet_data(cur, dataset_id, rows):
+    """Load a wide-format WHO FluNet CSV into the dedicated flu epi table."""
+    print(f"  Loading {len(rows)} FluNet rows into influenza_epidemiological_records", file=sys.stderr)
+
+    for row in rows:
+        record_date = normalize_date(row.get("record_date"))
+        country = normalize_country(row.get("country"))
+        location_code = normalize_text(row.get("location_code"))
+        location_code_type = "ISO3" if location_code else None
+        mmwr_weekstartdate = normalize_date(row.get("mmwr_weekstartdate"))
+
+        raw = {k: v for k, v in row.items() if v is not None and str(v).strip()}
+
+        cur.execute(
+            """
+            INSERT INTO influenza_epidemiological_records (
+                dataset_id, record_date, country, location_code, location_code_type,
+                who_region, influenza_transmission_zone, surveillance_site_type,
+                year, week, mmwr_weekstartdate, mmwr_year, mmwr_week,
+                fluseason, hemisphere, origin_source,
+                specimens_received, specimens_processed,
+                ah1, ah1n1pdm09, ah3, ah5, ah7n9,
+                a_not_subtyped, a_not_subtypable, a_other_subtype, a_other_subtype_details,
+                inf_a, b_vic_2del, b_vic_3del, b_vic_nodel, b_vic_delunk,
+                b_yam, b_not_determined, inf_b, inf_all, inf_negative,
+                ili_activity, adeno, boca, human_corona, metapneumo,
+                parainfluenza, rhino, rsv_processed, rsv, other_resp_virus,
+                other_resp_virus_details, lab_result_comment, wcr_comment,
+                iso2, isoyw, mmwryw, psource_subtype_inf, psource_ppos_inf, psource_rsv,
+                raw_data
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                dataset_id,
+                record_date,
+                country,
+                location_code,
+                location_code_type,
+                normalize_text(row.get("who_region")),
+                normalize_text(row.get("influenza_transmission_zone")),
+                normalize_text(row.get("surveillance_site_type")),
+                parse_int(row.get("year")),
+                parse_int(row.get("week")),
+                mmwr_weekstartdate,
+                parse_int(row.get("mmwr_year")),
+                parse_int(row.get("mmwr_week")),
+                normalize_text(row.get("fluseason")),
+                normalize_text(row.get("hemisphere")),
+                normalize_text(row.get("origin_source")),
+                parse_int(row.get("specimens_received")),
+                parse_int(row.get("specimens_processed")),
+                parse_int(row.get("ah1")),
+                parse_int(row.get("ah1n1pdm09")),
+                parse_int(row.get("ah3")),
+                parse_int(row.get("ah5")),
+                parse_int(row.get("ah7n9")),
+                parse_int(row.get("a_not_subtyped")),
+                parse_int(row.get("a_not_subtypable")),
+                normalize_text(row.get("a_other_subtype")),
+                normalize_text(row.get("a_other_subtype_details")),
+                parse_int(row.get("inf_a")),
+                parse_int(row.get("b_vic_2del")),
+                parse_int(row.get("b_vic_3del")),
+                parse_int(row.get("b_vic_nodel")),
+                parse_int(row.get("b_vic_delunk")),
+                parse_int(row.get("b_yam")),
+                parse_int(row.get("b_not_determined")),
+                parse_int(row.get("inf_b")),
+                parse_int(row.get("inf_all")),
+                parse_int(row.get("inf_negative")),
+                normalize_text(row.get("ili_activity")),
+                parse_int(row.get("adeno")),
+                parse_int(row.get("boca")),
+                parse_int(row.get("human_corona")),
+                parse_int(row.get("metapneumo")),
+                parse_int(row.get("parainfluenza")),
+                parse_int(row.get("rhino")),
+                parse_int(row.get("rsv_processed")),
+                parse_int(row.get("rsv")),
+                parse_int(row.get("other_resp_virus")),
+                normalize_text(row.get("other_resp_virus_details")),
+                normalize_text(row.get("lab_result_comment")),
+                normalize_text(row.get("wcr_comment")),
+                normalize_text(row.get("iso2")),
+                normalize_text(row.get("isoyw")),
+                normalize_text(row.get("mmwryw")),
+                normalize_text(row.get("psource_subtype_inf")),
+                normalize_text(row.get("psource_ppos_inf")),
+                normalize_text(row.get("psource_rsv")),
+                json.dumps(raw),
+            ),
+        )
+
+
+def _derive_host_type(animal_type: str) -> str:
+    if not animal_type:
+        return "Unknown"
+    text = animal_type.lower()
+    is_domestic = "domestic" in text
+    is_wild = "wild" in text
+    if is_domestic and is_wild:
+        return "Mixed"
+    if is_domestic:
+        return "Domestic"
+    if is_wild:
+        return "Wild"
+    if "environmental" in text:
+        return "Environmental"
+    if "captive" in text:
+        return "Captive"
+    return "Other"
+
+
+def load_empresi_data(cur, dataset_id, rows):
+    """Load FAO EMPRES-i avian influenza CSV into the dedicated avian epi table."""
+    print(f"  Loading {len(rows)} EMPRES-i rows into empresi_avian_influenza", file=sys.stderr)
+
+    for row in rows:
+        raw = {k: v for k, v in row.items() if v is not None and str(v).strip()}
+
+        animal_type = normalize_text(row.get("animal_type"))
+        host_type = _derive_host_type(animal_type)
+        country = normalize_country(row.get("country"))
+
+        cur.execute(
+            """
+            INSERT INTO empresi_avian_influenza (
+                dataset_id, global_id, lat, lon, country, locality, region,
+                location, observation_date, report_date, display_date,
+                animal_type, host_type, species_affected,
+                humans_affected, humans_deaths,
+                diagnosis_source, diagnosis_status, disease,
+                raw_data
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                dataset_id,
+                normalize_text(row.get("global_id")),
+                parse_float(row.get("lat")),
+                parse_float(row.get("lon")),
+                country,
+                normalize_text(row.get("locality")),
+                normalize_text(row.get("region")),
+                normalize_text(row.get("location")),
+                normalize_date(row.get("observation_date")),
+                normalize_date(row.get("report_date")),
+                normalize_date(row.get("display_date")),
+                animal_type,
+                host_type,
+                normalize_text(row.get("species_affected")),
+                parse_int(row.get("humans_affected")),
+                parse_int(row.get("humans_deaths")),
+                normalize_text(row.get("diagnosis_source")),
+                normalize_text(row.get("diagnosis_status")),
+                normalize_text(row.get("disease")),
+                json.dumps(raw),
+            ),
+        )
+
+
 # ---------------------------------------------------------------------------
 # MultiQC custom-content summary
 # ---------------------------------------------------------------------------
@@ -2221,6 +2402,8 @@ SUMMARY_TABLES = [
     "phylogenetic_trees",
     "tree_tips",
     "epidemiological_records",
+    "influenza_epidemiological_records",
+    "empresi_avian_influenza",
     "pipeline_outputs",
     "literature_domains",
     "literature_papers",

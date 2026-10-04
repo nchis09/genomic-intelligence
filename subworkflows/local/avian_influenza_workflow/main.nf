@@ -28,6 +28,7 @@ include { GENOFLU_ASSIGN        } from '../../../modules/local/genoflu_assign/ma
 include { NEXTSTRAIN_AVIAN_INGEST } from '../../../modules/local/nextstrain_avian_ingest/main'
 include { NEXTSTRAIN_AVIAN        } from '../../../modules/local/nextstrain_avian/main'
 include { LITERATURE_RETRIEVAL    } from '../literature_retrieval/main'
+include { EPIDEMIOLOGICAL_DATA    } from '../epidemiological_data/main'
 
 // Resolve the build subtype from a genoflu_results.tsv: GenoFLU's
 // genotype panel is entirely H5N1, so a clean call on EVERY isolate
@@ -127,6 +128,13 @@ workflow AVIAN_INFLUENZA_WORKFLOW {
     ch_lit_summaries = LITERATURE_RETRIEVAL.out.lit_summaries
 
     //
+    // Epidemiological data — WHO FluMart H5 surveillance (human sentinel detections)
+    //
+    EPIDEMIOLOGICAL_DATA(ch_species_data)
+    ch_epi_raw         = EPIDEMIOLOGICAL_DATA.out.epi_raw
+    ch_epi_search_summary = EPIDEMIOLOGICAL_DATA.out.search_summary
+
+    //
     // Knowledge-warehouse bundle: same tuple shape as EBOLA_WORKFLOW's,
     // with NO_FILE placeholders for the stages not wired for avian yet
     // (epi data, phenotype annotation, HMM, query-protein discovery).
@@ -163,12 +171,23 @@ workflow AVIAN_INFLUENZA_WORKFLOW {
                 [ meta, pick ?: file('NO_FILE_auspice'), no_file_tree ]
             }
 
+        ch_epi_for_kw = ch_epi_raw
+            .map { meta, epi_dir ->
+                [ meta, (epi_dir && !epi_dir.name.startsWith('NO_FILE')) ? epi_dir : no_file_epi ]
+            }
+        ch_epi_summary_for_kw = ch_epi_search_summary
+            .map { meta, summary ->
+                [ meta, (summary && !summary.name.startsWith('NO_FILE')) ? summary : no_file_summary ]
+            }
+
         ch_kw_input = ch_metadata_for_kw
             .join(ch_bioinfo_for_kw, by: 0)
             .join(ch_auspice_for_kw, by: 0)
+            .join(ch_epi_for_kw, by: 0)
+            .join(ch_epi_summary_for_kw, by: 0)
             .combine(ch_species_assignments_kw)
-            .map { meta, metadata, bioinfo_dir, auspice, tree, assignments ->
-                [ meta, assignments, metadata, no_file_epi, no_file_summary,
+            .map { meta, metadata, bioinfo_dir, auspice, tree, epi_dir, epi_summary, assignments ->
+                [ meta, assignments, metadata, epi_dir, epi_summary,
                   bioinfo_dir, no_file_uniprotr, no_file_extractr, no_file_rbioapi,
                   auspice, tree, [ no_file_query ], no_file_hmm ]
             }
@@ -200,8 +219,8 @@ workflow AVIAN_INFLUENZA_WORKFLOW {
     uniprotr_results   = channel.empty()
     extractr_results   = channel.empty()
     rbioapi_results    = channel.empty()
-    epi_raw            = channel.empty()
-    epi_search_summary = channel.empty()
+    epi_raw            = ch_epi_raw
+    epi_search_summary = ch_epi_search_summary
     lit_results        = ch_lit_results                       // channel: [ meta, [ literature result files ] ]
     lit_evidence       = ch_lit_evidence                      // channel: [ meta, evidence_extracted.tsv ]
 }
