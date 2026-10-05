@@ -17,7 +17,9 @@ process EXTRACT_QUERY_PROTEINS {
     container null
 
     input:
-    tuple val(meta), path(auspice_json), path(results_dir)
+    // segment_auspice_jsons stages under segments/ — the primary file is
+    // part of the set and would otherwise collide with path(auspice_json).
+    tuple val(meta), path(auspice_json), path(segment_auspice_jsons, stageAs: 'segments/*'), path(results_dir), path(mutation_tsvs), path(assignments)
 
     output:
     tuple val(meta), path("*_discovery.tsv")            , emit: discovery
@@ -35,6 +37,15 @@ process EXTRACT_QUERY_PROTEINS {
     def species   = meta.species ?: meta.id.replaceAll(/^.*_/, '')
     def query     = params.query_samples ?: (meta.query_samples ?: '')
     def max_xrefs = params.max_query_xrefs ?: 0
+    def tsvs      = mutation_tsvs instanceof List ? mutation_tsvs : [ mutation_tsvs ]
+    def mut_files = tsvs
+        .findAll { it && !it.name.startsWith('NO_FILE') }
+        .collect { it.toString() }
+    def extra_args = []
+    if (mut_files) { extra_args << "--mutations ${mut_files.join(' ')}" }
+    if (assignments && !assignments.name.startsWith('NO_FILE')) {
+        extra_args << "--assignments ${assignments}"
+    }
     """
     python3 ${projectDir}/bin/extract_query_proteins.py \\
         --auspice ${auspice_json} \\
@@ -42,6 +53,7 @@ process EXTRACT_QUERY_PROTEINS {
         --query_samples "${query}" \\
         --species ${species} \\
         --prefix ${prefix} \\
-        --max_xrefs ${max_xrefs}
+        --max_xrefs ${max_xrefs} \\
+        ${extra_args.join(' \\\n        ')}
     """
 }

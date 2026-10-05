@@ -10,11 +10,13 @@
  *      ({lineage}_pgirl, ha+na, 6y) with the group's query segments injected
  *      as additional_inputs
  *
- * Stage 1 wires only the bioinformatics path. Epi data, phenotype
- * annotation and literature retrieval are later stages; their emit
- * channels stay empty (safe to .mix()) while kw_input carries NO_FILE
- * placeholders so the shared knowledge warehouse can still load
- * influenza samples + the screening/build trees.
+ *   3. SEGMENT_MUTATIONS + PHENOTYPE_ANNOTATION — per-segment mutation
+ *      TSVs (all built segments), UniProt/UniProtExtractR/rbioapi and
+ *      hmmscan coverage for every protein the query isolates carry.
+ *
+ * Literature retrieval, epi data and the knowledge-warehouse bundle are
+ * wired; skipped stages contribute NO_FILE placeholders so the shared
+ * knowledge warehouse still loads influenza samples + the build trees.
  *
  * Input:  ch_species_data         - channel of [ meta, fasta, metadata ]
  *         ch_nextclade_aligned    - channel: collected [ meta(dataset), fasta ]
@@ -23,6 +25,8 @@
 
 include { NEXTSTRAIN_FLU_INGEST } from '../../../modules/local/nextstrain_flu_ingest/main'
 include { NEXTSTRAIN_FLU        } from '../../../modules/local/nextstrain_flu/main'
+include { SEGMENT_MUTATIONS     } from '../../../modules/local/segment_mutations/main'
+include { PHENOTYPE_ANNOTATION  } from '../phenotype_annotation/main'
 include { LITERATURE_RETRIEVAL  } from '../literature_retrieval/main'
 include { EPIDEMIOLOGICAL_DATA  } from '../epidemiological_data/main'
 
@@ -99,6 +103,59 @@ workflow SEASONAL_FLU_WORKFLOW {
     ch_epi_search_summary = EPIDEMIOLOGICAL_DATA.out.search_summary
 
     //
+    // Per-segment mutation tables + phenotype annotation.
+    // The build emits one Auspice JSON per segment; SEGMENT_MUTATIONS
+    // produces mutations_{seg}.tsv per built segment (nextclade on the
+    // build's aligned.fasta, or Auspice-derived), and EXTRACT_QUERY_PROTEINS
+    // merges them so UniProt/HMM coverage spans every segment — not just
+    // the ha tree used for phylo-neighbor discovery.
+    //
+    ch_auspice_results = NEXTSTRAIN_FLU.out.auspice
+        .join(NEXTSTRAIN_FLU.out.results_dir, by: 0)
+        .map { meta, json, dir ->
+            def jsons = json instanceof List ? json : [ json ]
+            def pick = jsons.find { it && it.name ==~ /.*_ha\.json/ }
+                ?: jsons.find { it && it.name ==~ /.*\.json/ }
+            [ meta, pick ?: file('NO_FILE_auspice'), jsons, dir ]
+        }
+
+    ch_segmut_input = NEXTSTRAIN_FLU.out.results_dir
+        .join(NEXTSTRAIN_FLU.out.auspice, by: 0, remainder: true)
+        .map { meta, dir, json -> [ meta, dir, json ?: file('NO_FILE_auspice') ] }
+
+    if (!params.skip_phenotype_annotation) {
+        SEGMENT_MUTATIONS(ch_segmut_input)
+        PHENOTYPE_ANNOTATION(
+            ch_auspice_results,
+            SEGMENT_MUTATIONS.out.mutations_tsvs,
+            ch_species_assignments
+        )
+    }
+
+    // Per-meta NO_FILE fallbacks so kw joins and emits stay populated when
+    // phenotype annotation is skipped (results_dir is always emitted, so it
+    // is a safe base channel unlike the optional auspice emit).
+    ch_mutations_out = params.skip_phenotype_annotation
+        ? channel.empty()
+        : PHENOTYPE_ANNOTATION.out.mutations
+
+    ch_pheno_summary = params.skip_phenotype_annotation
+        ? channel.empty()
+        : PHENOTYPE_ANNOTATION.out.query_summary
+
+    ch_uniprotr_results = params.skip_phenotype_annotation
+        ? channel.empty()
+        : PHENOTYPE_ANNOTATION.out.uniprotr_results
+
+    ch_extractr_results = params.skip_phenotype_annotation
+        ? channel.empty()
+        : PHENOTYPE_ANNOTATION.out.extractr_results
+
+    ch_rbioapi_results = params.skip_phenotype_annotation
+        ? channel.empty()
+        : PHENOTYPE_ANNOTATION.out.rbioapi_results
+
+    //
     // Knowledge-warehouse bundle: same tuple shape as the other pathogen
     // workflows, with NO_FILE placeholders for the stages not wired for
     // influenza yet (epi data, phenotype annotation, HMM, query-protein
@@ -145,16 +202,58 @@ workflow SEASONAL_FLU_WORKFLOW {
                 [ meta, (summary && !summary.name.startsWith('NO_FILE')) ? summary : no_file_summary ]
             }
 
+        // Phenotype-annotation outputs for the kw bundle — per-meta
+        // NO_FILE-safe channels keyed on results_dir (always emitted).
+        ch_uniprotr_for_kw = params.skip_phenotype_annotation
+            ? NEXTSTRAIN_FLU.out.results_dir.map { meta, _dir -> [ meta, no_file_uniprotr ] }
+            : PHENOTYPE_ANNOTATION.out.uniprotr_results
+                .map { meta, dir -> [ meta, (dir && !dir.name.startsWith('NO_FILE')) ? dir : no_file_uniprotr ] }
+        ch_extractr_for_kw = params.skip_phenotype_annotation
+            ? NEXTSTRAIN_FLU.out.results_dir.map { meta, _dir -> [ meta, no_file_extractr ] }
+            : PHENOTYPE_ANNOTATION.out.extractr_results
+                .map { meta, dir -> [ meta, (dir && !dir.name.startsWith('NO_FILE')) ? dir : no_file_extractr ] }
+        ch_rbioapi_for_kw = params.skip_phenotype_annotation
+            ? NEXTSTRAIN_FLU.out.results_dir.map { meta, _dir -> [ meta, no_file_rbioapi ] }
+            : PHENOTYPE_ANNOTATION.out.rbioapi_results
+                .map { meta, dir -> [ meta, (dir && !dir.name.startsWith('NO_FILE')) ? dir : no_file_rbioapi ] }
+        ch_hmm_for_kw = params.skip_phenotype_annotation
+            ? NEXTSTRAIN_FLU.out.results_dir.map { meta, _dir -> [ meta, no_file_hmm ] }
+            : PHENOTYPE_ANNOTATION.out.hmm_results
+                .map { meta, files -> [ meta, files ?: no_file_hmm ] }
+
+        // EXTRACT_QUERY_PROTEINS outputs bundled as one per-meta list —
+        // plus the per-segment mutation TSVs from SEGMENT_MUTATIONS.
+        ch_query_data_for_kw = params.skip_phenotype_annotation
+            ? NEXTSTRAIN_FLU.out.results_dir.map { meta, _dir -> [ meta, [ no_file_query ] ] }
+            : PHENOTYPE_ANNOTATION.out.discovery
+                .join(PHENOTYPE_ANNOTATION.out.accessions, by: 0)
+                .join(PHENOTYPE_ANNOTATION.out.uniprot_tsv, by: 0)
+                .join(PHENOTYPE_ANNOTATION.out.mutations, by: 0)
+                .join(PHENOTYPE_ANNOTATION.out.query_proteins, by: 0)
+                .join(PHENOTYPE_ANNOTATION.out.query_summary, by: 0)
+                .join(SEGMENT_MUTATIONS.out.mutations_tsvs, by: 0, remainder: true)
+                .map { meta, discovery, accessions, uniprot_tsv, mutations, proteins, summary, seg_tsvs ->
+                    [ meta, [ discovery, accessions, uniprot_tsv, mutations, proteins, summary ] +
+                        (seg_tsvs instanceof List ? seg_tsvs : [ seg_tsvs ]).findAll { it != null } ]
+                }
+
         ch_kw_input = ch_metadata_for_kw
             .join(ch_bioinfo_for_kw, by: 0)
             .join(ch_auspice_for_kw, by: 0)
             .join(ch_epi_for_kw, by: 0)
             .join(ch_epi_summary_for_kw, by: 0)
+            .join(ch_uniprotr_for_kw, by: 0, remainder: true)
+            .join(ch_extractr_for_kw, by: 0, remainder: true)
+            .join(ch_rbioapi_for_kw, by: 0, remainder: true)
+            .join(ch_query_data_for_kw, by: 0, remainder: true)
+            .join(ch_hmm_for_kw, by: 0, remainder: true)
             .combine(ch_species_assignments_kw)
-            .map { meta, metadata, bioinfo_dir, auspice, tree, epi_dir, epi_summary, assignments ->
+            .map { meta, metadata, bioinfo_dir, auspice, tree, epi_dir, epi_summary,
+                   uniprotr_dir, extractr_dir, rbioapi_dir, query_data, hmm, assignments ->
                 [ meta, assignments, metadata, epi_dir, epi_summary,
-                  bioinfo_dir, no_file_uniprotr, no_file_extractr, no_file_rbioapi,
-                  auspice, tree, [ no_file_query ], no_file_hmm ]
+                  bioinfo_dir, uniprotr_dir ?: no_file_uniprotr,
+                  extractr_dir ?: no_file_extractr, rbioapi_dir ?: no_file_rbioapi,
+                  auspice, tree, query_data ?: [ no_file_query ], hmm ?: no_file_hmm ]
             }
 
         // Dataflow wait: join the bundle on this species' literature
@@ -179,11 +278,11 @@ workflow SEASONAL_FLU_WORKFLOW {
     kw_input           = ch_kw_input                        // channel: kw bundle (see AVIAN_INFLUENZA_WORKFLOW)
     auspice            = NEXTSTRAIN_FLU.out.auspice         // channel: [ meta, json ]
     results            = NEXTSTRAIN_FLU.out.results_dir     // channel: [ meta, dir ]
-    mutations          = channel.empty()                    // later stage: mutation profile
-    query_summary      = channel.empty()
-    uniprotr_results   = channel.empty()
-    extractr_results   = channel.empty()
-    rbioapi_results    = channel.empty()
+    mutations          = ch_mutations_out                   // channel: [ meta, tsv ] (empty when skipped)
+    query_summary      = ch_pheno_summary                   // channel: [ meta, json ]
+    uniprotr_results   = ch_uniprotr_results                // channel: [ meta, dir ]
+    extractr_results   = ch_extractr_results                // channel: [ meta, dir ]
+    rbioapi_results    = ch_rbioapi_results                 // channel: [ meta, dir ]
     epi_raw            = ch_epi_raw
     epi_search_summary = ch_epi_search_summary
     lit_results        = ch_lit_results                       // channel: [ meta, [ literature result files ] ]

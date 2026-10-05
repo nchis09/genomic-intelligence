@@ -10,7 +10,8 @@
 #   --mutations   TSV with columns: sample, gene, position, ref_aa, alt_aa, mutation_label
 #   --accessions  TXT file with one UniProt accession per line
 #   --rbioapi_dir Path to cloned rbioapi repo (tools/rbioapi)
-#   --species     Species ID (bdbv, ebov, sudv, tafv, restv)
+#   --species     Species ID (bdbv, ebov, sudv, tafv, restv,
+#                 h1n1pdm, h3n2, h5n1, h5nx, vic)
 #   --outdir      Output directory
 #   --prefix      Output file prefix
 #
@@ -108,10 +109,14 @@ if (!is.null(uniprot_tsv_file) && file.exists(uniprot_tsv_file)) {
   }
 }
 lookup_gene <- function(acc) {
-  if (exists(acc, envir = accession_gene)) get(acc, envir = accession_gene) %||% "" else ""
+  if (!exists(acc, envir = accession_gene)) return("")
+  g <- get(acc, envir = accession_gene)
+  if (is.null(g) || length(g) == 0 || is.na(g)) "" else g
 }
 lookup_organism <- function(acc) {
-  if (exists(acc, envir = accession_organism)) get(acc, envir = accession_organism) %||% "" else ""
+  if (!exists(acc, envir = accession_organism)) return("")
+  o <- get(acc, envir = accession_organism)
+  if (is.null(o) || length(o) == 0 || is.na(o)) "" else o
 }
 
 # --- Species -> precise UniProt organism name, for cross-species detection ---
@@ -121,7 +126,15 @@ SPECIES_ORGANISM_MAP <- list(
   ebov  = "Zaire ebolavirus",
   sudv  = "Sudan ebolavirus",
   tafv  = "Tai Forest ebolavirus",
-  restv = "Reston ebolavirus"
+  restv = "Reston ebolavirus",
+  # Influenza — UniProt organism strings embed the strain
+  # ("Influenza A virus (strain A/Aichi/2/1968 H3N2)"), so match on the
+  # subtype token; unresolved h5nx accepts any Influenza A.
+  h1n1pdm = "H1N1",
+  h3n2    = "H3N2",
+  h5n1    = "H5N1",
+  h5nx    = "Influenza A virus",
+  vic     = "Influenza B virus"
 )
 expected_organism <- SPECIES_ORGANISM_MAP[[species]] %||% ""
 
@@ -138,12 +151,32 @@ species_taxon <- list(
   ebov  = 186539,   # Zaire ebolavirus
   sudv  = 186540,   # Sudan virus
   tafv  = 186537,   # Tai Forest ebolavirus
-  restv = 186536    # Reston virus
+  restv = 186536,   # Reston virus
+  h1n1pdm = 114727, # H1N1 subtype
+  h3n2  = 119210,   # H3N2 subtype
+  h5n1  = 102793,   # Influenza A virus H5N1
+  h5nx  = 11320,    # Influenza A virus (all subtypes)
+  vic   = 11520     # Influenza B virus
 )
 taxon_id <- species_taxon[[species]]
 if (is.null(taxon_id)) {
   warning("Unknown species '", species, "', STRING queries will be skipped")
   taxon_id <- NA
+}
+
+# Segment CDS labels used by mutation callers (nextclade/augur) vs the
+# UniProt gene names on accessions — normalize before matching so
+# HA1/HA2 → HA, PA-X → PA, NEP → NS2. Mirrors GENE_SEARCH_MAP in
+# extract_query_proteins.py; unmatched labels pass through unchanged
+# (ebolavirus names already match UniProt).
+QUERY_GENE_MAP <- c(
+  "SigPep" = "HA", "HA1" = "HA", "HA2" = "HA",
+  "PA-X" = "PA", "NEP" = "NS2"
+)
+norm_qgene <- function(g) {
+  if (is.null(g) || is.na(g) || g == "") return(g)
+  mapped <- QUERY_GENE_MAP[g]
+  if (is.na(mapped)) g else unname(mapped)
 }
 
 # ============================================================
@@ -189,7 +222,7 @@ for (acc in accessions) {
         if (!is.na(pos_start) && !is.na(pos_end)) {
           for (i in seq_len(nrow(mutations))) {
             qpos <- mutations$position[i]
-            qgene <- mutations$gene[i]
+            qgene <- norm_qgene(mutations$gene[i])
             if (!is.na(qpos) && qpos >= pos_start && qpos <= pos_end &&
                 (gene == "" || is.na(qgene) || grepl(qgene, gene, fixed = TRUE))) {
               matching_muts <- c(matching_muts, mutations$mutation_label[i])
@@ -275,7 +308,7 @@ for (acc in accessions) {
         if (!is.na(pos_start) && !is.na(pos_end)) {
           for (i in seq_len(nrow(mutations))) {
             qpos <- mutations$position[i]
-            qgene <- mutations$gene[i]
+            qgene <- norm_qgene(mutations$gene[i])
             if (!is.na(qpos) && qpos >= pos_start && qpos <= pos_end &&
                 (gene == "" || is.na(qgene) || grepl(qgene, gene, fixed = TRUE))) {
               matching_muts <- c(matching_muts, mutations$mutation_label[i])
