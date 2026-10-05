@@ -4,7 +4,16 @@
  * Extract query-sample mutations and protein info from Nextstrain outputs,
  * then annotate using UniProtExtractR and rbioapi (cloned repos).
  *
- * Input:  ch_auspice_results - channel of [ meta, auspice_json, results_dir ]
+ * Input:  ch_auspice_results - channel of [ meta, auspice_json, all_jsons, results_dir ]
+ *                            (all_jsons = every per-segment Auspice JSON; the
+ *                            primary is used for tree-walking strategies while
+ *                            the siblings contribute their genome_annotations +
+ *                            root_sequence genes to protein discovery)
+ *         ch_mutations       - channel of [ meta, [mutation_tsvs] ] per meta
+ *                            (NO_FILE entries keep the results_dir glob —
+ *                            ebola supplies these; flu passes SEGMENT_MUTATIONS)
+ *         ch_assignments     - path: species_assignments.tsv (broadcast),
+ *                            resolves flu record ids to isolate tip names
  * Output: mutations, uniprotr_results, extractr_results, rbioapi_results, query_summary
  */
 
@@ -16,19 +25,28 @@ include { HMM_ANNOTATE                } from '../../../modules/local/hmm_annotat
 
 workflow PHENOTYPE_ANNOTATION {
     take:
-    ch_auspice_results  // channel: [ val(meta), path(auspice_json), path(results_dir) ]
+    ch_auspice_results  // channel: [ val(meta), path(auspice_json), path(all_jsons), path(results_dir) ]
+    ch_mutations        // channel: [ val(meta), path(mutation_tsvs) ] (NO_FILE = glob fallback)
+    ch_assignments      // path: species_assignments.tsv (broadcast/value channel)
 
     main:
     //
     // MODULE: Extract query sample mutations + download UniProtKB TSV
     //
-    EXTRACT_QUERY_PROTEINS(ch_auspice_results)
+    ch_extract_input = ch_auspice_results
+        .join(ch_mutations, by: 0)
+        .combine(ch_assignments)
+        .map { meta, auspice_json, all_jsons, results_dir, mutation_tsvs, assignments ->
+            [ meta, auspice_json, all_jsons, results_dir,
+              mutation_tsvs ?: file('NO_FILE_mutations'), assignments ]
+        }
+    EXTRACT_QUERY_PROTEINS(ch_extract_input)
 
     //
     // MODULES: HMM database annotation (optional)
     //
     ch_hmm_annotations = channel.empty()
-    ch_hmm_results     = ch_auspice_results.map { meta, _auspice, _results -> [ meta, file('NO_FILE_hmm') ] }
+    ch_hmm_results     = ch_auspice_results.map { meta, _auspice, _all, _results -> [ meta, file('NO_FILE_hmm') ] }
     if (!params.skip_hmm_annotation) {
         PREPARE_HMMDB(params.hmm_db_url)
         HMM_ANNOTATE(EXTRACT_QUERY_PROTEINS.out.proteins.combine(PREPARE_HMMDB.out.hmm_db_dir))

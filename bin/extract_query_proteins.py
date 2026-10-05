@@ -22,12 +22,19 @@ is also read from nextclade.tsv, but is informational only — it does not
 drive any discovery strategy below (only non-synonymous/AA mutations do).
 
 Inputs:
-  --auspice        Auspice JSON file
-  --results_dir    Nextstrain results directory (contains nextclade.tsv)
-  --query_samples  Comma-separated query sample names
-  --species        Species ID (e.g., bdbv, ebov, sudv)
+  --auspice        Primary Auspice JSON (drives tree-walking strategies);
+                   sibling per-segment JSONs are auto-discovered to union
+                   genome_annotations + root_sequence across segments
+  --results_dir    Nextstrain results/work directory (contains nextclade.tsv
+                   for single-genome builds; isolates.txt/tips.txt for flu)
+  --query_samples  Comma-separated query sample names (record ids; flu
+                   tip names are isolates resolved via --assignments)
+  --species        Species ID (e.g., bdbv, ebov, sudv, h1n1pdm, h3n2, h5nx, vic)
   --prefix         Output file prefix
   --max_neighbors  Max phylogenetic neighbors to collect (default: 5)
+  --mutations      Explicit mutation TSVs (per-segment mutations_{seg}.tsv
+                   from SEGMENT_MUTATIONS); absent -> glob {results_dir}/**/nextclade.tsv
+  --assignments    species_assignments.tsv (resolves record ids -> isolate tip names)
 
 Outputs:
   {prefix}_discovery.tsv            - Per-gene discovery table (ref, INSDC, reason, uniprot_acc)
@@ -42,6 +49,7 @@ import argparse
 import csv
 import glob
 import json
+import os
 import re
 import sys
 import time
@@ -64,6 +72,11 @@ def parse_args():
     parser.add_argument("--max_neighbors", type=int, default=5)
     parser.add_argument("--max_xrefs", type=int, default=0,
                         help="Max INSDC accessions to cross-reference with UniProt per query sample (0 disables Strategy 4)")
+    parser.add_argument("--mutations", nargs="*", default=None,
+                        help="Explicit mutation TSVs (per-segment mutations_{seg}.tsv from SEGMENT_MUTATIONS); "
+                             "when absent, {results_dir}/**/nextclade.tsv is globbed")
+    parser.add_argument("--assignments", default=None,
+                        help="species_assignments.tsv — resolves query tip names to isolate ids for segmented pathogens")
     return parser.parse_args()
 
 
@@ -126,42 +139,147 @@ def get_insdc(tip):
     return val.split(".")[0] if val else ""
 
 
-def load_nextclade_mutations(results_dir):
+def load_nextclade_mutations(results_dir, mutation_files=None):
     """
-    Load per-sample reference-relative AA mutations from the Nextstrain
-    build's own nextclade.tsv (codon-aware, reference-relative substitution
-    calls — same reference/annotation as the tree).
+    Load per-sample reference-relative AA mutations from nextclade-style TSVs
+    (codon-aware, reference-relative substitution calls — same
+    reference/annotation as the tree).
+
+    Sources, in priority order:
+      1. explicit `mutation_files` — the per-segment mutations_{segment}.tsv
+         emitted by SEGMENT_MUTATIONS (influenza builds; every file is read
+         and merged per sample)
+      2. glob of {results_dir}/**/nextclade.tsv (ebola layout — ALL matching
+         files are read and merged per sample)
 
     Returns:
       gene_muts_by_sample : { seqName: { gene: [mutation, ...] } }
       nuc_counts_by_sample: { seqName: int }  (informational only)
+      segment_by_gene     : { gene: segment }   (from mutations_{seg}.tsv /
+                            nextclade.tsv filename or path; "genome" default)
     """
-    nc_files = glob.glob(f"{results_dir}/**/nextclade.tsv", recursive=True)
+    if mutation_files:
+        nc_files = [f for f in mutation_files
+                    if f and not os.path.basename(f).startswith("NO_FILE") and os.path.exists(f)]
+    else:
+        nc_files = sorted(glob.glob(f"{results_dir}/**/nextclade.tsv", recursive=True))
     gene_muts_by_sample = {}
     nuc_counts_by_sample = {}
+    segment_by_gene = {}
     if not nc_files:
-        print(f"  WARNING: no nextclade.tsv found under {results_dir}", file=sys.stderr)
-        return gene_muts_by_sample, nuc_counts_by_sample
+        print(f"  WARNING: no mutation TSVs found (files={mutation_files}, results_dir={results_dir})", file=sys.stderr)
+        return gene_muts_by_sample, nuc_counts_by_sample, segment_by_gene
 
-    with open(nc_files[0]) as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        for row in reader:
-            name = row.get("seqName", "")
-            if not name:
-                continue
-            gene_muts = {}
-            for entry in (row.get("aaSubstitutions") or "").split(","):
-                entry = entry.strip()
-                if not entry or ":" not in entry:
+    seg_re = re.compile(r"mutations_([A-Za-z0-9]+)\.tsv$")
+    for nc_path in nc_files:
+        m = seg_re.search(os.path.basename(nc_path))
+        if m:
+            file_segment = m.group(1)
+        else:
+            file_segment = "genome"
+        with open(nc_path) as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            for row in reader:
+                name = row.get("seqName", "")
+                if not name:
                     continue
-                gene, mut = entry.split(":", 1)
-                gene_muts.setdefault(gene, []).append(mut)
-            gene_muts_by_sample[name] = gene_muts
-            try:
-                nuc_counts_by_sample[name] = int(row.get("totalSubstitutions") or 0)
-            except ValueError:
-                nuc_counts_by_sample[name] = 0
-    return gene_muts_by_sample, nuc_counts_by_sample
+                gene_muts = gene_muts_by_sample.setdefault(name, {})
+                for entry in (row.get("aaSubstitutions") or "").split(","):
+                    entry = entry.strip()
+                    if not entry or ":" not in entry:
+                        continue
+                    gene, mut = entry.split(":", 1)
+                    if mut not in gene_muts.setdefault(gene, []):
+                        gene_muts[gene].append(mut)
+                    segment_by_gene.setdefault(gene, file_segment)
+                try:
+                    nuc_counts_by_sample[name] = (
+                        nuc_counts_by_sample.get(name, 0)
+                        + int(row.get("totalSubstitutions") or 0))
+                except ValueError:
+                    nuc_counts_by_sample.setdefault(name, 0)
+    return gene_muts_by_sample, nuc_counts_by_sample, segment_by_gene
+
+
+def load_segment_genes(primary_auspice_path, results_dir):
+    """
+    Union genome_annotations + root_sequence across every per-segment Auspice
+    JSON that shares the primary tree's filename prefix. Segmented builds
+    (flu) emit one JSON per segment — {lineage}_pgirl_{seg}.json or
+    avian-flu_{subtype}_{seg}_{time}.json — each carrying only that
+    segment's genes. For single-segment pathogens (ebola) the sibling glob
+    finds only the primary file and the union is a no-op.
+
+    Returns: (genome_genes_union_sorted, root_sequence_union_dict)
+    """
+    stem = os.path.basename(primary_auspice_path)[:-len(".json")]
+    # Filename prefix up to the segment token (last '_' part for
+    # *_pgirl_{seg}.json; second-to-last for avian-flu_*_{seg}_{time}.json).
+    parts = stem.split("_")
+    base_dir = os.path.dirname(primary_auspice_path) or "."
+    prefixes = ["_".join(parts[:-1]), "_".join(parts[:-2])] if len(parts) > 1 else []
+
+    genes, root_seqs = set(), {}
+    seen_files = set()
+    candidates = [primary_auspice_path]
+    for pref in prefixes:
+        candidates += glob.glob(os.path.join(base_dir, pref + "_*.json"))
+        # EXTRACT_QUERY_PROTEINS stages the sibling set under segments/.
+        candidates += glob.glob(os.path.join(base_dir, "segments", pref + "_*.json"))
+        candidates += glob.glob(os.path.join(results_dir, "**", "auspice", pref + "_*.json"), recursive=True)
+    for path in candidates:
+        if path in seen_files or "tip-frequencies" in path or not os.path.exists(path):
+            continue
+        seen_files.add(path)
+        try:
+            with open(path) as fh:
+                js = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        jm = js.get("meta", {})
+        genes.update(g for g in jm.get("genome_annotations", {}).keys() if g != "nuc")
+        for g, s in js.get("root_sequence", {}).items():
+            if g not in root_seqs:
+                root_seqs[g] = s
+    return sorted(genes), root_seqs
+
+
+def load_query_names(args, results_dir):
+    """
+    Resolve the tip names to treat as query samples.
+
+    Order:
+      1. {results_dir}/isolates.txt or tips.txt (flu builds rename records
+         to ISOLATE ids; meta.query_samples holds record ids)
+      2. --assignments TSV: unique `isolate` for rows whose `sample` is in
+         --query_samples (plus `{iso}_gN` genome-candidate aliases)
+      3. raw --query_samples (ebola: record ids are the tip names)
+    """
+    for fname in ("tips.txt", "isolates.txt"):
+        p = os.path.join(results_dir, fname)
+        if os.path.exists(p):
+            with open(p) as fh:
+                names = [l.strip() for l in fh if l.strip()]
+            if names:
+                print(f"  Query names from {fname}: {names}", file=sys.stderr)
+                return names
+
+    if args.assignments and os.path.exists(args.assignments):
+        want = set(s.strip() for s in args.query_samples.split(",") if s.strip())
+        isolates = []
+        try:
+            with open(args.assignments) as fh:
+                for row in csv.DictReader(fh, delimiter="\t"):
+                    iso = row.get("isolate") or ""
+                    if row.get("sample") in want and iso and iso not in isolates:
+                        isolates.append(iso)
+            if isolates:
+                print(f"  Query names from assignments isolates: {isolates}", file=sys.stderr)
+                return isolates
+        except (OSError, csv.Error) as e:
+            print(f"  WARNING: could not parse assignments {args.assignments}: {e}", file=sys.stderr)
+
+    return [s.strip() for s in args.query_samples.split(",") if s.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -278,35 +396,77 @@ GENE_SEARCH_MAP = {
     "GP": "GP", "GP_003": "GP", "NP": "NP",
     "VP35": "VP35", "VP40": "VP40", "VP30": "VP30",
     "VP24": "VP24", "L": "L",
+    # Influenza CDS names (Nextclade segment datasets / augur genemaps)
+    # → UniProt gene names. HA subproducts and spliced ORFs map onto the
+    # UniProt entry that carries their curated features.
+    "SigPep": "HA", "HA1": "HA", "HA2": "HA", "HA": "HA",
+    "NA": "NA", "PB2": "PB2", "PB1": "PB1",
+    "PA": "PA", "PA-X": "PA",
+    "M1": "M1", "M2": "M2",
+    "NS1": "NS1", "NEP": "NS2",
 }
 
 ORGANISM_MAP = {
     "bdbv": "Bundibugyo ebolavirus", "ebov": "Zaire ebolavirus",
     "sudv": "Sudan ebolavirus", "tafv": "Tai Forest ebolavirus",
     "restv": "Reston ebolavirus",
+    # Influenza — UniProt indexes subtype-level taxids, so seasonal
+    # lineages search their own subtype; unresolved h5nx stays broad.
+    "h1n1pdm": "Influenza A virus (H1N1)",
+    "h3n2": "Influenza A virus (H3N2)",
+    "h5n1": "Influenza A virus (H5N1)",
+    "h5nx": "Influenza A virus",
+    "vic": "Influenza B virus",
 }
 
 # Genus/family-level term used to fall back to a related species' reviewed
 # UniProt entry when the exact species has no reviewed Swiss-Prot coverage.
 GENUS_FALLBACK_NAME = "ebolavirus"
+GENUS_FALLBACK_MAP = {
+    "bdbv": "ebolavirus", "ebov": "ebolavirus", "sudv": "ebolavirus",
+    "tafv": "ebolavirus", "restv": "ebolavirus",
+    "h1n1pdm": "Influenza A virus", "h3n2": "Influenza A virus",
+    "h5n1": "Influenza A virus", "h5nx": "Influenza A virus",
+    "vic": "Influenza B virus",
+}
+
+# Preferred UniProt query fragment per species. Influenza organism names
+# embed the strain ("Influenza A virus (strain A/Aichi/2/1968 H3N2)"), so
+# subtype phrases never match — taxonomy_id queries on the subtype node
+# cover all descendant strains instead. Species absent here fall back to
+# an organism_name:"{ORGANISM_MAP}" phrase (proven for ebolavirus).
+SPECIES_QUERY_MAP = {
+    "h1n1pdm": "taxonomy_id:114727",   # H1N1 subtype
+    "h3n2":    "taxonomy_id:119210",   # H3N2 subtype
+    "h5n1":    "taxonomy_id:102793",   # Influenza A virus H5N1
+    "h5nx":    "taxonomy_id:11320",    # Influenza A virus (all subtypes)
+    "vic":     "taxonomy_id:11520",    # Influenza B virus
+}
+
+# Fallback query fragment for the genus-level reviewed-canonical sweep
+# (hits are flagged cross_species and excluded from the accession set).
+GENUS_QUERY_MAP = {
+    "h1n1pdm": "taxonomy_id:11320", "h3n2": "taxonomy_id:11320",
+    "h5n1": "taxonomy_id:11320", "h5nx": "taxonomy_id:11320",
+    "vic": "taxonomy_id:11520",
+}
 
 
-def search_uniprot_by_organism(organism_name, genome_genes):
+def search_uniprot_by_organism(org_term, genome_genes):
     """
-    Fallback: search UniProt by organism name to find protein accessions
-    for each gene. Used when xref mapping returns poor coverage.
+    Fallback: search UniProt by organism to find protein accessions for
+    each gene. `org_term` is a query fragment — taxonomy_id:N from
+    SPECIES_QUERY_MAP or an organism_name:"..." clause.
     Returns: dict { gene: [ { accession, gene, protein_name, organism } ] }
     """
     gene_search_map = GENE_SEARCH_MAP
     results = {}
-    # Clean organism name for search
-    org_query = organism_name.strip()
-    if not org_query:
+    if not org_term:
         return results
 
     for gene in genome_genes:
         search_gene = gene_search_map.get(gene, gene)
-        query = f'(organism_name:"{org_query}") AND (gene:{search_gene})'
+        query = f'({org_term}) AND (gene:{search_gene})'
         fields = "accession,gene_names,protein_name,organism_name"
         url = (
             f"https://rest.uniprot.org/uniprotkb/search?"
@@ -366,8 +526,8 @@ def search_uniprot_reviewed_canonical(organism_name, genus_name, genome_genes):
     Returns: dict { gene: [ { accession, gene, protein_name, organism,
                                cross_species } ] }
     """
-    def _search(org_query, gene_query):
-        query = f'reviewed:true AND (organism_name:"{org_query}") AND (gene:{gene_query})'
+    def _search(org_term, gene_query):
+        query = f'reviewed:true AND ({org_term}) AND (gene:{gene_query})'
         fields = "accession,gene_names,protein_name,organism_name"
         url = (
             f"https://rest.uniprot.org/uniprotkb/search?"
@@ -397,19 +557,19 @@ def search_uniprot_reviewed_canonical(organism_name, genus_name, genome_genes):
             return []
 
     results = {}
-    org_query = (organism_name or "").strip()
-    genus_query = (genus_name or "").strip()
+    org_term = (organism_name or "").strip()
+    genus_term = (genus_name or "").strip()
 
     for gene in genome_genes:
         search_gene = GENE_SEARCH_MAP.get(gene, gene)
         entries = []
         cross_species = False
 
-        if org_query:
-            entries = _search(org_query, search_gene)
+        if org_term:
+            entries = _search(org_term, search_gene)
 
-        if not entries and genus_query:
-            entries = _search(genus_query, search_gene)
+        if not entries and genus_term:
+            entries = _search(genus_term, search_gene)
             cross_species = True
 
         for e in entries:
@@ -520,17 +680,31 @@ def main():
 
     tree = auspice["tree"]
     meta = auspice.get("meta", {})
-    root_seqs = auspice.get("root_sequence", {})
-    genome_genes = [g for g in meta.get("genome_annotations", {}).keys() if g != "nuc"]
+    # Segmented builds emit one Auspice JSON per segment; union genes and
+    # root sequences across the primary file's siblings so every built
+    # segment's CDS is covered, not just the primary tree's.
+    genome_genes, root_seqs = load_segment_genes(args.auspice, args.results_dir)
+    if not genome_genes:
+        genome_genes = [g for g in meta.get("genome_annotations", {}).keys() if g != "nuc"]
+        root_seqs = auspice.get("root_sequence", {})
 
     # --- Load reference-relative AA mutations (query + all reference tips) ---
-    print(f"Loading nextclade.tsv mutations from: {args.results_dir}", file=sys.stderr)
-    nc_gene_muts, nc_nuc_counts = load_nextclade_mutations(args.results_dir)
+    print(f"Loading mutations (files={args.mutations or 'glob'} under: {args.results_dir})", file=sys.stderr)
+    nc_gene_muts, nc_nuc_counts, segment_by_gene = load_nextclade_mutations(args.results_dir, args.mutations)
     print(f"  {len(nc_gene_muts)} samples with reference-relative mutations loaded", file=sys.stderr)
 
     # --- Collect all reference tips ---
-    query_names = [s.strip() for s in args.query_samples.split(",") if s.strip()]
+    query_names = load_query_names(args, args.results_dir)
     all_tips = get_all_tips(tree)
+    tip_names = {t["name"] for t in all_tips}
+    # Avian builds add `{isolate}_gN` tips for untyped (NA-candidate) records —
+    # they belong to a query isolate, so they are query tips too.
+    extra_q = sorted(n for n in tip_names
+                     if re.match(r"^.+_g\d+$", n)
+                     and n.rsplit("_g", 1)[0] in set(query_names))
+    if extra_q:
+        print(f"  Genome-candidate query tips also marked as query: {extra_q}", file=sys.stderr)
+        query_names = query_names + extra_q
     all_ref_tips = [t for t in all_tips if t["name"] not in query_names]
     print(f"Tree: {len(all_tips)} tips, {len(all_ref_tips)} references, {len(query_names)} query", file=sys.stderr)
 
@@ -565,7 +739,8 @@ def main():
             for mut_str in gene_mutations[gene]:
                 ref_aa, pos, alt_aa = parse_mutation(mut_str)
                 all_mutations.append({
-                    "sample": sample_name, "gene": gene,
+                    "sample": sample_name, "segment": segment_by_gene.get(gene, "genome"),
+                    "gene": gene,
                     "position": pos, "ref_aa": ref_aa, "alt_aa": alt_aa,
                     "mutation_label": f"{gene}:{mut_str}",
                 })
@@ -686,10 +861,14 @@ def main():
 
         # Common patterns: "Bundibugyo virus", "Ebola virus", etc.
         organism_name = ORGANISM_MAP.get(args.species, "")
+        # Flu lineages query by taxid (organism_name phrases never match
+        # strain-embedded names); other species use the name phrase.
+        species_query = SPECIES_QUERY_MAP.get(args.species) or (
+            f'organism_name:"{organism_name}"' if organism_name else "")
 
-        if uncovered_genes and organism_name:
-            print(f"\n  [Strategy 5] Fallback: search UniProt by organism '{organism_name}' for {len(uncovered_genes)} uncovered genes:", file=sys.stderr)
-            org_results = search_uniprot_by_organism(organism_name, uncovered_genes)
+        if uncovered_genes and species_query:
+            print(f"\n  [Strategy 5] Fallback: search UniProt by organism '{organism_name}' ({species_query}) for {len(uncovered_genes)} uncovered genes:", file=sys.stderr)
+            org_results = search_uniprot_by_organism(species_query, uncovered_genes)
             for gene, entries in org_results.items():
                 for e in entries:
                     all_uniprot_accessions.add(e["accession"])
@@ -706,8 +885,10 @@ def main():
         # feature data (queried later by annotate_rbioapi.R) only exists on
         # reviewed Swiss-Prot entries, never on the unreviewed isolate-
         # specific accessions found by strategies 1-5 above.
-        print(f"\n  [Strategy 6] Reviewed-canonical UniProt accessions (species='{organism_name or 'unknown'}', genus fallback='{GENUS_FALLBACK_NAME}'):", file=sys.stderr)
-        reviewed_results = search_uniprot_reviewed_canonical(organism_name, GENUS_FALLBACK_NAME, genome_genes)
+        genus_fallback = GENUS_FALLBACK_MAP.get(args.species, GENUS_FALLBACK_NAME)
+        genus_query = GENUS_QUERY_MAP.get(args.species) or f'organism_name:"{genus_fallback}"'
+        print(f"\n  [Strategy 6] Reviewed-canonical UniProt accessions (species='{organism_name or 'unknown'}' [{species_query or 'none'}], genus fallback='{genus_fallback}' [{genus_query}]):", file=sys.stderr)
+        reviewed_results = search_uniprot_reviewed_canonical(species_query, genus_query, genome_genes)
         n_reviewed = 0
         n_reviewed_excluded = 0
         for gene, entries in reviewed_results.items():
@@ -781,7 +962,9 @@ def main():
 
     # 1. Discovery table
     disc_file = f"{args.prefix}_discovery.tsv"
-    disc_fields = ["sample", "gene", "ref_tip", "insdc", "reason", "uniprot_accessions"]
+    disc_fields = ["sample", "segment", "gene", "ref_tip", "insdc", "reason", "uniprot_accessions"]
+    for d in all_discoveries:
+        d["segment"] = "" if d.get("gene") == "*" else segment_by_gene.get(d.get("gene", ""), "")
     with open(disc_file, "w") as f:
         writer = csv.DictWriter(f, fieldnames=disc_fields, delimiter="\t", extrasaction="ignore")
         writer.writeheader()
@@ -799,7 +982,7 @@ def main():
     # 3. Query mutations TSV
     mut_file = f"{args.prefix}_query_mutations.tsv"
     with open(mut_file, "w") as f:
-        writer = csv.DictWriter(f, fieldnames=["sample", "gene", "position", "ref_aa", "alt_aa", "mutation_label"], delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=["sample", "segment", "gene", "position", "ref_aa", "alt_aa", "mutation_label"], delimiter="\t")
         writer.writeheader()
         writer.writerows(all_mutations)
     print(f"  query_mutations.tsv: {len(all_mutations)} mutations → {mut_file}", file=sys.stderr)

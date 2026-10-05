@@ -25,7 +25,10 @@ workflow LITERATURE_RETRIEVAL {
     def ch_lit_qc = channel.empty()
     def ch_lit_summaries = channel.empty()
 
-    if (!params.skip_literature_search) {
+    // params.skip_literature is the master switch: it skips the whole
+    // stage (search → PubMed → dedup → screen → PDF → text → evidence)
+    // regardless of the individual flags.
+    if (!params.skip_literature && !params.skip_literature_search) {
         LITERATURE_SEARCH(
             ch_species_data,
             file(params.literature_search_terms),
