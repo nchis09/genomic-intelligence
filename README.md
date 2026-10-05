@@ -43,10 +43,10 @@ The pipeline is organised as a **pathogen router**: samples are grouped by the s
 3. **Bioinformatics** — Nextstrain/Augur build per species ([`nextstrain/ebola`](https://github.com/nextstrain/ebola)), plus a model-aware maximum-likelihood tree from the subsampled sequences ([`MAFFT`](https://mafft.cbrc.jp/alignment/software/) + [`IQ-TREE 2`](http://www.iqtree.org/))
 4. **Epidemiological data** — search and download matching disease datasets from the Humanitarian Data Exchange (`rhdx`)
 5. **Literature retrieval** — Europe PMC search per species and evidence domain, PubMed metadata fetch, deduplication, [`ASReview`](https://asreview.nl/) title/abstract screening, open-access PDF download, PDF-to-text conversion, rule-based structured evidence extraction, and evidence QC
-6. **Phenotype annotation** — discover UniProt accessions for the query samples' proteins and annotate them with `UniProtExtractR`, [`rbioapi`](https://cran.r-project.org/package=rbioapi), and Pfam HMM scans ([`HMMER`](http://hmmer.org/))
+6. **Phenotype annotation** — discover UniProt accessions for the query samples' proteins and annotate them with `UniProtExtractR`, [`rbioapi`](https://cran.r-project.org/package=rbioapi), and Pfam HMM scans ([`HMMER`](http://hmmer.org/)). For segmented pathogens (influenza), a `SEGMENT_MUTATIONS` step first produces reference-relative mutation tables for **every built segment** — all 8 (PB2, PB1, PA, HA, NP, NA, MP, NS) when submitted, or whichever subset the user provided — so HMM/UniProt coverage spans the whole genome, not just HA/NA
 7. **Knowledge warehouse** — start a shared PostgreSQL instance, ingest every species' outputs into the schema defined by `database/knowledge_schema.sql`, then stop the server
 
-Most stages can be turned off individually (for example `--skip_literature_search`, `--skip_phenotype_annotation`, `--skip_hmm_annotation`, `--skip_iqtree`, `--skip_epi_data`, `--skip_knowledge_warehouse`); see `nextflow.config` for the full parameter list.
+Most stages can be turned off individually (for example `--skip_literature` skips the whole literature stage, plus `--skip_phenotype_annotation`, `--skip_hmm_annotation`, `--skip_iqtree`, `--skip_epi_data`, `--skip_knowledge_warehouse`); see `nextflow.config` for the full parameter list.
 
 ## Prerequisites
 
@@ -157,7 +157,17 @@ Literature tuning flags (defaults live in `nextflow.config`; override with `--<f
 | `--asreview_top_n` | `25` | Maximum papers per species × domain carried into PDF + LLM stages — the main volume knob. `asreview_n_stop` is auto-raised to ≥ `top_n` so the ranking can fill the requested slots. |
 | `--asreview_min_year` | `literature_min_year` | Publication-year floor applied during screening. |
 | `--asreview_n_prior_included` / `--asreview_n_prior_excluded` | `5` / `5` | Keyword-seeded ASReview priors. |
+| `--skip_literature` | `false` | **Master switch:** skip the entire literature stage (search → PubMed → dedup → screening → PDF → text → evidence → QC) regardless of the individual flags below. |
 | `--skip_literature_search` / `--skip_pubmed_metadata` / `--skip_literature_deduplication` / `--skip_literature_screening` / `--skip_literature_pdf` / `--skip_literature_text` / `--skip_literature_evidence` / `--skip_evidence_qc` | `false` | Skip individual literature stages. |
+
+Epidemiological data flags (WHO FluNet + FAO EMPRES-i for influenza; HDX for Ebola):
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--epi_min_year` | current − 5 | Earliest ISO year for surveillance fetch (FluNet/EMPRES-i). |
+| `--epi_max_year` | current | Latest ISO year for surveillance fetch. |
+| `--epi_hdx_rows` | `20` | Number of HDX datasets to consider (Ebola). |
+| `--skip_epi_data` | `false` | Skip epidemiological data fetch. |
 
 Now, you can run the pipeline using:
 
@@ -225,6 +235,7 @@ Post-run visualisation:
 | `build_knowledge_db.py` | Build and populate the PostgreSQL knowledge warehouse. |
 | `start_shared_db.py` / `stop_shared_db.py` | Start and stop the shared PostgreSQL server. |
 | `run_schemaspy.py` | Generate a SchemaSpy HTML report of the warehouse schema. |
+| `extract_segment_mutations.py` | Produce per-segment mutation tables for segmented pathogens (Nextclade on build alignments, or Auspice branch-mutation walk for augur-based builds). |
 | `extract_query_proteins.py` | Discover UniProt accessions and extract query proteins/mutations for phenotype annotation. |
 | `annotate_uniprotextractr.R` / `annotate_rbioapi.R` | Annotate the discovered proteins with function, GO, pathway, and interaction data. |
 | `parse_hmmscan.py` | Parse `hmmscan` output into Pfam domain, sequence, and summary tables. |

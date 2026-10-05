@@ -74,6 +74,12 @@
                     "description": "Comma-separated query sample names to highlight in tree plots (auto-detected from FASTA if null).",
                     "fa_icon": "fas fa-search"
                 },
+                "skip_literature": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Master switch: skip the entire literature retrieval stage (search → PubMed metadata → dedup → screening → PDF → text → evidence), regardless of the individual skip flags.",
+                    "fa_icon": "fas fa-book"
+                },
                 "skip_literature_pdf": {
                     "type": "boolean",
                     "default": false,
@@ -131,6 +137,18 @@
                     "type": "integer",
                     "default": null,
                     "description": "Latest publication year for the Europe PMC search (default: current year).",
+                    "fa_icon": "fas fa-calendar"
+                },
+                "epi_min_year": {
+                    "type": "integer",
+                    "default": null,
+                    "description": "Earliest ISO year for WHO FluNet surveillance fetch (default: current year - 5).",
+                    "fa_icon": "fas fa-calendar"
+                },
+                "epi_max_year": {
+                    "type": "integer",
+                    "default": null,
+                    "description": "Latest ISO year for WHO FluNet surveillance fetch (default: current year).",
                     "fa_icon": "fas fa-calendar"
                 },
                 "asreview_top_n": {

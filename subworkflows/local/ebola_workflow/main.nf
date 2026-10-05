@@ -45,7 +45,14 @@ workflow EBOLA_WORKFLOW {
     // SUBWORKFLOW: Phenotype annotation (UniprotR + UniProtExtractR + rbioapi)
     //
     if (!params.skip_phenotype_annotation) {
-        PHENOTYPE_ANNOTATION(ch_auspice_results)
+        // Ebola emits a single Auspice JSON — it serves as both the primary
+        // tree and the (trivial) per-segment set. The NO_FILE placeholder
+        // keeps EXTRACT_QUERY_PROTEINS on its results_dir glob fallback.
+        ch_auspice_for_pheno = ch_auspice_results
+            .map { meta, auspice, dir -> [ meta, auspice, auspice, dir ] }
+        ch_mutations_for_pheno = ch_auspice_results
+            .map { meta, _auspice, _results -> [ meta, file('NO_FILE_mutations') ] }
+        PHENOTYPE_ANNOTATION(ch_auspice_for_pheno, ch_mutations_for_pheno, ch_species_assignments)
     }
 
     // When phenotype annotation is skipped, fall back to NO_FILE placeholders
@@ -182,7 +189,7 @@ workflow EBOLA_WORKFLOW {
 
         // Per-species gate: BUILD_KNOWLEDGE_DB waits for every domain's
         // extraction log AND the per-species domain summaries to be published.
-        ch_evidence_qc_ready = (params.skip_literature_evidence || params.skip_evidence_qc)
+        ch_evidence_qc_ready = (params.skip_literature || params.skip_literature_evidence || params.skip_evidence_qc)
             ? channel.empty()
             : ch_lit_qc
                 .map { meta, report -> [ meta.species, true ] }
