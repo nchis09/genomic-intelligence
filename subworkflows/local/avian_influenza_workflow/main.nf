@@ -31,6 +31,7 @@ include { GENOFLU_ASSIGN        } from '../../../modules/local/genoflu_assign/ma
 include { NEXTSTRAIN_AVIAN_INGEST } from '../../../modules/local/nextstrain_avian_ingest/main'
 include { NEXTSTRAIN_AVIAN        } from '../../../modules/local/nextstrain_avian/main'
 include { SEGMENT_MUTATIONS       } from '../../../modules/local/segment_mutations/main'
+include { SEGMENT_SIGNATURES      } from '../../../modules/local/segment_signatures/main'
 include { PHENOTYPE_ANNOTATION    } from '../phenotype_annotation/main'
 include { LITERATURE_RETRIEVAL    } from '../literature_retrieval/main'
 include { EPIDEMIOLOGICAL_DATA    } from '../epidemiological_data/main'
@@ -61,6 +62,7 @@ workflow AVIAN_INFLUENZA_WORKFLOW {
     ch_species_data        // channel: [ val(meta), path(fasta), path(metadata) ]
     ch_nextclade_aligned   // channel: [ val(meta), path(fasta) ] (value channel; each meta has .dataset)
     ch_species_assignments // path: species_assignments.tsv (broadcast/value channel)
+    ch_nextclade_tsvs      // path: all Nextclade TSVs (collected, broadcast)
 
     main:
     //
@@ -72,12 +74,17 @@ workflow AVIAN_INFLUENZA_WORKFLOW {
     //
     GENOFLU_ASSIGN(ch_species_data.map { meta, fasta, metadata -> [ meta, fasta, metadata ] })
 
-    ch_species_data = ch_species_data
+    ch_with_genoflu = ch_species_data
         .join(GENOFLU_ASSIGN.out.results, by: 0)
         .map { meta, fasta, metadata, results ->
             def resolved = genoflu_species(results) ?: meta.species
-            [ meta + [species: resolved, id: "${meta.pathogen}_${resolved}"], fasta, metadata ]
+            def new_meta = meta + [species: resolved, id: "${meta.pathogen}_${resolved}"]
+            [ new_meta, fasta, metadata, results ]
         }
+    ch_species_data    = ch_with_genoflu.map { m, f, md, r -> [ m, f, md ] }
+    // GenoFLU TSV re-keyed to the resolved meta — SEGMENT_SIGNATURES consumes
+    // it for per-segment genotype constellation labels.
+    ch_genoflu_for_sig = ch_with_genoflu.map { m, f, md, r -> [ m, r ] }
 
     //
     // Background data: either freshly ingested NCBI files or the staged
@@ -159,12 +166,38 @@ workflow AVIAN_INFLUENZA_WORKFLOW {
         .join(NEXTSTRAIN_AVIAN.out.auspice, by: 0)
         .map { meta, dir, json -> [ meta, dir, json ] }
 
+    // SEGMENT_MUTATIONS is cheap local parsing and feeds both the phenotype
+    // annotation chain AND the segment-signature tables, so it runs outside
+    // the skip_phenotype_annotation guard.
+    SEGMENT_MUTATIONS(ch_segmut_input)
+
     if (!params.skip_phenotype_annotation) {
-        SEGMENT_MUTATIONS(ch_segmut_input)
         PHENOTYPE_ANNOTATION(
             ch_auspice_results,
             SEGMENT_MUTATIONS.out.mutations_tsvs,
             ch_species_assignments
+        )
+    }
+
+    //
+    // Influenza signature tables — constellation/reassortment, DI screen,
+    // curated-marker hits and group_id diversity. Needs the group's mutation
+    // TSVs + build dir + metadata + GenoFLU results; species_assignments and
+    // the classification Nextclade TSVs arrive as broadcasts.
+    //
+    if (!params.skip_segment_signatures) {
+        ch_sig_input = SEGMENT_MUTATIONS.out.mutations_tsvs
+            .join(NEXTSTRAIN_AVIAN.out.results_dir, by: 0)
+            .join(ch_species_data.map { meta, fasta, metadata -> [ meta, metadata ] }, by: 0)
+            .join(ch_genoflu_for_sig, by: 0)
+            .map { meta, tsvs, dir, metadata, genoflu ->
+                [ meta, tsvs, dir, metadata, genoflu ]
+            }
+        SEGMENT_SIGNATURES(
+            ch_sig_input,
+            ch_species_assignments,
+            ch_nextclade_tsvs,
+            Channel.fromPath("${projectDir}/database/flu_markers.yml").first()
         )
     }
 

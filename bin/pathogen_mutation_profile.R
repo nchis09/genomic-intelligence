@@ -121,7 +121,7 @@ samples$is_query <- as.logical(samples$is_query)
 mutations_long <- dbGetQuery(con,
   "SELECT s.sample_id, s.sample_name, s.is_query,
           m.mutation_id, m.mutation_label, m.position, m.mutation_type,
-          m.ref_aa, m.alt_aa,
+          m.ref_aa, m.alt_aa, m.segment,
           COALESCE(p.protein_name, g.gene_name, 'unknown') AS protein_name,
           COALESCE(g.gene_name, 'unknown') AS gene_name
    FROM samples s
@@ -136,11 +136,35 @@ mutations_long <- dbGetQuery(con,
 if (nrow(mutations_long) > 0) {
   mutations_long$is_query <- as.logical(mutations_long$is_query)
   mutations_long <- mutations_long |>
-    # Some annotation sources (e.g. nextclade) create sample-specific protein
-    # names like "SAMPLE-0001_GP". Use the stable gene name when available
-    # so the same protein is grouped across samples.
-    mutate(protein_name = ifelse(gene_name != "unknown", gene_name, protein_name)) |>
-    mutate(mutation_uid = paste0(protein_name, "_", mutation_label)) |>
+    # Influenza segment mutations carry "GENE:REFposALT" labels with no
+    # protein/gene FK — recover the protein (and ref/pos/alt) from the label
+    # so proteins still group across samples. A mutation like HA2:I32T then
+    # lands under protein HA2 with position 32.
+    mutate(
+      label_protein = ifelse(
+        grepl("^[A-Za-z0-9_-]+:[A-Za-z*X-]?[0-9]+[A-Za-z*X-]*$", mutation_label),
+        sub(":.*$", "", mutation_label), NA_character_
+      ),
+      label_short = ifelse(
+        is.na(label_protein), mutation_label, sub("^[^:]+:", "", mutation_label)
+      ),
+      label_ref  = ifelse(is.na(label_protein), NA_character_,
+                          sub("^([A-Za-z*X-]?)[0-9]+.*$", "\\1", label_short)),
+      label_pos  = suppressWarnings(as.integer(
+        ifelse(is.na(label_protein), NA_character_,
+               sub("^[A-Za-z*X-]?([0-9]+).*$", "\\1", label_short)))),
+      label_alt  = ifelse(is.na(label_protein), NA_character_,
+                          sub("^[A-Za-z*X-]?[0-9]+([A-Za-z*X-]*)$", "\\1", label_short)),
+      ref_aa   = dplyr::coalesce(na_if(ref_aa, ""), na_if(label_ref, "")),
+      position = dplyr::coalesce(position, label_pos),
+      alt_aa   = dplyr::coalesce(na_if(alt_aa, ""), na_if(label_alt, "")),
+      # Some annotation sources (e.g. nextclade) create sample-specific protein
+      # names like "SAMPLE-0001_GP". Prefer the stable gene name, then the
+      # label prefix, so the same protein groups across samples.
+      protein_name = ifelse(gene_name != "unknown", gene_name,
+                            ifelse(!is.na(label_protein), label_protein, protein_name))
+    ) |>
+    mutate(mutation_uid = paste0(protein_name, "_", label_short)) |>
     distinct(sample_id, mutation_uid, .keep_all = TRUE)
 }
 
@@ -546,11 +570,26 @@ aa_frequencies <- NULL
 if (!is.null(translations_dir) && dir.exists(translations_dir)) {
   log_info("Computing position-specific AA frequencies from translations")
 
-  fasta_files <- list.files(translations_dir, pattern = "\\.fasta$", full.names = TRUE)
+  # The dir may BE a translations dir (ebola: .../<species>/translations) or a
+  # root holding one per segment (avian: <seg>/<time>/translations; seasonal:
+  # builds/<build>/<seg>/translations) — recurse and keep only files under a
+  # translations/ component, dropping augur's internal-node reconstructions.
+  fasta_files <- list.files(translations_dir, pattern = "\\.fasta$",
+                            full.names = TRUE, recursive = TRUE)
+  fasta_files <- fasta_files[grepl("/translations/|\\\\translations\\\\", fasta_files)]
+  fasta_files <- fasta_files[!grepl("_withInternalNodes\\.fasta$", fasta_files)]
+
+  flu_segments <- c("pb2", "pb1", "pa", "ha", "np", "na", "mp", "ns")
+  segment_of <- function(fpath) {
+    parts <- strsplit(gsub("\\\\", "/", fpath), "/", fixed = TRUE)[[1]]
+    hit <- parts[tolower(parts) %in% flu_segments]
+    if (length(hit) > 0) tolower(hit[1]) else "genome"
+  }
 
   if (length(fasta_files) > 0) {
     aa_freq_list <- lapply(fasta_files, function(fpath) {
       protein <- tools::file_path_sans_ext(basename(fpath))
+      segment <- segment_of(fpath)
       lines <- readLines(fpath, warn = FALSE)
 
       # Parse FASTA: extract sequences (skip headers)
@@ -581,6 +620,7 @@ if (!is.null(translations_dir) && dir.exists(translations_dir)) {
         tbl <- table(valid)
         tibble(
           protein_name = protein,
+          segment = segment,
           position = pos_i,
           amino_acid = names(tbl),
           count = as.integer(tbl),
@@ -607,24 +647,27 @@ if (!is.null(translations_dir) && dir.exists(translations_dir)) {
     } else {
       log_info("No valid AA frequency data computed from translations")
       write_tsv(
-        tibble(protein_name = character(), position = integer(), amino_acid = character(),
-               count = integer(), total_valid = integer(), frequency = numeric(), is_reference = logical()),
+        tibble(protein_name = character(), segment = character(), position = integer(),
+               amino_acid = character(), count = integer(), total_valid = integer(),
+               frequency = numeric(), is_reference = logical()),
         "01_position_aa_frequencies.tsv", subdir = "mutation_profile"
       )
     }
   } else {
     log_info("No FASTA files found in translations directory: ", translations_dir)
     write_tsv(
-      tibble(protein_name = character(), position = integer(), amino_acid = character(),
-             count = integer(), total_valid = integer(), frequency = numeric(), is_reference = logical()),
+      tibble(protein_name = character(), segment = character(), position = integer(),
+             amino_acid = character(), count = integer(), total_valid = integer(),
+             frequency = numeric(), is_reference = logical()),
       "01_position_aa_frequencies.tsv", subdir = "mutation_profile"
     )
   }
 } else {
   log_info("No translations directory provided or it does not exist; skipping AA frequency computation")
   write_tsv(
-    tibble(protein_name = character(), position = integer(), amino_acid = character(),
-           count = integer(), total_valid = integer(), frequency = numeric(), is_reference = logical()),
+    tibble(protein_name = character(), segment = character(), position = integer(),
+           amino_acid = character(), count = integer(), total_valid = integer(),
+           frequency = numeric(), is_reference = logical()),
     "01_position_aa_frequencies.tsv", subdir = "mutation_profile"
   )
 }
@@ -633,6 +676,26 @@ if (!is.null(translations_dir) && dir.exists(translations_dir)) {
 # Per-position mutation summary — drives the cleaner Mutation Landscape
 # ---------------------------------------------------------------------------
 compute_position_summary <- function(aa_freq, mut_long, n_total_samples) {
+  # protein -> segment map (flu proteins are unique to their segment; ebola
+  # rows carry segment=NA/"genome") — attached to the summary at the end so
+  # the dashboard can filter the mutation landscape per segment.
+  protein_segments <- dplyr::bind_rows(
+    if (!is.null(aa_freq) && nrow(aa_freq) > 0 && "segment" %in% names(aa_freq)) {
+      aa_freq |> dplyr::distinct(protein_name, segment)
+    } else {
+      tibble(protein_name = character(), segment = character())
+    },
+    if (nrow(mut_long) > 0 && "segment" %in% names(mut_long)) {
+      mut_long |>
+        dplyr::distinct(protein_name, segment) |>
+        dplyr::filter(!is.na(segment))
+    } else {
+      tibble(protein_name = character(), segment = character())
+    }
+  ) |>
+    dplyr::filter(!is.na(protein_name)) |>
+    dplyr::distinct(protein_name, .keep_all = TRUE)
+
   # Count mutations per position from long mutation table
   mut_counts <- if (nrow(mut_long) > 0) {
     mut_long |>
@@ -698,8 +761,9 @@ compute_position_summary <- function(aa_freq, mut_long, n_total_samples) {
       has_query_mutation = n_query_mutated > 0,
       shannon_entropy = tidyr::replace_na(shannon_entropy, 0)
     ) |>
+    dplyr::left_join(protein_segments, by = "protein_name") |>
     dplyr::select(
-      protein_name, position, reference_aa, total_valid, n_distinct_aa,
+      protein_name, segment, position, reference_aa, total_valid, n_distinct_aa,
       n_mutated, n_query_mutated, n_bg_mutated, mutated_fraction,
       shannon_entropy, has_query_mutation
     )
@@ -719,7 +783,7 @@ mutation_detail <- if (nrow(mutations_long) > 0) {
     dplyr::select(
       sample_id, sample_name, is_query,
       mutation_id, mutation_uid, mutation_label, mutation_type,
-      protein_name, gene_name, position, ref_aa, alt_aa
+      protein_name, gene_name, segment, position, ref_aa, alt_aa
     ) |>
     # Attach per-sample metadata used by the dashboard trajectory
     # (collection_year) and geo-map (country) views.
@@ -733,7 +797,7 @@ mutation_detail <- if (nrow(mutations_long) > 0) {
     sample_id = integer(), sample_name = character(), is_query = logical(),
     mutation_id = integer(), mutation_uid = character(), mutation_label = character(),
     mutation_type = character(), protein_name = character(), gene_name = character(),
-    position = integer(), ref_aa = character(), alt_aa = character(),
+    segment = character(), position = integer(), ref_aa = character(), alt_aa = character(),
     collection_year = numeric(), country = character(), host = character(),
     outbreak = character(), clade = character(), lineage = character()
   )

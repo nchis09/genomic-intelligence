@@ -490,6 +490,10 @@ ALTER TABLE tree_tips ADD COLUMN IF NOT EXISTS is_candidate BOOLEAN DEFAULT FALS
 ALTER TABLE samples ADD COLUMN IF NOT EXISTS subtype TEXT;
 ALTER TABLE samples ADD COLUMN IF NOT EXISTS genoflu_genotype TEXT;
 ALTER TABLE samples ADD COLUMN IF NOT EXISTS genoflu_constellation JSONB;
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS group_id TEXT;
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS constellation_signature TEXT;
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS reassortment_suspected BOOLEAN DEFAULT FALSE;
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS is_novel_constellation BOOLEAN DEFAULT FALSE;
 
 ALTER TABLE reference_genomes ADD COLUMN IF NOT EXISTS segment TEXT;
 ALTER TABLE genes ADD COLUMN IF NOT EXISTS segment TEXT;
@@ -514,8 +518,21 @@ CREATE TABLE IF NOT EXISTS sample_segments (
     genoflu_match_pct REAL,
     genoflu_mismatches INTEGER,
     is_untyped BOOLEAN DEFAULT FALSE,
+    record_species TEXT,
+    constellation_label TEXT,
+    total_deletions INTEGER,
+    total_frameshifts INTEGER,
+    total_stop_codons INTEGER,
+    di_candidate BOOLEAN DEFAULT FALSE,
     UNIQUE(sample_id, segment, record_id)
 );
+
+ALTER TABLE sample_segments ADD COLUMN IF NOT EXISTS record_species TEXT;
+ALTER TABLE sample_segments ADD COLUMN IF NOT EXISTS constellation_label TEXT;
+ALTER TABLE sample_segments ADD COLUMN IF NOT EXISTS total_deletions INTEGER;
+ALTER TABLE sample_segments ADD COLUMN IF NOT EXISTS total_frameshifts INTEGER;
+ALTER TABLE sample_segments ADD COLUMN IF NOT EXISTS total_stop_codons INTEGER;
+ALTER TABLE sample_segments ADD COLUMN IF NOT EXISTS di_candidate BOOLEAN DEFAULT FALSE;
 
 -- influenza_features: flexible per-sample/per-segment markers (cleavage motif,
 -- genotype constellation, mugration region, reassortment flags, seasonal
@@ -713,6 +730,7 @@ CREATE INDEX IF NOT EXISTS idx_mutation_phenotype_evidence_source_id ON mutation
 CREATE INDEX IF NOT EXISTS idx_literature_papers_run_species_status ON literature_papers(run_id, species, domain, status);
 CREATE INDEX IF NOT EXISTS idx_literature_papers_status_qc_score ON literature_papers(status, qc_score);
 CREATE INDEX IF NOT EXISTS idx_samples_run_species_pathogen ON samples(run_id, species, pathogen);
+CREATE INDEX IF NOT EXISTS idx_samples_group_id ON samples(group_id);
 CREATE INDEX IF NOT EXISTS idx_epi_records_dataset_date_country ON epidemiological_records(dataset_id, record_date, country);
 CREATE INDEX IF NOT EXISTS idx_tree_tips_country_date ON tree_tips(country, tip_date);
 CREATE INDEX IF NOT EXISTS idx_geo_admin2 ON geographic_locations(admin2);

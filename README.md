@@ -43,7 +43,8 @@ The pipeline is organised as a **pathogen router**: samples are grouped by the s
 3. **Bioinformatics** — Nextstrain/Augur build per species ([`nextstrain/ebola`](https://github.com/nextstrain/ebola)), plus a model-aware maximum-likelihood tree from the subsampled sequences ([`MAFFT`](https://mafft.cbrc.jp/alignment/software/) + [`IQ-TREE 2`](http://www.iqtree.org/))
 4. **Epidemiological data** — search and download matching disease datasets from the Humanitarian Data Exchange (`rhdx`)
 5. **Literature retrieval** — Europe PMC search per species and evidence domain, PubMed metadata fetch, deduplication, [`ASReview`](https://asreview.nl/) title/abstract screening, open-access PDF download, PDF-to-text conversion, rule-based structured evidence extraction, and evidence QC
-6. **Phenotype annotation** — discover UniProt accessions for the query samples' proteins and annotate them with `UniProtExtractR`, [`rbioapi`](https://cran.r-project.org/package=rbioapi), and Pfam HMM scans ([`HMMER`](http://hmmer.org/)). For segmented pathogens (influenza), a `SEGMENT_MUTATIONS` step first produces reference-relative mutation tables for **every built segment** — all 8 (PB2, PB1, PA, HA, NP, NA, MP, NS) when submitted, or whichever subset the user provided — so HMM/UniProt coverage spans the whole genome, not just HA/NA
+6. **Phenotype annotation** — discover UniProt accessions for the query samples' proteins and annotate them with `UniProtExtractR`, [`rbioapi`](https://cran.r-project.org/package=rbioapi), and Pfam HMM scans ([`HMMER`](http://hmmer.org/)). For segmented pathogens (influenza), a `SEGMENT_MUTATIONS` step first produces reference-relative mutation tables for **every built segment** — all 8 (PB2, PB1, PA, HA, NP, NA, MP, NS) when submitted, or whichever subset the user provided — so HMM/UniProt coverage spans the whole genome, not just HA/NA. Curated-accession discovery is scoped per gene by subtype axis: for an `hXnY` lineage, HA searches all `H{X}N*` entries (mutation data from other NA pairings still informs the same HA subtype), NA searches all `H*N{Y}` entries, and internal proteins sweep the whole species — every hit's provenance (`query_scope` in `discovery.tsv`) distinguishes `same_subtype`, `same_HA_subtype`, `same_NA_subtype`, and `species_wide` matches.
+7. **Segment signatures** (influenza only) — a `SEGMENT_SIGNATURES` stage combines the per-segment mutation tables, `species_assignments.tsv`, the per-record Nextclade classification TSVs (QC fields), isolate metadata and (avian) GenoFLU genotypes into five downstream tables: `constellation.tsv` (per-isolate genotype/lineage label vector PB2|PB1|PA|HA|NP|NA|MP|NS with novel-constellation flags), `reassortment_flags.tsv` (isolates whose segment labels or record-level subtype calls disagree with the group's modal constellation), `di_candidates.tsv` (a defective-interfering *screen* from each record's winning-dataset QC row — large deletions, frameshifts, stop codons, CDS failures; true DI confirmation needs read-level coverage), `markers.tsv` (query mutations joined against the curated `database/flu_markers.yml` catalogue — WHO NAI/PA antiviral-resistance tables, M2 adamantane markers, CDC H5N1 virulence/host-adaptation inventory — each hit carrying phenotype, confidence, coordinate-system caveat and source), and `group_diversity.tsv` (shared-vs-private mutation counts per `group_id` × segment for intra-host / same-site diversity). Skip with `--skip_segment_signatures true`.
 7. **Knowledge warehouse** — start a shared PostgreSQL instance, ingest every species' outputs into the schema defined by `database/knowledge_schema.sql`, then stop the server
 
 Most stages can be turned off individually (for example `--skip_literature` skips the whole literature stage, plus `--skip_phenotype_annotation`, `--skip_hmm_annotation`, `--skip_iqtree`, `--skip_epi_data`, `--skip_knowledge_warehouse`); see `nextflow.config` for the full parameter list.
@@ -119,11 +120,13 @@ Influenza isolates are submitted as **one FASTA record per segment**, all in the
 `metadata.tsv` uses the same format for every pathogen — **one row per sample/isolate** (keyed by `strain`, `sample_id`, `accession` or `name`), which is automatically fanned out to every `LABID_*` segment record. For non-segmented pathogens (Ebola, …) this is simply one row per genome:
 
 ```text
-strain      date         country
-SAMPLE001   2026-03-05   Uganda
-SAMPLE002   2026-03-07   Uganda
-UG_01       2026-01-01   DRC
+strain      date         country   group_id
+SAMPLE001   2026-03-05   Uganda    PT-042
+SAMPLE002   2026-03-05   Uganda    PT-042
+UG_01       2026-01-01   DRC       SITE-KIN-7
 ```
+
+An optional `group_id` column groups isolates that share an epidemiological link — same patient, same household, same sampling site/farm — and powers the `group_diversity.tsv` table (shared vs private mutations within each group × segment) and the warehouse's `samples.group_id` field.
 
 If your records have real GenBank accessions, either use the accession as the record header/metadata id itself, or keep it in an `accession` column — when the pipeline needs to rewrite `accession` to the record id (segment fan-out), the original value is preserved as `genbank_accession`.
 
@@ -201,6 +204,7 @@ Results are published under `--outdir` (default `results/`), mostly one subdirec
 | `results/literature_retrieval/` | One subdirectory per stage: `literature_search`, `literature_metadata`, `literature_deduplicated`, `literature_screened`, `literature_pdfs`, `literature_text`, `literature_evidence`. |
 | `results/evidence_qc/{species}/` | QC report plus `clean/` and `failed/` evidence JSON sets. |
 | `results/phenotype_annotation/{pathogen}_{species}/` | Accession discovery tables, query protein FASTA/mutations, and UniProtExtractR / rbioapi / HMM annotation results. |
+| `results/segment_signatures/{pathogen}_{species}/` | Influenza signature tables: `constellation.tsv`, `reassortment_flags.tsv`, `di_candidates.tsv`, `markers.tsv`, `group_diversity.tsv` (SEGMENT_SIGNATURES stage). |
 | `results/knowledge_warehouse/` | Per-species ingestion logs, the shared PostgreSQL data directory, and a SQL dump of the run's database. |
 
 Additionally, `results/pipeline_info/pipeline_metro_map_*.html` — an auto-generated [nf-metro](https://github.com/seqeralabs/nf-metro) metro-map diagram of the run's actual Nextflow task graph (skipped with a warning if `nf-metro` is unavailable; see Prerequisites).
@@ -236,6 +240,8 @@ Post-run visualisation:
 | `start_shared_db.py` / `stop_shared_db.py` | Start and stop the shared PostgreSQL server. |
 | `run_schemaspy.py` | Generate a SchemaSpy HTML report of the warehouse schema. |
 | `extract_segment_mutations.py` | Produce per-segment mutation tables for segmented pathogens (Nextclade on build alignments, or Auspice branch-mutation walk for augur-based builds). |
+| `flu_segment_signatures.py` | Emit the influenza signature tables (constellation / reassortment / DI screen / marker hits / group diversity) from mutations + assignments + Nextclade QC + metadata + GenoFLU. |
+| `database/flu_markers.yml` | Curated influenza phenotype-marker catalogue (WHO NAI/PA resistance tables, M2 adamantane, CDC H5N1 inventory) — update in repo as WHO/CDC tables are revised. |
 | `extract_query_proteins.py` | Discover UniProt accessions and extract query proteins/mutations for phenotype annotation. |
 | `annotate_uniprotextractr.R` / `annotate_rbioapi.R` | Annotate the discovered proteins with function, GO, pathway, and interaction data. |
 | `parse_hmmscan.py` | Parse `hmmscan` output into Pfam domain, sequence, and summary tables. |

@@ -659,7 +659,8 @@ def _update_samples_from_metadata(conn, run_id, metadata_path):
     with conn.cursor() as cur:
         for row in rows:
             sample = normalize_text(
-                row.get("accession") or row.get("sample_id") or row.get("sample") or row.get("sample_name")
+                row.get("accession") or row.get("sample_id") or row.get("sample")
+                or row.get("sample_name") or row.get("strain")
             )
             if not sample:
                 continue
@@ -685,6 +686,18 @@ def _update_samples_from_metadata(conn, run_id, metadata_path):
                 """,
                 (collection_date, country, admin1, admin2, locality, host, strain, run_id, sample),
             )
+            # group_id: the metadata key is the isolate name (e.g. Sample0001)
+            # — propagate to the isolate row AND its per-segment records
+            # (Sample0001_Seg5) so group queries cover every sample row.
+            group_id = normalize_text(row.get("group_id"))
+            if group_id:
+                cur.execute(
+                    """
+                    UPDATE samples SET group_id = COALESCE(%s, group_id)
+                    WHERE run_id = %s AND (sample_name = %s OR sample_name LIKE %s ESCAPE '\\')
+                    """,
+                    (group_id, run_id, sample, sample + "\\_Seg%"),
+                )
     conn.commit()
     print(f"  Updated {len(rows)} samples from metadata", file=sys.stderr)
 
@@ -3209,15 +3222,16 @@ def load_sample_segments(conn, run_id, results_dir, species=None, pathogen=None)
                 """
                 INSERT INTO sample_segments (
                     sample_id, segment, record_id, dataset_file, qc_score,
-                    coverage, cds_coverage, clade, is_untyped
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    coverage, cds_coverage, clade, is_untyped, record_species
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (sample_id, segment, record_id) DO UPDATE SET
                     dataset_file = EXCLUDED.dataset_file,
                     qc_score = EXCLUDED.qc_score,
                     coverage = EXCLUDED.coverage,
                     cds_coverage = EXCLUDED.cds_coverage,
                     clade = EXCLUDED.clade,
-                    is_untyped = EXCLUDED.is_untyped
+                    is_untyped = EXCLUDED.is_untyped,
+                    record_species = EXCLUDED.record_species
                 """,
                 (
                     iso_id, seg_val, record,
@@ -3227,6 +3241,7 @@ def load_sample_segments(conn, run_id, results_dir, species=None, pathogen=None)
                     parse_float(nrow.get("cdsCoverage")),
                     clade if clade not in ("?", "") else None,
                     is_untyped,
+                    normalize_text(row.get("record_species")),
                 ),
             )
             n_seg += 1
@@ -3459,6 +3474,116 @@ def load_influenza_segment_mutations(conn, run_id, results_dir):
     print(f"  Loaded {loaded} segment mutations for query isolates", file=sys.stderr)
 
 
+def load_flu_signatures(conn, run_id, results_dir, meta_id=None):
+    """results/segment_signatures/<meta.id>/*.tsv — the SEGMENT_SIGNATURES
+    tables — into the sample/sample_segments signature columns and
+    influenza_features for the row-level detail (markers, group diversity)."""
+    sig_dir = Path(results_dir) / "segment_signatures" / (meta_id or "")
+    if not sig_dir.is_dir():
+        print(f"  SKIP flu signatures: no {sig_dir}", file=sys.stderr)
+        return
+    loaded = 0
+    with conn.cursor() as cur:
+        f = sig_dir / "constellation.tsv"
+        if f.exists():
+            for row in read_tsv_or_csv(f):
+                iso, seg = normalize_text(row.get("isolate")), normalize_text(row.get("segment"))
+                sid = _sample_id(cur, run_id, iso)
+                if not sid or not seg:
+                    continue
+                cur.execute(
+                    "UPDATE sample_segments SET constellation_label = %s WHERE sample_id = %s AND segment = %s",
+                    (normalize_text(row.get("label")), sid, seg),
+                )
+                cur.execute(
+                    "UPDATE samples SET constellation_signature = %s, is_novel_constellation = %s WHERE sample_id = %s",
+                    (normalize_text(row.get("constellation_signature")),
+                     str(row.get("is_novel_constellation", "")).lower() in ("true", "1", "yes"), sid),
+                )
+                _add_influenza_feature(cur, sid, seg, "constellation_label",
+                                       normalize_text(row.get("label")), "segment_signatures",
+                                       confidence=normalize_text(row.get("label_source")))
+                loaded += 1
+
+        f = sig_dir / "reassortment_flags.tsv"
+        if f.exists():
+            for row in read_tsv_or_csv(f):
+                sid = _sample_id(cur, run_id, normalize_text(row.get("isolate")))
+                if not sid:
+                    continue
+                flagged = str(row.get("reassortment_suspected", "")).lower() in ("true", "1", "yes")
+                cur.execute(
+                    "UPDATE samples SET reassortment_suspected = COALESCE(reassortment_suspected, FALSE) OR %s WHERE sample_id = %s",
+                    (flagged, sid),
+                )
+                if flagged:
+                    _add_influenza_feature(cur, sid, None, "reassortment_reasons",
+                                           normalize_text(row.get("reasons")), "segment_signatures")
+                    loaded += 1
+
+        f = sig_dir / "di_candidates.tsv"
+        if f.exists():
+            for row in read_tsv_or_csv(f):
+                iso = normalize_text(row.get("isolate"))
+                rec = normalize_text(row.get("record"))
+                sid = _sample_id(cur, run_id, iso)
+                if not sid:
+                    continue
+                is_di = str(row.get("di_candidate", "")).lower() in ("true", "1", "yes")
+                cur.execute(
+                    """
+                    UPDATE sample_segments
+                    SET total_deletions = %s, total_frameshifts = %s,
+                        total_stop_codons = %s, di_candidate = %s
+                    WHERE sample_id = %s AND record_id = %s
+                    """,
+                    (parse_int(row.get("total_deletions")),
+                     parse_int(row.get("total_frameshifts")),
+                     parse_int(row.get("total_stop_codons")),
+                     is_di, sid, rec),
+                )
+                if is_di:
+                    _add_influenza_feature(cur, sid, normalize_text(row.get("segment")),
+                                           "di_candidate", normalize_text(row.get("reasons")),
+                                           "segment_signatures")
+                    loaded += 1
+
+        f = sig_dir / "markers.tsv"
+        if f.exists():
+            for row in read_tsv_or_csv(f):
+                sid = _sample_id(cur, run_id, normalize_text(row.get("sample")))
+                if not sid:
+                    continue
+                _add_influenza_feature(
+                    cur, sid, normalize_text(row.get("segment")),
+                    "phenotype_marker", json.dumps(row), "segment_signatures",
+                    confidence=normalize_text(row.get("confidence")),
+                )
+                loaded += 1
+
+        f = sig_dir / "group_diversity.tsv"
+        if f.exists():
+            for row in read_tsv_or_csv(f):
+                gid = normalize_text(row.get("group_id"))
+                seg = normalize_text(row.get("segment"))
+                members = [m.strip() for m in str(row.get("members") or "").split(",") if m.strip()]
+                payload = json.dumps(row)
+                for member in members:
+                    sid = _sample_id(cur, run_id, member)
+                    if not sid:
+                        continue
+                    if gid:
+                        cur.execute(
+                            "UPDATE samples SET group_id = COALESCE(group_id, %s) WHERE sample_id = %s",
+                            (gid, sid),
+                        )
+                    _add_influenza_feature(cur, sid, seg, "group_diversity",
+                                           payload, "segment_signatures")
+                    loaded += 1
+    conn.commit()
+    print(f"  Loaded {loaded} influenza signature rows", file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline output provenance ignore-list
 # ---------------------------------------------------------------------------
@@ -3601,6 +3726,7 @@ def main():
                     load_influenza_features(conn, args.meta_id, results_dir)
                     load_influenza_metadata(conn, args.meta_id, results_dir, species=args.species)
                     load_influenza_segment_mutations(conn, args.meta_id, results_dir)
+                    load_flu_signatures(conn, args.meta_id, results_dir, meta_id=args.meta_id)
 
                 print("Loading mutations...", file=sys.stderr)
                 load_mutations(conn, args.meta_id, results_dir)

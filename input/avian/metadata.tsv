@@ -1,4 +1,4 @@
-strain	date	geo_loc_name	country	sample_type	host	segments
-Sample0001	2026-05-10	Hoima	Uganda	Human Plasma Sample	Human	8
-Sample0002	2026-04-12	Mubende	Uganda	Human Plasma Sample	Human	8
-Sample0003	2026-01-30	Kasese	Uganda	Human Plasma Sample	Human	8
+strain	group_id	date	geo_loc_name	country	sample_type	host	segments
+Sample0001	UGAZ001	2026-05-10	Hoima	Uganda	Human Plasma Sample	Human	8
+Sample0002	UGAZ001	2026-04-12	Mubende	Uganda	Human Plasma Sample	Human	8
+Sample0003	UGAZ002	2026-01-30	Kasese	Uganda	Human Plasma Sample	Human	8

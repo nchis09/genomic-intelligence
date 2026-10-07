@@ -78,11 +78,19 @@ workflow GENOMIC_INTELLIGENCE {
     ch_nextclade_aligned_all = CLASSIFICATION.out.aligned
         .collect()
 
+    // All Nextclade TSVs (one per sample x dataset) — broadcast so the
+    // influenza signature stage can read per-record QC/clade columns; the
+    // script keys each record to its own best_dataset_file.
+    ch_nextclade_tsv_all = CLASSIFICATION.out.tsv
+        .map { _meta, tsv -> tsv }
+        .collect()
+
     PATHOGEN_ROUTER(
         CLASSIFICATION.out.species_groups,
         ch_nextclade_json_all,
         CLASSIFICATION.out.assignments,
-        ch_nextclade_aligned_all
+        ch_nextclade_aligned_all,
+        ch_nextclade_tsv_all
     )
 
     //
@@ -131,24 +139,22 @@ workflow GENOMIC_INTELLIGENCE {
                 .map { meta, kw_dir, duckdb_file -> tuple(meta, duckdb_file) }
                 .set { ch_mutation_profile }
 
-            // Derive translations directory from Nextstrain/Nextclade outputs.
-            // Path layout is per-pathogen: Ebola publishes
-            // nextstrain_ebola/<species>/results/<species>/translations while
-            // avian flu's segment-focused build nests under
-            // avian_flu/<subtype>/results/<subtype>/<segment>/<time>/translations
-            // (glob any level) — fall back to NO_TRANSLATIONS when absent.
+            // Derive translations root from Nextstrain/Nextclade outputs — the
+            // profile script recurses and keeps only */translations/*.fasta,
+            // tagging each with its segment. Pass a ROOT per pathogen:
+            //   ebola    nextstrain_ebola/<sp>/results/<sp>/translations (files directly inside)
+            //   avian    avian_flu/<sp>/results/<sp>      (<seg>/<time>/translations nested)
+            //   seasonal seasonal_flu/<sp>/builds        (<build>/<seg>/translations nested)
+            // — fall back to NO_TRANSLATIONS when absent.
             ch_translations = ch_knowledge_db
                 .map { meta, kw_dir ->
                     def trans = null
                     if (meta.pathogen == 'orthoebolavirus') {
                         trans = file("${params.outdir}/nextstrain_ebola/${meta.species}/results/${meta.species}/translations")
                     } else if (meta.pathogen == 'avian_influenza') {
-                        trans = file("${params.outdir}/avian_flu/${meta.species}/results/${meta.species}/ha/all-time/translations")
+                        trans = file("${params.outdir}/avian_flu/${meta.species}/results/${meta.species}")
                     } else if (meta.pathogen == 'influenza') {
-                        // seasonal-flu writes translations under the snakemake
-                        // workdir at builds/<build>/<segment>/translations — keep
-                        // NO_TRANSLATIONS until a mutation-profile stage is wired.
-                        trans = null
+                        trans = file("${params.outdir}/seasonal_flu/${meta.species}/builds")
                     }
                     (trans && trans.exists()) ? trans : file("NO_TRANSLATIONS")
                 }

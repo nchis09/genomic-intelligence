@@ -1,0 +1,635 @@
+# Influenza phenotype marker catalogue
+#
+# Curated mutation -> phenotype catalogue used by flu_segment_signatures.py to
+# screen per-segment query mutations for known antiviral-resistance,
+# host-adaptation and virulence markers.
+#
+# UPDATE PROCEDURE: this file is a repo-committed snapshot of published
+# surveillance tables, not a live feed. When a source table is revised,
+# transcribe the new/changed entries here and bump `source_date` in the
+# entry's `source` block and in `catalog_meta.table_dates`.
+#
+# Sources:
+#   * WHO GISRS NAI marker table — "Summary of neuraminidase amino acid
+#     substitutions associated with reduced inhibition by neuraminidase
+#     inhibitors" (who.int > Global Influenza Programme > antiviral
+#     susceptibility), 07.03.2023 update.
+#   * WHO GISRS PA marker table — "Summary of polymerase acidic protein (PA)
+#     amino acid substitutions assessed for their effects on baloxavir
+#     susceptibility", 28.11.2025 update.
+#   * WHO M2 inhibitor page — adamantane resistance substitutions in the M2
+#     transmembrane domain (residues 26-34).
+#   * CDC H5N1 Genetic Changes Inventory (WHO CC Atlanta, June 2012 release)
+#     — amino acid changes with phenotypic effects in H5N1 viruses.
+#
+# Field reference:
+#   gene / segment      gene symbol and genome segment
+#   position / alt      codon position and substituted amino acid(s)
+#   category            antiviral_resistance | host_adaptation | virulence |
+#                       antigenic | receptor_binding
+#   phenotype           short human-readable phenotype statement
+#   drug                affected drug (resistance markers only)
+#   effect              resistance | reduced_susceptibility | associated —
+#                       the WHO evidence tier wording
+#   confidence          established (clinical/surveillance + phenotypic data)
+#                       | suspected (in-vitro / RG only)
+#   coordinate_system   segment_cds  — position counted from segment CDS start
+#                                    (matches our mutation tables directly)
+#                       n1_numbering — WHO convention: NA positions are given
+#                                    in N1 numbering regardless of subtype
+#                       h_numbering  — HA positions in the mature-protein
+#                                    numbering used by H3/H5 literature
+#                                    (excludes signal peptide)
+#   subtype_scope       subtype(s) the marker was characterized in; matching
+#                       still reports cross-subtype hits with a caveat
+#   refs                representative citations (PMIDs or source-table refs)
+
+catalog_meta:
+  name: influenza_markers
+  version: "1.0"
+  created: 2025-12
+  sources:
+    - id: who_nai_table
+      url: https://www.who.int/teams/global-influenza-programme/laboratory-network/quality-assurance/antiviral-susceptibility-influenza/neuraminidase-inhibitor
+      table_date: 2023-03-07
+    - id: who_pa_table
+      url: https://www.who.int/teams/global-influenza-programme/laboratory-network/quality-assurance/antiviral-susceptibility-influenza
+      table_date: 2025-11-28
+    - id: who_m2_page
+      url: https://www.who.int/teams/global-influenza-programme/laboratory-network/quality-assurance/antiviral-susceptibility-influenza
+      table_date: 2024-01-01
+    - id: cdc_h5n1_inventory
+      url: https://archive.cdc.gov/www_cdc_gov/flu/avianflu/h5n1-genetic-changes.htm
+      table_date: 2012-06-26
+
+markers:
+
+  # ---------------------------------------------------------------------
+  # M2 inhibitors (adamantanes) — M2 transmembrane domain, residues 26-34.
+  # WHO: S31N dominates currently circulating seasonal A viruses (>99%);
+  # M2 inhibitors are ineffective against influenza B.
+  # ---------------------------------------------------------------------
+  - gene: M2
+    segment: mp
+    position: 26
+    alt: [F]
+    category: antiviral_resistance
+    phenotype: "Amantadine/rimantadine resistance (M2 transmembrane domain)"
+    drug: amantadine, rimantadine
+    effect: resistance
+    confidence: established
+    coordinate_system: segment_cds
+    source: who_m2_page
+    refs: ["WHO M2 page"]
+
+  - gene: M2
+    segment: mp
+    position: 27
+    alt: [A, G, D, E]
+    category: antiviral_resistance
+    phenotype: "Amantadine/rimantadine resistance (M2 transmembrane domain)"
+    drug: amantadine, rimantadine
+    effect: resistance
+    confidence: established
+    coordinate_system: segment_cds
+    source: who_m2_page
+    refs: ["WHO M2 page"]
+
+  - gene: M2
+    segment: mp
+    position: 30
+    alt: [T, V]
+    category: antiviral_resistance
+    phenotype: "Amantadine/rimantadine resistance (M2 transmembrane domain)"
+    drug: amantadine, rimantadine
+    effect: resistance
+    confidence: established
+    coordinate_system: segment_cds
+    source: who_m2_page
+    refs: ["WHO M2 page"]
+
+  - gene: M2
+    segment: mp
+    position: 31
+    alt: [N]
+    category: antiviral_resistance
+    phenotype: "Amantadine/rimantadine resistance — most common M2 marker (>99% of circulating seasonal A)"
+    drug: amantadine, rimantadine
+    effect: resistance
+    confidence: established
+    coordinate_system: segment_cds
+    source: who_m2_page
+    refs: ["WHO M2 page"]
+
+  - gene: M2
+    segment: mp
+    position: 34
+    alt: [E]
+    category: antiviral_resistance
+    phenotype: "Amantadine/rimantadine resistance (M2 transmembrane domain)"
+    drug: amantadine, rimantadine
+    effect: resistance
+    confidence: established
+    coordinate_system: segment_cds
+    source: who_m2_page
+    refs: ["WHO M2 page"]
+
+  # ---------------------------------------------------------------------
+  # NA inhibitors — WHO NAI table. Positions are N1-numbering convention
+  # (WHO tables report all subtype positions in N1 numbering).
+  # ---------------------------------------------------------------------
+  - gene: NA
+    segment: na
+    position: 117
+    alt: [R]
+    category: antiviral_resistance
+    phenotype: "Reduced inhibition by zanamivir/peramivir (H1N1pdm09)"
+    drug: zanamivir, peramivir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm]
+    source: who_nai_table
+    refs: ["WHO NAI table (H1N1pdm09: I117R)"]
+
+  - gene: NA
+    segment: na
+    position: 119
+    alt: [A, D, G, V]
+    category: antiviral_resistance
+    phenotype: "Reduced/highly reduced inhibition by NAI (E119V highly reduced oseltamivir inhibition)"
+    drug: oseltamivir, zanamivir, peramivir, laninamivir
+    effect: reduced_susceptibility
+    confidence: established
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm, h3n2, h5n1]
+    source: who_nai_table
+    refs: ["WHO NAI table (E119A/D/G/V)"]
+
+  - gene: NA
+    segment: na
+    position: 198
+    alt: [N, E, K]
+    category: antiviral_resistance
+    phenotype: "Reduced inhibition by oseltamivir (loss of N-linked glycosylation site)"
+    drug: oseltamivir, peramivir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm, h3n2, h5n1]
+    source: who_nai_table
+    refs: ["WHO NAI table (D198N/E/K)"]
+
+  - gene: NA
+    segment: na
+    position: 222
+    alt: [R, V, T]
+    category: antiviral_resistance
+    phenotype: "Reduced inhibition by NAI (I222R/V/T in N1 numbering; I223R/V/T in N2 numbering)"
+    drug: oseltamivir, zanamivir, peramivir, laninamivir
+    effect: reduced_susceptibility
+    confidence: established
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm, h5n1, h7n9]
+    source: who_nai_table
+    refs: ["WHO NAI table (I222R/V/T)"]
+
+  - gene: NA
+    segment: na
+    position: 246
+    alt: [G, N, R]
+    category: antiviral_resistance
+    phenotype: "Reduced inhibition by oseltamivir (S246N/G/R in N1 numbering; S247G/N/R in N2 numbering)"
+    drug: oseltamivir, zanamivir, peramivir
+    effect: reduced_susceptibility
+    confidence: established
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm, h5n1]
+    source: who_nai_table
+    refs: ["WHO NAI table (S246G/N/R)"]
+
+  - gene: NA
+    segment: na
+    position: 274
+    alt: [Y]
+    category: antiviral_resistance
+    phenotype: "Highly reduced inhibition by oseltamivir + reduced peramivir — clinically relevant (H275Y N1 = H274Y N2)"
+    drug: oseltamivir, peramivir
+    effect: resistance
+    confidence: established
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm, h5n1, h7n9]
+    source: who_nai_table
+    refs: ["WHO NAI table (H275Y; bolded as clinically relevant)"]
+
+  - gene: NA
+    segment: na
+    position: 276
+    alt: [D]
+    category: antiviral_resistance
+    phenotype: "Reduced inhibition by oseltamivir (E276D; N1 numbering)"
+    drug: oseltamivir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm]
+    source: who_nai_table
+    refs: ["WHO NAI table (E276D)"]
+
+  - gene: NA
+    segment: na
+    position: 292
+    alt: [K, R]
+    category: antiviral_resistance
+    phenotype: "Reduced inhibition by oseltamivir/peramivir (R292K; N1 numbering — severe in N2 viruses)"
+    drug: oseltamivir, peramivir
+    effect: reduced_susceptibility
+    confidence: established
+    coordinate_system: n1_numbering
+    subtype_scope: [h3n2, h5n1]
+    source: who_nai_table
+    refs: ["WHO NAI table (R292K/R293K)"]
+
+  - gene: NA
+    segment: na
+    position: 294
+    alt: [S]
+    category: antiviral_resistance
+    phenotype: "Reduced/highly reduced inhibition by oseltamivir (N295S N1 = N294S N2)"
+    drug: oseltamivir
+    effect: reduced_susceptibility
+    confidence: established
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm, h5n1]
+    source: who_nai_table
+    refs: ["WHO NAI table (N295S)"]
+
+  - gene: NA
+    segment: na
+    position: 371
+    alt: [K]
+    category: antiviral_resistance
+    phenotype: "Reduced inhibition by oseltamivir (R371K; N1 numbering)"
+    drug: oseltamivir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: n1_numbering
+    subtype_scope: [h3n2]
+    source: who_nai_table
+    refs: ["WHO NAI table (R371K)"]
+
+  - gene: NA
+    segment: na
+    position: 427
+    alt: [T]
+    category: antiviral_resistance
+    phenotype: "Reduced inhibition by oseltamivir (I427T; N1 numbering)"
+    drug: oseltamivir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm]
+    source: who_nai_table
+    refs: ["WHO NAI table (I427T)"]
+
+  - gene: NA
+    segment: na
+    position: 436
+    alt: [N]
+    category: antiviral_resistance
+    phenotype: "Reduced inhibition by oseltamivir/zanamivir (I436N); combined H275Y+I436N reported"
+    drug: oseltamivir, zanamivir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: n1_numbering
+    subtype_scope: [h1n1pdm]
+    source: who_nai_table
+    refs: ["WHO NAI table (I436N)"]
+
+  # ---------------------------------------------------------------------
+  # PA endonuclease inhibitor (baloxavir) — WHO PA table (Nov 2025).
+  # EC50 fold-change >3 provisionally considered reduced susceptibility.
+  # Positions are PA segment-CDS numbering (consistent across subtypes).
+  # ---------------------------------------------------------------------
+  - gene: PA
+    segment: pa
+    position: 23
+    alt: [K, R, G]
+    category: antiviral_resistance
+    phenotype: "Reduced susceptibility to baloxavir (PA E23 substitutions)"
+    drug: baloxavir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h1n1, h1n1pdm, h5n1]
+    source: who_pa_table
+    refs: ["WHO PA table (E23K/R/G)"]
+
+  - gene: PA
+    segment: pa
+    position: 34
+    alt: [R, I]
+    category: antiviral_resistance
+    phenotype: "Reduced susceptibility to baloxavir (K34R/M34I in type B numbering)"
+    drug: baloxavir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: segment_cds
+    source: who_pa_table
+    refs: ["WHO PA table (K34R, M34I)"]
+
+  - gene: PA
+    segment: pa
+    position: 36
+    alt: [V]
+    category: antiviral_resistance
+    phenotype: "Reduced susceptibility to baloxavir (A36V)"
+    drug: baloxavir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h1n1]
+    source: who_pa_table
+    refs: ["WHO PA table (A36V)"]
+
+  - gene: PA
+    segment: pa
+    position: 37
+    alt: [T]
+    category: antiviral_resistance
+    phenotype: "Reduced susceptibility to baloxavir (A37T; H1N1pdm09 + H5N1)"
+    drug: baloxavir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h1n1pdm, h5n1]
+    source: who_pa_table
+    refs: ["WHO PA table (A37T)"]
+
+  - gene: PA
+    segment: pa
+    position: 38
+    alt: [T, M, F, S, L, N, V]
+    category: antiviral_resistance
+    phenotype: "Reduced susceptibility to baloxavir — canonical cap-dependent endonuclease resistance site (I38T/M are the most frequent clinical markers)"
+    drug: baloxavir
+    effect: reduced_susceptibility
+    confidence: established
+    coordinate_system: segment_cds
+    subtype_scope: [h1n1, h1n1pdm, h3n2, h5n1, vic]
+    source: who_pa_table
+    refs: ["WHO PA table (I38T/M/F/S/L/N/V)"]
+
+  - gene: PA
+    segment: pa
+    position: 119
+    alt: [D]
+    category: antiviral_resistance
+    phenotype: "Reduced susceptibility to baloxavir (E119D)"
+    drug: baloxavir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h1n1]
+    source: who_pa_table
+    refs: ["WHO PA table (E119D)"]
+
+  - gene: PA
+    segment: pa
+    position: 198
+    alt: [K]
+    category: antiviral_resistance
+    phenotype: "Reduced susceptibility to baloxavir (E198K)"
+    drug: baloxavir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h1n1]
+    source: who_pa_table
+    refs: ["WHO PA table (E198K)"]
+
+  - gene: PA
+    segment: pa
+    position: 199
+    alt: [S, R]
+    category: antiviral_resistance
+    phenotype: "Reduced susceptibility to baloxavir (E199S/G199R)"
+    drug: baloxavir
+    effect: reduced_susceptibility
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h1n1pdm]
+    source: who_pa_table
+    refs: ["WHO PA table (E199S, G199R)"]
+
+  # ---------------------------------------------------------------------
+  # Host adaptation / mammalian virulence — CDC H5N1 Genetic Changes
+  # Inventory core entries (polymerase + accessory genes).
+  # Coordinates are segment-CDS numbering.
+  # ---------------------------------------------------------------------
+  - gene: PB2
+    segment: pb2
+    position: 271
+    alt: [A]
+    category: host_adaptation
+    phenotype: "Enhanced polymerase activity / mammalian adaptation (PB2 T271A)"
+    effect: associated
+    confidence: established
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory (PB2 T271A)"]
+
+  - gene: PB2
+    segment: pb2
+    position: 591
+    alt: [K, R]
+    category: host_adaptation
+    phenotype: "Increased polymerase activity and virulence in mammals (PB2 Q591K/R)"
+    effect: associated
+    confidence: established
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1, h9n2]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory (PB2 Q591K)"]
+
+  - gene: PB2
+    segment: pb2
+    position: 622
+    alt: [G]
+    category: host_adaptation
+    phenotype: "Increased polymerase activity and virulence in mice (PB2 D622G)"
+    effect: associated
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory / EID Peru table (PB2 D622G)"]
+
+  - gene: PB2
+    segment: pb2
+    position: 627
+    alt: [K, V]
+    category: host_adaptation
+    phenotype: "Mammalian adaptation — increased polymerase activity, replication and virulence in mammals (PB2 E627K; E627V milder)"
+    effect: associated
+    confidence: established
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1, h7n9, h9n2]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory (PB2 E627K/V)"]
+
+  - gene: PB2
+    segment: pb2
+    position: 701
+    alt: [N]
+    category: host_adaptation
+    phenotype: "Increased polymerase activity, replication efficiency, virulence and contact transmission in mammals (PB2 D701N)"
+    effect: associated
+    confidence: established
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory (PB2 D701N)"]
+
+  - gene: PB1
+    segment: pb1
+    position: 99
+    alt: [D]
+    category: virulence
+    phenotype: "Increased virulence in mice (PB1 D99N — reported as D99N/D9N in some N-terminal notations)"
+    effect: associated
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["EID Peru table (PB1 D9N)"]
+
+  - gene: PB1
+    segment: pb1
+    position: 215
+    alt: [A]
+    category: virulence
+    phenotype: "Increased virulence in mice (PB1 T215A)"
+    effect: associated
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["EID Peru table (PB1 T215A)"]
+
+  - gene: PB1-F2
+    segment: pb1
+    position: 66
+    alt: [S]
+    category: virulence
+    phenotype: "Enhanced replication, virulence and antiviral response modulation in mammals (PB1-F2 N66S)"
+    effect: associated
+    confidence: established
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1, h1n1_1918]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory (PB1-F2 N66S)"]
+
+  - gene: NP
+    segment: np
+    position: 184
+    alt: [K]
+    category: virulence
+    phenotype: "Increased replication in avian cells and virulence in chickens (NP A184K)"
+    effect: associated
+    confidence: suspected
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["EID Peru table (NP A184K)"]
+
+  - gene: NS1
+    segment: ns
+    position: 42
+    alt: [S]
+    category: virulence
+    phenotype: "Increased virulence and decreased antiviral response in mice (NS1 P42S)"
+    effect: associated
+    confidence: established
+    coordinate_system: segment_cds
+    subtype_scope: [h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory / EID Peru table (NS1 P42S)"]
+
+  # ---------------------------------------------------------------------
+  # HA receptor-binding / antigenic markers — CDC H5N1 inventory.
+  # Coordinates are mature-HA (H5/H3) numbering: our mutation tables use
+  # segment-CDS positions (HA0 including signal peptide), so the matcher
+  # applies the signal-peptide offset derived from the segment genemap.
+  # ---------------------------------------------------------------------
+  - gene: HA
+    segment: ha
+    position: 226
+    alt: [L, I]
+    category: receptor_binding
+    phenotype: "Increased binding to alpha2-6 (human-type) receptors — mammalian adaptation (HA Q226L, H3 numbering)"
+    effect: associated
+    confidence: established
+    coordinate_system: h_numbering
+    subtype_scope: [h3n2, h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory (HA 226 receptor switch)"]
+
+  - gene: HA
+    segment: ha
+    position: 228
+    alt: [S]
+    category: receptor_binding
+    phenotype: "Increased binding to alpha2-6 (human-type) receptors (HA G228S, H3 numbering)"
+    effect: associated
+    confidence: established
+    coordinate_system: h_numbering
+    subtype_scope: [h3n2, h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory (HA 228 receptor switch)"]
+
+  - gene: HA
+    segment: ha
+    position: 222
+    alt: [Q]
+    category: receptor_binding
+    phenotype: "Increased binding to alpha2-3 and alpha2-6 receptors (HA K222Q/S222R region, H5 numbering)"
+    effect: associated
+    confidence: suspected
+    coordinate_system: h_numbering
+    subtype_scope: [h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["EID Peru table (HA K218Q/S223R region)"]
+
+  - gene: HA
+    segment: ha
+    position: 156
+    alt: [A]
+    category: receptor_binding
+    phenotype: "Increased binding to alpha2-6, increased transmission in guinea pigs (HA T156A, H5 numbering)"
+    effect: associated
+    confidence: suspected
+    coordinate_system: h_numbering
+    subtype_scope: [h5n1]
+    source: cdc_h5n1_inventory
+    refs: ["EID Peru table (HA T156A)"]
+
+  # Polybasic cleavage site — presence of a multibasic motif at the HA1/HA2
+  # cleavage junction is required for the HPAI phenotype (H5/H7). This is a
+  # motif marker, not a point substitution: the matcher reports it via the
+  # cleavage-site attributes in the segment build (cleavage-site.json) when
+  # available rather than via aaSubstitutions matching.
+  - gene: HA
+    segment: ha
+    type: motif
+    position: null
+    alt: [RRKKR, RKKR, KRRKR]
+    category: virulence
+    phenotype: "Polybasic cleavage motif at HA1/HA2 junction — required for highly pathogenic avian influenza phenotype"
+    effect: associated
+    confidence: established
+    coordinate_system: h_numbering
+    subtype_scope: [h5n1, h7n9]
+    source: cdc_h5n1_inventory
+    refs: ["CDC H5N1 Inventory (polybasic cleavage site)"]

@@ -64,9 +64,9 @@ SELECT
     r.record_date,
     r.report_date,
     r.reference_date,
-    CAST(COALESCE(r.country, gl1.country, gl2.country) AS TEXT) AS country,
-    CAST(COALESCE(r.admin1, gl1.admin1, gl2.admin1) AS TEXT) AS admin1,
-    CAST(COALESCE(r.admin2, gl1.admin2, gl2.admin2) AS TEXT) AS admin2,
+    CAST(COALESCE(CAST(r.country AS TEXT), CAST(gl1.country AS TEXT), CAST(gl2.country AS TEXT)) AS TEXT) AS country,
+    CAST(COALESCE(CAST(r.admin1 AS TEXT), CAST(gl1.admin1 AS TEXT), CAST(gl2.admin1 AS TEXT)) AS TEXT) AS admin1,
+    CAST(COALESCE(CAST(r.admin2 AS TEXT), CAST(gl1.admin2 AS TEXT), CAST(gl2.admin2 AS TEXT)) AS TEXT) AS admin2,
     r.location_id,
     r.cases,
     r.deaths,
@@ -78,8 +78,8 @@ SELECT
     r.case_classification,
     d.dataset_id,
     d.dataset_name,
-    CAST(COALESCE(gl1.latitude, gl2.latitude) AS DOUBLE) AS latitude,
-    CAST(COALESCE(gl1.longitude, gl2.longitude) AS DOUBLE) AS longitude
+    CAST(COALESCE(CAST(gl1.latitude AS DOUBLE), CAST(gl2.latitude AS DOUBLE)) AS DOUBLE) AS latitude,
+    CAST(COALESCE(CAST(gl1.longitude AS DOUBLE), CAST(gl2.longitude AS DOUBLE)) AS DOUBLE) AS longitude
 FROM epidemiological_records r
 JOIN epidemiological_datasets d ON r.dataset_id = d.dataset_id
 LEFT JOIN geographic_locations gl1 ON CAST(r.location_id AS BIGINT) = gl1.location_id

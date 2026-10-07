@@ -398,13 +398,51 @@ GENE_SEARCH_MAP = {
     "VP24": "VP24", "L": "L",
     # Influenza CDS names (Nextclade segment datasets / augur genemaps)
     # → UniProt gene names. HA subproducts and spliced ORFs map onto the
-    # UniProt entry that carries their curated features.
+    # UniProt entry that carries their curated features. UniProt indexes
+    # both matrix proteins under 'M' (gene:M1 returns nothing) and both
+    # non-structural proteins under 'NS' — GENE_PROTEIN_FILTER splits them.
     "SigPep": "HA", "HA1": "HA", "HA2": "HA", "HA": "HA",
     "NA": "NA", "PB2": "PB2", "PB1": "PB1",
     "PA": "PA", "PA-X": "PA",
-    "M1": "M1", "M2": "M2",
-    "NS1": "NS1", "NEP": "NS2",
+    "M1": "M", "M2": "M",
+    "NS1": "NS", "NEP": "NS",
+    "PB1-F2": "PB1",
 }
+
+# When a broad UniProt gene name covers several distinct proteins, keep
+# only entries whose protein name identifies the query's protein — else
+# e.g. an M2 accession would be annotated as if it were M1 (different
+# protein, different coordinates).
+GENE_PROTEIN_FILTER = {
+    "M1":     ("matrix protein 1", "protein m1"),
+    "M2":     ("matrix protein 2", "proton channel", "protein m2"),
+    "NEP":    ("export", "non-structural protein 2", "protein ns2"),
+    "PA-X":   ("pa-x", "protein x", "x-orf"),
+    "PB1-F2": ("pb1-f2",),
+}
+
+# Inverse of the above — the broad gene name (PA, PB1) must not capture
+# the alternate-frame protein entries that share its gene name.
+GENE_PROTEIN_EXCLUDE = {
+    "PA":  ("pa-x", "protein x"),
+    "PB1": ("pb1-f2",),
+    "M1":  ("matrix protein 2", "proton channel", "protein m2"),
+    "NS1": ("export", "non-structural protein 2"),
+}
+
+
+def _protein_name_ok(gene, protein_name):
+    """True if the UniProt entry's protein name is compatible with the
+    query CDS label (positive needle + negative exclusion, both against
+    lowercased text)."""
+    pname = (protein_name or "").lower()
+    needles = GENE_PROTEIN_FILTER.get(gene)
+    if needles and not any(nd in pname for nd in needles):
+        return False
+    excl = GENE_PROTEIN_EXCLUDE.get(gene)
+    if excl and any(nd in pname for nd in excl):
+        return False
+    return True
 
 ORGANISM_MAP = {
     "bdbv": "Bundibugyo ebolavirus", "ebov": "Zaire ebolavirus",
@@ -451,6 +489,56 @@ GENUS_QUERY_MAP = {
     "vic": "taxonomy_id:11520",
 }
 
+# Flu A lineage tokens encode both subtype axes ("h3n2" -> H3 + N2).
+FLU_SUBTYPE_RE = re.compile(r"^h(\d+)n(\d+|x)[a-z0-9]*$", re.IGNORECASE)
+
+# Gene-class constants for per-gene scope selection (post-GENE_SEARCH_MAP).
+_SCOPE_HA = "HA"
+_SCOPE_NA = "NA"
+
+
+def scope_fragments(species, species_query, genus_query, search_gene):
+    """Ordered [(fragment, scope_label)] for one gene's reviewed sweep.
+
+    Influenza A lineages scope surface glycoproteins by subtype axis — a
+    mutation curated on an H3N8 isolate transfers to an H3N2 query because
+    HA biology is H-defined, likewise N2 across HA pairings. UniProt has no
+    "H3" taxid (subtype taxids are full HxNy combos), so the axis scopes
+    are expressed as organism_name token wildcards (verified supported).
+    Internal proteins are subtype-agnostic -> species-wide genus scope.
+    Non-flu species get the genus fragment as 'cross_species' tier.
+    'cross_species' fragments are fallback-only (queried solely when all
+    earlier fragments returned nothing — preserves the ebola exclusion
+    fix and gives flu HA/NA a last resort for obscure subtypes); every
+    other scope is unioned unconditionally.
+    """
+    frags = []
+    if species_query:
+        frags.append((species_query, "same_subtype"))
+    m = FLU_SUBTYPE_RE.match(species or "")
+    if m:
+        h, n = m.group(1), m.group(2)
+        if search_gene == _SCOPE_HA:
+            frags.append((f"organism_name:H{h}N*", "same_HA_subtype"))
+            if genus_query:
+                frags.append((genus_query, "cross_species"))
+        elif search_gene == _SCOPE_NA and n != "x":
+            frags.append((f"organism_name:H*N{n}", "same_NA_subtype"))
+            if genus_query:
+                frags.append((genus_query, "cross_species"))
+        else:
+            if genus_query:
+                frags.append((genus_query, "species_wide"))
+    elif genus_query:
+        frags.append((genus_query, "cross_species"))
+    # dedup identical fragments (e.g. h5nx/vic species == genus), keep order
+    seen, out = set(), []
+    for frag, scope in frags:
+        if frag not in seen:
+            seen.add(frag)
+            out.append((frag, scope))
+    return out
+
 
 def search_uniprot_by_organism(org_term, genome_genes):
     """
@@ -484,6 +572,8 @@ def search_uniprot_by_organism(org_term, genome_genes):
                 for line in lines[1:]:
                     cols = line.split("\t")
                     row = dict(zip(header, cols))
+                    if not _protein_name_ok(gene, row.get("Protein names", "")):
+                        continue
                     entries.append({
                         "accession": row.get("Entry", ""),
                         "gene": row.get("Gene Names", ""),
@@ -502,7 +592,7 @@ def search_uniprot_by_organism(org_term, genome_genes):
     return results
 
 
-def search_uniprot_reviewed_canonical(organism_name, genus_name, genome_genes):
+def search_uniprot_reviewed_canonical(species, organism_name, genus_name, genome_genes):
     """
     Find reviewed (Swiss-Prot) canonical UniProt accessions per gene.
 
@@ -512,19 +602,21 @@ def search_uniprot_reviewed_canonical(organism_name, genus_name, genome_genes):
     by the xref/organism discovery strategies above. This strategy runs
     unconditionally for every gene to surface those curated accessions.
 
-    First tries the exact species organism name; if no reviewed entry
-    exists for that species (common for e.g. Bundibugyo/Tai Forest/Reston
-    ebolavirus, which have sparse Swiss-Prot coverage), falls back to a
-    broader genus-level search and picks up a reviewed entry from a
-    related species instead (tagged as cross-species).
+    Per-gene query fragments come from scope_fragments(): influenza A
+    surface genes additionally query their subtype axis (H{h}N* for HA,
+    H*N{n} for NA) so curation from related subtype pairings is captured,
+    while internal genes sweep the whole species. 'cross_species' fragments
+    are fallback-only — for ebolavirus that preserves the deliberate
+    exclusion of related-species accessions (the fix that stopped identical
+    rows appearing across species' results).
 
-    NOTE: cross-species entries may use different residue numbering than
+    NOTE: broader-scope entries may use different residue numbering than
     the reference sequence used for phylogenetic mutation calling, so
     query_mutation_match position overlaps for those rows are best-effort
     and not guaranteed to be biologically equivalent positions.
 
     Returns: dict { gene: [ { accession, gene, protein_name, organism,
-                               cross_species } ] }
+                               cross_species, scope } ] }
     """
     def _search(org_term, gene_query):
         query = f'reviewed:true AND ({org_term}) AND (gene:{gene_query})'
@@ -562,23 +654,29 @@ def search_uniprot_reviewed_canonical(organism_name, genus_name, genome_genes):
 
     for gene in genome_genes:
         search_gene = GENE_SEARCH_MAP.get(gene, gene)
+        frags = scope_fragments(species, org_term, genus_term, search_gene)
+        # Union across fragments; 'cross_species' is fallback-only (skip if
+        # a narrower scope already yielded entries — ebola semantics).
         entries = []
-        cross_species = False
-
-        if org_term:
-            entries = _search(org_term, search_gene)
-
-        if not entries and genus_term:
-            entries = _search(genus_term, search_gene)
-            cross_species = True
-
-        for e in entries:
-            e["cross_species"] = cross_species
+        seen_accs = set()
+        for frag, scope in frags:
+            if scope == "cross_species" and entries:
+                continue
+            for e in _search(frag, search_gene):
+                if not _protein_name_ok(gene, e.get("protein_name")):
+                    continue
+                acc = e.get("accession", "")
+                if acc in seen_accs:
+                    continue
+                seen_accs.add(acc)
+                e["scope"] = scope
+                e["cross_species"] = scope != "same_subtype"
+                entries.append(e)
 
         results[gene] = entries
         if entries:
-            label = "cross-species fallback" if cross_species else "species-specific"
-            print(f"    reviewed_canonical:{gene} → {len(entries)} entries ({label})", file=sys.stderr)
+            scopes = sorted({e["scope"] for e in entries})
+            print(f"    reviewed_canonical:{gene} → {len(entries)} entries (scopes: {', '.join(scopes)})", file=sys.stderr)
         else:
             print(f"    reviewed_canonical:{gene} → no reviewed entries found (species or genus)", file=sys.stderr)
         time.sleep(0.3)
@@ -888,36 +986,39 @@ def main():
         genus_fallback = GENUS_FALLBACK_MAP.get(args.species, GENUS_FALLBACK_NAME)
         genus_query = GENUS_QUERY_MAP.get(args.species) or f'organism_name:"{genus_fallback}"'
         print(f"\n  [Strategy 6] Reviewed-canonical UniProt accessions (species='{organism_name or 'unknown'}' [{species_query or 'none'}], genus fallback='{genus_fallback}' [{genus_query}]):", file=sys.stderr)
-        reviewed_results = search_uniprot_reviewed_canonical(species_query, genus_query, genome_genes)
+        reviewed_results = search_uniprot_reviewed_canonical(args.species, species_query, genus_query, genome_genes)
+        is_influenza = args.species in SPECIES_QUERY_MAP
         n_reviewed = 0
         n_reviewed_excluded = 0
         for gene, entries in reviewed_results.items():
             for e in entries:
+                scope = e.get("scope", "same_subtype")
                 is_xspecies = bool(e.get("cross_species"))
+                # Inclusion rule: influenza deliberately queries subtype-axis
+                # and species-wide scopes — those hits are wanted (an H3N8 HA
+                # annotation informs an H3N2 query). For ebolavirus the
+                # fallback is only a 'cross_species' tier and stays excluded:
+                # substituting a related species' entry produced near-
+                # identical rows across species' results (e.g. the same Zaire
+                # accession annotating bdbv and sudv alike).
+                include = (not is_xspecies) or is_influenza
                 reason = (
-                    f"reviewed_canonical_crossspecies_excluded:{e.get('organism','')}:{gene}"
-                    if is_xspecies
-                    else f"reviewed_canonical:{e.get('organism','')}:{gene}"
+                    f"reviewed_canonical_{scope}_excluded:{e.get('organism','')}:{gene}"
+                    if not include
+                    else f"reviewed_canonical_{scope}:{e.get('organism','')}:{gene}"
                 )
-                # Cross-species fallback hits are recorded in discovery.tsv for
-                # transparency/debugging, but deliberately NOT added to the
-                # accession set queried for annotation output. Substituting a
-                # related species' entry here is what caused near-identical
-                # rows to appear across different species' uniprotr/rbioapi
-                # results (e.g. the same Zaire ebolavirus accession showing up
-                # for bdbv and sudv alike). A gene with no species-specific
-                # reviewed accession is left uncovered rather than faked.
-                if is_xspecies:
-                    n_reviewed_excluded += 1
-                else:
+                if include:
                     n_reviewed += 1
                     all_uniprot_accessions.add(e["accession"])
+                else:
+                    n_reviewed_excluded += 1
                 all_discoveries.append({
                     "sample": sample_name, "gene": gene,
                     "ref_tip": "reviewed_canonical_search",
                     "insdc": "",
                     "reason": reason,
-                    "uniprot_accessions": "" if is_xspecies else e["accession"],
+                    "uniprot_accessions": e["accession"] if include else "",
+                    "query_scope": scope,
                 })
 
         print(f"\n  Total UniProt accessions after all strategies: {len(all_uniprot_accessions)} "
@@ -962,7 +1063,7 @@ def main():
 
     # 1. Discovery table
     disc_file = f"{args.prefix}_discovery.tsv"
-    disc_fields = ["sample", "segment", "gene", "ref_tip", "insdc", "reason", "uniprot_accessions"]
+    disc_fields = ["sample", "segment", "gene", "ref_tip", "insdc", "reason", "uniprot_accessions", "query_scope"]
     for d in all_discoveries:
         d["segment"] = "" if d.get("gene") == "*" else segment_by_gene.get(d.get("gene", ""), "")
     with open(disc_file, "w") as f:

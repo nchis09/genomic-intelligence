@@ -40,6 +40,7 @@ workflow PATHOGEN_ROUTER {
     ch_nextclade_json_all  // path: all Nextclade JSONs (broadcast/value channel)
     ch_species_assignments // path: species_assignments.tsv (broadcast/value channel)
     ch_nextclade_aligned   // channel: [ meta(dataset), fasta ] Nextclade aligned outputs (collected)
+    ch_nextclade_tsvs      // path: all Nextclade TSVs (collected, broadcast to flu signature stages)
 
     main:
     //
@@ -118,14 +119,14 @@ workflow PATHOGEN_ROUTER {
     // Run the avian influenza workflow for avian_influenza species groups
     // (currently h5nx via the community iav-h5 dataset).
     //
-    AVIAN_INFLUENZA_WORKFLOW(ch_branched.avian_flu, ch_nextclade_aligned, ch_species_assignments)
+    AVIAN_INFLUENZA_WORKFLOW(ch_branched.avian_flu, ch_nextclade_aligned, ch_species_assignments, ch_nextclade_tsvs)
 
     //
     // Run the seasonal influenza workflow for influenza species groups
     // (h1n1pdm, h3n2, vic — vic also carries yam and generic Flu B groups,
     // which have no dedicated ingest source upstream).
     //
-    SEASONAL_FLU_WORKFLOW(ch_branched.influenza, ch_nextclade_aligned, ch_species_assignments)
+    SEASONAL_FLU_WORKFLOW(ch_branched.influenza, ch_nextclade_aligned, ch_species_assignments, ch_nextclade_tsvs)
 
     //
     // As more pathogen workflows are registered above, mix their outputs

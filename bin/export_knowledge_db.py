@@ -48,6 +48,54 @@ def list_base_tables(pg_conn) -> list[str]:
         return [row[0] for row in cur.fetchall()]
 
 
+# PostgreSQL -> DuckDB column types, used to create an explicitly-typed empty
+# table when a table has no rows — `CREATE TABLE AS SELECT` on an empty
+# DataFrame otherwise infers INTEGER for every column, which breaks
+# downstream queries (e.g. COALESCE mixing INTEGER with VARCHAR).
+PG_TO_DUCKDB = {
+    "bigint": "BIGINT",
+    "integer": "INTEGER",
+    "smallint": "SMALLINT",
+    "serial": "INTEGER",
+    "bigserial": "BIGINT",
+    "text": "VARCHAR",
+    "character varying": "VARCHAR",
+    "character": "VARCHAR",
+    "varchar": "VARCHAR",
+    "boolean": "BOOLEAN",
+    "real": "FLOAT",
+    "double precision": "DOUBLE",
+    "numeric": "DOUBLE",
+    "date": "DATE",
+    "timestamp without time zone": "TIMESTAMP",
+    "timestamp with time zone": "TIMESTAMPTZ",
+    "json": "VARCHAR",
+    "jsonb": "VARCHAR",
+}
+
+
+def column_types(pg_conn, table: str) -> list[tuple[str, str]]:
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            ORDER BY ordinal_position
+            """,
+            (table,),
+        )
+        return cur.fetchall()
+
+
+def create_typed_empty_table(duck_con, table: str, cols: list[tuple[str, str]]):
+    defs = ", ".join(
+        f'"{name}" {PG_TO_DUCKDB.get(dtype.lower(), "VARCHAR")}'
+        for name, dtype in cols
+    )
+    duck_con.execute(f'CREATE TABLE "{table}" ({defs})')
+
+
 def main():
     args = parse_args()
     out_path = Path(args.output).resolve()
@@ -69,6 +117,11 @@ def main():
         for table in tables:
             print(f"Exporting table '{table}'...", file=sys.stderr)
             df = pd.read_sql_query(f'SELECT * FROM "{table}"', pg_conn)
+            if df.empty:
+                # No rows -> no reliable type inference; recreate the table
+                # with the declared PostgreSQL column types instead.
+                create_typed_empty_table(duck_con, table, column_types(pg_conn, table))
+                continue
             # PostgreSQL jsonb columns arrive as Python dicts via psycopg2;
             # convert them to JSON text so DuckDB stores a plain VARCHAR
             # that R-side jsonlite::fromJSON can parse reliably.

@@ -147,6 +147,7 @@ pathogen_mutation_profile_ui <- function(species) {
           solidHeader = TRUE,
           div(
             style = "display: flex; gap: 16px; align-items: center; margin-bottom: 12px; flex-wrap: wrap;",
+            uiOutput(mp_id(species, "landscape_segment_ui")),
             div(style = "width: 220px;",
               selectizeInput(
                 inputId = mp_id(species, "landscape_protein"),
@@ -657,13 +658,53 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
 
   clicked_position <- reactiveVal(NULL)
 
-  # Populate protein selector for the landscape
+  # Segment selector for segmented pathogens (influenza): populated from the
+  # mutation detail's segment column; hidden when the run has no segment
+  # dimension (ebola rows all carry NA/genome).
+  landscape_segments <- reactive({
+    df <- mutation_detail_data()
+    if (is.null(df) || nrow(df) == 0 || !"segment" %in% names(df)) return(character())
+    segs <- unique(na.omit(df$segment))
+    segs <- segs[nzchar(segs) & segs != "genome"]
+    seg_order <- c("pb2", "pb1", "pa", "ha", "np", "na", "mp", "ns")
+    segs[order(match(segs, seg_order, nomatch = 99))]
+  })
+
+  output[[mp_id(sp, "landscape_segment_ui")]] <- renderUI({
+    segs <- landscape_segments()
+    if (length(segs) == 0) return(NULL)
+    div(style = "width: 140px;",
+      selectizeInput(
+        inputId = mp_id(sp, "landscape_segment"),
+        label = NULL,
+        choices = c("All segments" = "", setNames(segs, toupper(segs))),
+        selected = "",
+        multiple = FALSE,
+        width = "100%"
+      )
+    )
+  })
+
+  selected_landscape_segment <- reactive({
+    sel <- input[[mp_id(sp, "landscape_segment")]]
+    if (is.null(sel) || sel == "") NULL else tolower(sel)
+  })
+
+  # Populate protein selector for the landscape — filtered to the chosen
+  # segment when a segment selector is active.
   observe({
     df <- mutation_detail_data()
     if (is.null(df) || nrow(df) == 0) return()
+    seg <- selected_landscape_segment()
+    if (!is.null(seg) && "segment" %in% names(df)) {
+      df <- df[df$segment == seg, ]
+    }
     proteins <- sort(unique(df$protein_name))
+    if (length(proteins) == 0) return()
+    cur <- input[[mp_id(sp, "landscape_protein")]]
     updateSelectizeInput(session, mp_id(sp, "landscape_protein"),
-                         choices = proteins, selected = proteins[1])
+                         choices = proteins,
+                         selected = if (!is.null(cur) && cur %in% proteins) cur else proteins[1])
   })
 
   # Aggregated mutation data: one row per unique mutation, all proteins.
@@ -678,7 +719,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
     n_bg <- n_total - n_query
 
     agg <- df |>
-      group_by(mutation_id, mutation_label, protein_name, position, ref_aa, alt_aa, mutation_type) |>
+      group_by(mutation_id, mutation_label, protein_name, segment, position, ref_aa, alt_aa, mutation_type) |>
       summarise(
         n_samples = dplyr::n_distinct(sample_id),
         n_query_mut = dplyr::n_distinct(sample_id[is_query]),
@@ -729,6 +770,11 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
           TRUE                         ~ "Shannon entropy (bits)"
         )
       )
+
+    seg <- selected_landscape_segment()
+    if (!is.null(seg) && "segment" %in% names(out)) {
+      out <- out |> filter(segment == seg)
+    }
 
     prot <- input[[mp_id(sp, "landscape_protein")]]
     if (!is.null(prot) && prot != "") {
@@ -928,6 +974,7 @@ pathogen_mutation_profile_register <- function(input, output, session, species, 
       ) |>
       dplyr::select(
         Protein = protein_name,
+        Segment = segment,
         Mutation = mutation_label,
         Position = position,
         Ref = ref_aa,

@@ -58,6 +58,7 @@ source("modules/pathogen_identification.R")
 source("modules/llm_note.R")
 source("modules/pathogen_genomics.R")
 source("modules/pathogen_mutation_profile.R")
+source("modules/flu_signatures.R")
 source("modules/assessment.R")
 source("modules/placeholder.R")
 source("modules/pathogen_transmission.R")
@@ -80,6 +81,78 @@ list_species <- function(outdir) {
   base <- file.path(outdir, "pathogen_identification")
   if (!dir.exists(base)) return(character())
   basename(list.dirs(base, recursive = FALSE))
+}
+
+# Species -> pathogen-family map for the pathogen-first landing page.
+# Primary source is classification/species_assignments.tsv (pathogen +
+# species columns, authoritative for what the run detected). Fallback:
+# which per-species build directories exist on disk.
+# Returns data.frame(species, pathogen, family) restricted to species that
+# also have dashboard pages (pathogen_identification/<species>).
+list_species_families <- function(outdir) {
+  species <- list_species(outdir)
+  if (length(species) == 0) return(data.frame())
+
+  fam_of <- function(pathogen) {
+    p <- tolower(pathogen %||% "")
+    if (p %in% c("influenza", "avian_influenza", "influenza_a", "iav", "flu")) return("influenza")
+    if (p %in% c("orthoebolavirus", "ebolavirus", "ebola")) return("ebola")
+    if (!nzchar(p)) "unknown" else p
+  }
+
+  map <- NULL
+  assign_tsv <- file.path(outdir, "classification", "species_assignments.tsv")
+  if (file.exists(assign_tsv)) {
+    df <- tryCatch(
+      readr::read_tsv(assign_tsv, show_col_types = FALSE,
+                      col_types = readr::cols(.default = readr::col_character())),
+      error = function(e) NULL)
+    if (!is.null(df) && all(c("species", "pathogen") %in% names(df))) {
+      map <- df[, c("species", "pathogen")] |>
+        dplyr::distinct() |>
+        dplyr::mutate(
+          pathogen = tolower(pathogen),
+          family = vapply(pathogen, fam_of, character(1))
+        )
+    }
+  }
+  # Directory fallback: a species' build dir reveals its family. Applied when
+  # the TSV is absent AND for any species the TSV didn't cover (e.g. species
+  # renamed downstream of classification).
+  dir_fallback <- function(sp) {
+    if (dir.exists(file.path(outdir, "nextstrain_ebola", sp))) "ebola"
+    else if (dir.exists(file.path(outdir, "seasonal_flu", sp)) ||
+             dir.exists(file.path(outdir, "avian_flu", sp))) "influenza"
+    else "unknown"
+  }
+  if (is.null(map)) {
+    map <- do.call(rbind, lapply(species, function(sp) {
+      fam <- dir_fallback(sp)
+      data.frame(species = sp, pathogen = fam, family = fam,
+                 stringsAsFactors = FALSE)
+    }))
+  } else {
+    covered <- tolower(map$species)
+    missing_sp <- species[!tolower(species) %in% covered]
+    if (length(missing_sp) > 0) {
+      extra <- do.call(rbind, lapply(missing_sp, function(sp) {
+        fam <- dir_fallback(sp)
+        data.frame(species = sp, pathogen = fam, family = fam,
+                   stringsAsFactors = FALSE)
+      }))
+      map <- rbind(map, extra)
+    }
+  }
+
+  # Only species that actually have dashboard pages; keep family order
+  # stable (ebola first, then influenza, then anything else).
+  map <- map[tolower(map$species) %in% tolower(species), , drop = FALSE]
+  fam_rank <- c(ebola = 1, influenza = 2)
+  rank <- fam_rank[map$family]
+  rank[is.na(rank)] <- 9
+  map <- map[order(rank, match(tolower(map$species), tolower(species))), , drop = FALSE]
+  rownames(map) <- NULL
+  map
 }
 
 # Resolve the pipeline --outdir the user typed into a real path. Accepts an
@@ -377,6 +450,53 @@ brand_css <- "
   body.dark-mode .dataTables_wrapper .dataTables_filter label {
     color: #adb5bd !important;
   }
+  /* Pathogen detection cards + intro copy (light theme) */
+  .home-intro {
+    color: #495057;
+    max-width: 860px;
+    font-size: 0.95rem;
+  }
+  .home-intro-sub {
+    color: #6c757d;
+    max-width: 860px;
+    font-size: 0.9rem;
+    margin-bottom: 22px;
+  }
+  .fam-card-blurb {
+    color: #6c757d;
+    font-size: 0.85rem;
+    min-height: 54px;
+  }
+  .fam-empty-state {
+    text-align: center;
+    padding: 36px 0;
+    color: #888;
+  }
+  .subtle-text {
+    color: #6c757d;
+  }
+  /* Dark-mode variants */
+  body.dark-mode .home-intro {
+    color: #cdd9e5;
+  }
+  body.dark-mode .home-intro-sub {
+    color: #adb5bd;
+  }
+  body.dark-mode .fam-card-blurb {
+    color: #adb5bd;
+  }
+  body.dark-mode .fam-empty-state {
+    color: #8ea3b5;
+  }
+  body.dark-mode .fam-empty-state h4 {
+    color: #e0e0e0;
+  }
+  body.dark-mode .fam-empty-state p {
+    color: #adb5bd;
+  }
+  body.dark-mode .subtle-text {
+    color: #adb5bd;
+  }
   body.dark-mode .dataTables_wrapper .dataTables_paginate .paginate_button {
     color: #cdd9e5 !important;
   }
@@ -500,7 +620,43 @@ ui <- bs4DashPage(
 server <- function(input, output, session) {
 
   outdir_r <- reactive({ resolve_outdir(input$outdir) })
-  species_rv <- reactive({ list_species(outdir_r()) })
+
+  # -- Pathogen-first landing: families discovered from the run's own
+  # classification outputs. selected_family stays NULL until the user picks
+  # a detection card — the home page is always the pathogen selector first.
+  families_rv <- reactive({ list_species_families(outdir_r()) })
+  selected_family <- reactiveVal(NULL)
+
+  observe({
+    fams <- families_rv()
+    if (!is.null(selected_family()) &&
+        !(selected_family() %in% fams$family)) {
+      selected_family(NULL)
+    }
+  })
+
+  observeEvent(input$fam_reset, { selected_family(NULL) })
+  observe({
+    fams <- families_rv()
+    lapply(unique(fams$family), function(fam) {
+      observeEvent(input[[paste0("fam_select_", fam)]], {
+        selected_family(fam)
+      }, ignoreInit = TRUE)
+    })
+  })
+
+  species_rv <- reactive({
+    fams <- families_rv()
+    fam <- selected_family()
+    if (is.null(fam) || nrow(fams) == 0) return(character())
+    fams$species[fams$family == fam]
+  })
+
+  flu_species_rv <- reactive({
+    fams <- families_rv()
+    if (is.null(selected_family()) || selected_family() != "influenza") return(character())
+    fams$species[fams$family == "influenza"]
+  })
 
   # -- Sidebar: Intelligence Overview + Biological Threat (species submenu,
   # formerly "Pathogen Identification") + the 6 remaining objective roadmap
@@ -544,6 +700,21 @@ server <- function(input, output, session) {
       list(menuItem("Pathogen Genomics", tabName = "pg_home", icon = icon("microscope")))
     }
 
+    # Influenza-only section: segment-signature analyses (constellation /
+    # reassortment, phenotype markers, genome integrity, group diversity).
+    # Hidden entirely for ebola and unknown families.
+    flu_species <- flu_species_rv()
+    fa_item <- if (length(flu_species) > 0) {
+      do.call(menuItem, c(
+        list(text = "Influenza Analysis", icon = icon("viruses"), startExpanded = FALSE),
+        lapply(flu_species, function(sp) {
+          menuSubItem(text = toupper(sp), tabName = paste0("fa_", sp))
+        })
+      ))
+    } else {
+      NULL
+    }
+
     roadmap_items <- lapply(ROADMAP_OBJECTIVES, function(obj) {
       if (identical(obj$id, "transmission_spread") && length(species) > 0) {
         do.call(menuItem, c(
@@ -579,6 +750,8 @@ server <- function(input, output, session) {
       list(sidebarHeader("INTELLIGENCE OBJECTIVES")),
       list(pi_item),
       pg_items,
+      if (!is.null(fa_item)) list(sidebarHeader("INFLUENZA ANALYSIS")) else NULL,
+      if (!is.null(fa_item)) list(fa_item) else NULL,
       roadmap_items[1:4],
       list(sidebarHeader("EVIDENCE & REPORTING")),
       roadmap_items[5]
@@ -653,6 +826,14 @@ server <- function(input, output, session) {
       tabItem(tabName = roadmap_tab_name(obj$id), tab_ui)
     })
 
+    fa_tabs <- {
+      fams <- families_rv()
+      flu_sp <- fams$species[fams$family == "influenza"]
+      lapply(flu_sp, function(sp) {
+        tabItem(tabName = paste0("fa_", sp), flu_signatures_ui(sp))
+      })
+    }
+
     ts_tabs <- lapply(species, function(sp) {
       tabItem(tabName = paste0("ts_", sp), transmission_ui(sp))
     })
@@ -667,9 +848,10 @@ server <- function(input, output, session) {
     })
 
     do.call(tabItems, c(
-      list(tabItem(tabName = "home", overview_ui())),
+      list(tabItem(tabName = "home", uiOutput("home_body"))),
       pi_tabs,
       pg_tabs,
+      fa_tabs,
       ts_tabs,
       gt_tabs,
       cm_tabs,
@@ -680,6 +862,11 @@ server <- function(input, output, session) {
 
   # -- Register renderDT outputs for every discovered species.
   observeEvent(species_rv(), {
+    fams <- families_rv()
+    flu_sp <- fams$species[fams$family == "influenza"]
+    for (sp in flu_sp) {
+      flu_signatures_register(input, output, session, sp, outdir_r)
+    }
     for (sp in species_rv()) {
       pathogen_identification_register(input, output, session, sp, outdir_r)
       pathogen_genomics_register(input, output, session, sp, outdir_r)
@@ -701,12 +888,22 @@ server <- function(input, output, session) {
     }
   }, ignoreNULL = FALSE)
 
+  # -- Home tab body: pathogen-family cards when nothing is selected yet,
+  # otherwise the standard Intelligence Overview for the family's species.
+  output$home_body <- renderUI({
+    if (is.null(selected_family())) {
+      return(pathogen_select_ui(families_rv()))
+    }
+    overview_ui()
+  })
+
   # -- Intelligence Overview: header (species dropdown, merged inline into
   # the card header bar) + body. Header depends only on species_rv() (not on
   # input$overview_species) so it doesn't re-render -- and lose the user's
   # in-progress selection -- every time the dropdown changes.
   output$overview_header <- renderUI({
-    overview_header_ui(species_rv())
+    overview_header_ui(species_rv(), selected_family(),
+                       length(unique(families_rv()$family)))
   })
 
   current_species <- reactive({

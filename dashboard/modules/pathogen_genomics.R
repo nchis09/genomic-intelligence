@@ -53,9 +53,11 @@ pg_read_tree_data <- function(duckdb_path, species) {
   # Parameterized queries (avoid SQL injection / quoting issues)
   sp_lower <- tolower(species)
 
+  # SELECT * so older exports without the segment column still work —
+  # downstream code treats a missing `segment` as "genome".
   trees <- tryCatch(
     DBI::dbGetQuery(con,
-      "SELECT tree_id, tree_method, newick FROM phylogenetic_trees WHERE LOWER(species) = ?",
+      "SELECT * FROM phylogenetic_trees WHERE LOWER(species) = ?",
       params = list(sp_lower)
     ),
     error = function(e) e
@@ -120,12 +122,7 @@ pathogen_genomics_ui <- function(species) {
             ),
             selected = c("clade", "query", "outbreak")
           ),
-          radioButtons(
-            inputId = pg_id(species, "tree_select"),
-            label = "Tree type:",
-            choices = c("Augur (evolutionary)" = "augur"),
-            selected = "augur"
-          ),
+          uiOutput(pg_id(species, "segment_ui")),
           radioButtons(
             inputId = pg_id(species, "layout_select"),
             label = "Layout:",
@@ -195,8 +192,44 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
     )
   })
 
+  # Available segments for this species ("" / NA -> "genome"); drives the
+  # segment dropdown — hidden when there is nothing to choose between.
+  segments_rv <- reactive({
+    data <- tree_data_rv()
+    if (!is.null(data$error) || is.null(data$trees)) return(character())
+    t <- data$trees
+    segs <- if ("segment" %in% names(t)) {
+      ifelse(is.na(t$segment) | t$segment == "", "genome", tolower(t$segment))
+    } else {
+      rep("genome", nrow(t))
+    }
+    seg_order <- c("ha", "na", "pb2", "pb1", "pa", "np", "mp", "ns", "genome")
+    unique(segs)[order(match(unique(segs), seg_order, nomatch = 99))]
+  })
+
+  selected_segment <- reactive({
+    segs <- segments_rv()
+    if (length(segs) == 0) return(NULL)
+    sel <- input[[pg_id(sp, "segment")]]
+    if (is.null(sel) || !(tolower(sel) %in% segs)) segs[1] else tolower(sel)
+  })
+
+  # Segment dropdown (per-card control, replaces the dead single-choice
+  # "Tree type" radio); only rendered when >1 segment exists.
+  output[[pg_id(sp, "segment_ui")]] <- renderUI({
+    segs <- segments_rv()
+    if (length(segs) <= 1) return(NULL)
+    selectInput(
+      inputId = pg_id(sp, "segment"),
+      label = "Segment:",
+      choices = toupper(segs),
+      selected = if ("ha" %in% segs) "HA" else toupper(segs[1])
+    )
+  })
+
   # Parsed tree + joined tip metadata, shared by the plot and the LLM note.
-  # Only invalidates when the underlying DuckDB data changes.
+  # Only invalidates when the underlying DuckDB data or the selected segment
+  # changes.
   tree_obj_r <- reactive({
     data <- tree_data_rv()
     if (!is.null(data$error)) return(list(error = data$error))
@@ -206,6 +239,22 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
 
     trees_df <- data$trees
     tips_df <- data$tips
+
+    # Restrict to the selected segment (missing segment column -> all rows
+    # match "genome", so non-segmented species are unaffected).
+    seg <- selected_segment()
+    if (!is.null(seg)) {
+      tree_segs <- if ("segment" %in% names(trees_df)) {
+        ifelse(is.na(trees_df$segment) | trees_df$segment == "", "genome",
+               tolower(trees_df$segment))
+      } else {
+        rep("genome", nrow(trees_df))
+      }
+      trees_df <- trees_df[tree_segs == seg, , drop = FALSE]
+      if (nrow(trees_df) == 0) {
+        return(list(error = paste0("No tree found for segment ", toupper(seg), ".")))
+      }
+    }
 
     # Prefer the Nextstrain/Augur tree (full metadata); fall back to nextclade
     non_iq <- trees_df[!grepl("iqtree", tolower(trees_df$tree_method)), , drop = FALSE]
@@ -264,7 +313,8 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
     tip_meta$nuc_mutation_count[is.na(tip_meta$nuc_mutation_count)] <- 0
 
     list(tr = tr, tree_id = selected_tree$tree_id,
-         tree_method = selected_tree$tree_method, tip_meta = tip_meta)
+         tree_method = selected_tree$tree_method, tip_meta = tip_meta,
+         segment = seg)
   })
 
   # -- LLM interpretation note (local Ollama, deterministic template fallback) --
@@ -520,12 +570,17 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
     })
   })
 
-  # -- Tip metadata table --
+  # -- Tip metadata table (follows the selected segment's tree) --
   output[[pg_id(sp, "tip_table")]] <- DT::renderDT({
     data <- tree_data_rv()
     if (!is.null(data$error) || is.null(data$tips)) return(DT::datatable(data.frame()))
 
     tips_df <- data$tips
+    obj <- tree_obj_r()
+    if (!is.null(obj$tree_id)) {
+      seg_tips <- tips_df[tips_df$tree_id == obj$tree_id, ]
+      if (nrow(seg_tips) > 0) tips_df <- seg_tips
+    }
     display_cols <- intersect(
       c("label", "is_query", "clade", "outbreak", "country", "tip_date", "div",
         "genome_coverage", "nextclade_qc", "nuc_mutation_count", "aa_mutation_count"),

@@ -88,6 +88,7 @@ cat("Accessions:", length(accessions), "entries\n\n")
 #   indistinguishable from genuinely species-specific ones.
 accession_gene <- new.env()
 accession_organism <- new.env()
+accession_protein <- new.env()
 if (!is.null(uniprot_tsv_file) && file.exists(uniprot_tsv_file)) {
   up_tsv <- tryCatch(
     read.table(uniprot_tsv_file, header = TRUE, sep = "\t", quote = "",
@@ -99,12 +100,16 @@ if (!is.null(uniprot_tsv_file) && file.exists(uniprot_tsv_file)) {
     gene_col <- if ("Gene.Names" %in% colnames(up_tsv)) "Gene.Names" else
                 if ("Gene Names" %in% colnames(up_tsv)) "Gene Names" else NA
     organism_col <- if ("Organism" %in% colnames(up_tsv)) "Organism" else NA
+    protein_col <- if ("Protein.names" %in% colnames(up_tsv)) "Protein.names" else
+                   if ("Protein names" %in% colnames(up_tsv)) "Protein names" else NA
     for (i in seq_len(nrow(up_tsv))) {
       acc <- up_tsv$Entry[i]
       gene <- if (!is.na(gene_col)) up_tsv[[gene_col]][i] else ""
       assign(acc, gene %||% "", envir = accession_gene)
       organism <- if (!is.na(organism_col)) up_tsv[[organism_col]][i] else ""
       assign(acc, organism %||% "", envir = accession_organism)
+      protein <- if (!is.na(protein_col)) up_tsv[[protein_col]][i] else ""
+      assign(acc, protein %||% "", envir = accession_protein)
     }
   }
 }
@@ -117,6 +122,11 @@ lookup_organism <- function(acc) {
   if (!exists(acc, envir = accession_organism)) return("")
   o <- get(acc, envir = accession_organism)
   if (is.null(o) || length(o) == 0 || is.na(o)) "" else o
+}
+lookup_protein <- function(acc) {
+  if (!exists(acc, envir = accession_protein)) return("")
+  p <- get(acc, envir = accession_protein)
+  if (is.null(p) || length(p) == 0 || is.na(p)) "" else p
 }
 
 # --- Species -> precise UniProt organism name, for cross-species detection ---
@@ -166,17 +176,50 @@ if (is.null(taxon_id)) {
 
 # Segment CDS labels used by mutation callers (nextclade/augur) vs the
 # UniProt gene names on accessions — normalize before matching so
-# HA1/HA2 → HA, PA-X → PA, NEP → NS2. Mirrors GENE_SEARCH_MAP in
-# extract_query_proteins.py; unmatched labels pass through unchanged
-# (ebolavirus names already match UniProt).
+# HA1/HA2 → HA, PA-X → PA, NEP → NS. Mirrors GENE_SEARCH_MAP in
+# extract_query_proteins.py: UniProt indexes both matrix proteins under
+# 'M' and both non-structural under 'NS', so M1/M2/NS1/NEP also normalize
+# there; unmatched labels pass through unchanged (ebolavirus names
+# already match UniProt).
 QUERY_GENE_MAP <- c(
   "SigPep" = "HA", "HA1" = "HA", "HA2" = "HA",
-  "PA-X" = "PA", "NEP" = "NS2"
+  "PA-X" = "PA", "NEP" = "NS",
+  "M1" = "M", "M2" = "M", "NS1" = "NS", "PB1-F2" = "PB1"
 )
 norm_qgene <- function(g) {
   if (is.null(g) || is.na(g) || g == "") return(g)
   mapped <- QUERY_GENE_MAP[g]
   if (is.na(mapped)) g else unname(mapped)
+}
+
+# Broad UniProt gene names cover several distinct proteins (gene 'M' =
+# M1 and M2, 'NS' = NS1 and NEP, 'PA' = PA and PA-X, 'PB1' = PB1 and
+# PB1-F2). Since normalizing erases the distinction, disambiguate on the
+# accession's protein name — mirrors GENE_PROTEIN_FILTER / _EXCLUDE in
+# extract_query_proteins.py so a query M1 mutation can't match an M2
+# feature (different protein, different coordinates).
+QGENE_PROTEIN_NEEDLES <- list(
+  "M1"     = c("matrix protein 1", "protein m1"),
+  "M2"     = c("matrix protein 2", "proton channel", "protein m2"),
+  "NEP"    = c("export", "non-structural protein 2", "protein ns2"),
+  "NS1"    = c("non-structural protein 1", "protein ns1"),
+  "PA-X"   = c("pa-x", "protein x", "x-orf"),
+  "PB1-F2" = c("pb1-f2")
+)
+QGENE_PROTEIN_EXCLUDE <- list(
+  "PA"  = c("pa-x", "protein x"),
+  "PB1" = c("pb1-f2")
+)
+
+qgene_protein_ok <- function(raw_gene, acc) {
+  needles <- QGENE_PROTEIN_NEEDLES[[raw_gene]]
+  excl    <- QGENE_PROTEIN_EXCLUDE[[raw_gene]]
+  if (is.null(needles) && is.null(excl)) return(TRUE)
+  pname <- tolower(lookup_protein(acc))
+  if (pname == "") return(TRUE)  # protein name unknown — gene match is all we have
+  if (!is.null(needles) && !any(vapply(needles, function(n) grepl(n, pname, fixed = TRUE), logical(1)))) return(FALSE)
+  if (!is.null(excl)    &&  any(vapply(excl,    function(n) grepl(n, pname, fixed = TRUE), logical(1)))) return(FALSE)
+  TRUE
 }
 
 # ============================================================
@@ -224,7 +267,8 @@ for (acc in accessions) {
             qpos <- mutations$position[i]
             qgene <- norm_qgene(mutations$gene[i])
             if (!is.na(qpos) && qpos >= pos_start && qpos <= pos_end &&
-                (gene == "" || is.na(qgene) || grepl(qgene, gene, fixed = TRUE))) {
+                (gene == "" || is.na(qgene) || grepl(qgene, gene, fixed = TRUE)) &&
+                qgene_protein_ok(mutations$gene[i], acc)) {
               matching_muts <- c(matching_muts, mutations$mutation_label[i])
             }
           }
@@ -310,7 +354,8 @@ for (acc in accessions) {
             qpos <- mutations$position[i]
             qgene <- norm_qgene(mutations$gene[i])
             if (!is.na(qpos) && qpos >= pos_start && qpos <= pos_end &&
-                (gene == "" || is.na(qgene) || grepl(qgene, gene, fixed = TRUE))) {
+                (gene == "" || is.na(qgene) || grepl(qgene, gene, fixed = TRUE)) &&
+                qgene_protein_ok(mutations$gene[i], acc)) {
               matching_muts <- c(matching_muts, mutations$mutation_label[i])
             }
           }
