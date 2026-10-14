@@ -76,7 +76,10 @@ overview_ui <- function() {
 # line ("Intelligence Brief — [bdbv ▾]"). Falls back to plain text when
 # there's 0 or 1 species (nothing to choose between). `family`/`n_families`
 # add a family badge + a back-to-cards link for multi-pathogen runs.
-overview_header_ui <- function(species, family = NULL, n_families = 1) {
+# `default` seeds the dropdown from the app-level pathogen pick so the navbar
+# switcher and this control stay in sync.
+overview_header_ui <- function(species, family = NULL, n_families = 1,
+                               default = NULL) {
   switcher <- if (!is.null(family)) {
     span(
       style = "font-size: 0.75rem; font-weight: 400; margin-left: 10px;",
@@ -90,11 +93,12 @@ overview_header_ui <- function(species, family = NULL, n_families = 1) {
   if (length(species) == 1) {
     return(span(paste0("Intelligence Brief \u2014 ", toupper(species[1])), switcher))
   }
+  sel <- if (!is.null(default) && default %in% species) default else species[1]
   div(
     class = "header-inline-select",
     span("Intelligence Brief \u2014"),
     selectInput("overview_species", label = NULL, choices = species,
-                selected = species[1], selectize = FALSE),
+                selected = sel, selectize = FALSE),
     switcher
   )
 }

@@ -54,6 +54,7 @@ process SEGMENT_SIGNATURES {
     def genoflu_arg = (genoflu && !genoflu.name.startsWith('NO_FILE')) ? "--genoflu ${genoflu}" : ''
     def metadata_arg = (metadata && !metadata.name.startsWith('NO_FILE')) ? "--metadata ${metadata}" : ''
     """
+    export PATH="\${CONDA_PREFIX:+\$CONDA_PREFIX/bin:}\$PATH"
     python3 ${projectDir}/bin/flu_segment_signatures.py \\
         ${mut_args ? "--mutations ${mut_args}" : ''} \\
         --assignments "${assignments}" \\

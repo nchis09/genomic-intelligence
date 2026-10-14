@@ -804,7 +804,8 @@ def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
 
     species_filter = normalize_text(species)
     processed = 0
-    processed_species = set()
+    wiped_species = set()
+    processed_trees = set()
     with conn.cursor() as cur:
         cur.execute("SELECT sample_id, sample_name FROM samples WHERE run_id = %s", (run_id,))
         sample_id_by_name = {normalize_text(r[1]): r[0] for r in cur.fetchall()}
@@ -953,30 +954,38 @@ def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
                         (sample_id, outbreak_id[0]),
                     )
 
-            # Upsert the Nextclade screening tree and all its tips once per species
+            # Upsert the Nextclade screening tree and all its tips once per
+            # (species, segment) — influenza datasets yield one tree per
+            # segment, unsegmented pathogens collapse to seg = None.
             newick_path = tsv_path.with_suffix(".nwk")
             aligned_path = tsv_path.with_suffix(".aligned.fasta")
 
-            if row_species not in processed_species:
-                processed_species.add(row_species)
+            nc_seg = _detect_segment_from_path(
+                newick_path if newick_path.exists() else tsv_path)
+            tree_key = (row_species, nc_seg)
+            if tree_key not in processed_trees:
+                processed_trees.add(tree_key)
 
-                # Wipe any previous Nextclade tree/tips for this run/species to avoid duplicates
+                # Wipe any previous Nextclade tree/tips for this
+                # run/species/segment to avoid duplicates
                 cur.execute(
                     """
                     DELETE FROM tree_tips
                     WHERE tree_id IN (
                         SELECT tree_id FROM phylogenetic_trees
                         WHERE run_id = %s AND species = %s AND tree_method = %s
+                          AND segment IS NOT DISTINCT FROM %s
                     )
                     """,
-                    (run_id, row_species, "nextclade"),
+                    (run_id, row_species, "nextclade", nc_seg),
                 )
                 cur.execute(
                     """
                     DELETE FROM phylogenetic_trees
                     WHERE run_id = %s AND species = %s AND tree_method = %s
+                      AND segment IS NOT DISTINCT FROM %s
                     """,
-                    (run_id, row_species, "nextclade"),
+                    (run_id, row_species, "nextclade", nc_seg),
                 )
 
                 # Prefer the full .auspice.json tree (it has all reference tips and cleaned names).
@@ -1000,8 +1009,7 @@ def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
                         RETURNING tree_id
                         """,
-                        (run_id, pathogen, row_species, "nextclade", tree_source, newick,
-                         _detect_segment_from_path(newick_path if newick_path.exists() else tsv_path)),
+                        (run_id, pathogen, row_species, "nextclade", tree_source, newick, nc_seg),
                     )
                     tree_id = cur.fetchone()[0]
 
@@ -1167,32 +1175,40 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
     results_dir = Path(results_dir)
     species_filter = normalize_text(species)
     pathogen = pathogen or "orthoebolavirus"
-    # Auspice JSON files under nextstrain_ebola/<species>/auspice/
-    auspice_files = []
+    # Auspice JSON files: always scan the published results tree for every
+    # known layout, then add the directly-staged file on top. Flu builds emit
+    # one JSON per segment — a single picked file must not suppress the rest.
+    scanned = sorted(p for p in results_dir.rglob("*all-outbreaks.json") if _published(p))
+    # Avian influenza segment builds: auspice/avian-flu_<subtype>_<seg>_<time>.json
+    scanned += sorted(
+        p for p in results_dir.rglob("avian-flu_*.json")
+        if "tip-frequencies" not in p.name and _published(p)
+    )
+    # Seasonal influenza pgirl builds: auspice/<lineage>_pgirl_<seg>.json
+    scanned += sorted(
+        p for p in results_dir.rglob("*_pgirl_*.json")
+        if "tip-frequencies" not in p.name and _published(p)
+    )
+    # The species filter applies to the results-dir scan only — a directly
+    # staged file is already the correct one for this run, and its staging
+    # path parts don't carry the species directory.
+    if species_filter:
+        scanned = [p for p in scanned if species_filter in [x.lower() for x in p.parts]]
+
     direct_auspice = bool(auspice_json and Path(auspice_json).exists())
-    if direct_auspice:
-        auspice_files = [Path(auspice_json)]
-    else:
-        # Gather all known auspice layouts at once — species filter runs after,
-        # so a shared results/ dir (mixed pathogens) doesn't lock us into the
-        # first pattern group that hits.
-        auspice_files = sorted(p for p in results_dir.rglob("*all-outbreaks.json") if _published(p))
-        # Avian influenza segment builds: auspice/avian-flu_<subtype>_<seg>_<time>.json
-        auspice_files += sorted(
-            p for p in results_dir.rglob("avian-flu_*.json")
-            if "tip-frequencies" not in p.name and _published(p)
-        )
-        # Seasonal influenza pgirl builds: auspice/<lineage>_pgirl_<seg>.json
-        auspice_files += sorted(
-            p for p in results_dir.rglob("*_pgirl_*.json")
-            if "tip-frequencies" not in p.name and _published(p)
-        )
-        auspice_files = sorted(set(auspice_files))
-    # Only apply the species filter when scanning the results tree. A directly
-    # passed (staged) file is already the correct one for this run — its path
-    # parts don't contain the species directory, so filtering would drop it.
-    if species_filter and not direct_auspice:
-        auspice_files = [p for p in auspice_files if species_filter in [x.lower() for x in p.parts]]
+    candidates = ([Path(auspice_json)] if direct_auspice else []) + scanned
+
+    # One tree per (species, segment): the staged file wins over the same
+    # tree rediscovered under results/.
+    auspice_files = []
+    seen_keys = set()
+    for p in candidates:
+        key = (_detect_species_from_path(p) or species_filter,
+               _detect_segment_from_path(p))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        auspice_files.append(p)
     if not auspice_files:
         print("  SKIP: no Auspice JSON files found", file=sys.stderr)
         return
@@ -2074,9 +2090,9 @@ def load_epi_data(conn, run_id, epi_raw_dir, epi_search_summary=None, species=No
             dataset_id = cur.fetchone()[0]
 
             if dataset_type == "flunet":
-                load_flunet_data(cur, dataset_id, rows)
+                load_flunet_data(cur, dataset_id, rows, species=species)
             elif dataset_type == "empresi":
-                load_empresi_data(cur, dataset_id, rows)
+                load_empresi_data(cur, dataset_id, rows, species=species)
             else:
                 for row in rows:
                     _load_epi_row(cur, dataset_id, row, dataset_type)
@@ -2234,8 +2250,32 @@ def _parse_indicator(text):
     return measure, classification, period
 
 
-def load_flunet_data(cur, dataset_id, rows):
-    """Load a wide-format WHO FluNet CSV into the dedicated flu epi table."""
+def _flunet_species_cases(row, species):
+    """Extract the subtype-specific case count for a detected flu species."""
+    if not species:
+        return None
+    s = species.lower()
+    if s == "h1n1pdm":
+        return parse_int(row.get("ah1n1pdm09"))
+    if s == "h3n2":
+        return parse_int(row.get("ah3"))
+    if s in ("h5nx", "h5n1"):
+        return parse_int(row.get("ah5"))
+    if s == "vic":
+        return sum(
+            parse_int(row.get(k)) or 0
+            for k in ("b_vic_2del", "b_vic_3del", "b_vic_nodel", "b_vic_delunk")
+        )
+    if s == "yam":
+        return parse_int(row.get("b_yam"))
+    return None
+
+
+def load_flunet_data(cur, dataset_id, rows, species=None):
+    """Load a wide-format WHO FluNet CSV into the dedicated flu epi table
+    and also mirror the species-relevant counts into the generic
+    epidemiological_records table so transmission-context analyses can use
+    a single query path for all pathogens."""
     print(f"  Loading {len(rows)} FluNet rows into influenza_epidemiological_records", file=sys.stderr)
 
     for row in rows:
@@ -2332,6 +2372,37 @@ def load_flunet_data(cur, dataset_id, rows):
             ),
         )
 
+        # Mirror the species-specific count into the generic epi table so
+        # downstream transmission/spread analyses can query one table.
+        species_cases = _flunet_species_cases(row, species)
+        if species_cases and species_cases > 0:
+            location_id = get_or_create_location(cur, country)
+            cur.execute(
+                """
+                INSERT INTO epidemiological_records (
+                    dataset_id, record_date, country, location_id,
+                    measure, case_classification, time_period,
+                    value, unit, cases,
+                    source_indicator_name, indicator_label, raw_data
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    dataset_id,
+                    record_date,
+                    country,
+                    location_id,
+                    "case",
+                    "confirmed",
+                    "weekly",
+                    species_cases,
+                    "count",
+                    species_cases,
+                    "WHO FluNet",
+                    f"FluNet {species}",
+                    json.dumps({"species": species, "cases": species_cases, **raw}),
+                ),
+            )
+
 
 def _derive_host_type(animal_type: str) -> str:
     if not animal_type:
@@ -2352,8 +2423,10 @@ def _derive_host_type(animal_type: str) -> str:
     return "Other"
 
 
-def load_empresi_data(cur, dataset_id, rows):
-    """Load FAO EMPRES-i avian influenza CSV into the dedicated avian epi table."""
+def load_empresi_data(cur, dataset_id, rows, species=None):
+    """Load FAO EMPRES-i avian influenza CSV into the dedicated avian epi table
+    and mirror human-affected events into the generic epidemiological_records
+    table for transmission-context analysis."""
     print(f"  Loading {len(rows)} EMPRES-i rows into empresi_avian_influenza", file=sys.stderr)
 
     for row in rows:
@@ -2398,6 +2471,47 @@ def load_empresi_data(cur, dataset_id, rows):
                 json.dumps(raw),
             ),
         )
+
+        # Mirror human-affected events into the generic epi table so
+        # transmission/spread analyses can use one query path.
+        humans_affected = parse_int(row.get("humans_affected")) or 0
+        humans_deaths = parse_int(row.get("humans_deaths")) or 0
+        if humans_affected > 0 or humans_deaths > 0:
+            record_date = (
+                normalize_date(row.get("observation_date"))
+                or normalize_date(row.get("report_date"))
+                or normalize_date(row.get("display_date"))
+            )
+            region = normalize_text(row.get("region"))
+            location_id = get_or_create_location(cur, country, admin1=region)
+            cur.execute(
+                """
+                INSERT INTO epidemiological_records (
+                    dataset_id, record_date, country, admin1, location_id,
+                    measure, case_classification, time_period,
+                    value, unit, cases, deaths,
+                    source_indicator_name, indicator_label, raw_data
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    dataset_id,
+                    record_date,
+                    country,
+                    region,
+                    location_id,
+                    "case",
+                    "confirmed",
+                    "event",
+                    humans_affected,
+                    "count",
+                    humans_affected,
+                    humans_deaths,
+                    "FAO EMPRES-i",
+                    f"EMPRES-i {species}" if species else "EMPRES-i",
+                    json.dumps({"species": species, "humans_affected": humans_affected,
+                                "humans_deaths": humans_deaths, **raw}),
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------

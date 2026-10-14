@@ -32,6 +32,7 @@ process GENOFLU_ASSIGN {
     script:
     def genoflu_dir = "${projectDir}/data/avian_flu/ingest/vendored-GenoFLU-multi"
     """
+    export PATH="\${CONDA_PREFIX:+\$CONDA_PREFIX/bin:}\$PATH"
     mkdir -p genoflu_input
 
     # Rename each record's header to its isolate id so genoflu-multi treats

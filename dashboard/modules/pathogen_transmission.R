@@ -232,6 +232,7 @@ transmission_content_ui <- function(sp, outdir) {
       ),
       uiOutput(ns("ts_header_facts"))
     ),
+    uiOutput(ns("ts_data_note")),
     if (has_data) {
       bs4Dash::bs4Card(
         width = 12, status = "primary", solidHeader = FALSE,
@@ -324,10 +325,29 @@ transmission_register <- function(input, output, session, sp, outdir_r) {
     tryCatch(jsonlite::fromJSON(p, simplifyVector = FALSE)$assessments, error = function(e) NULL)
   })
 
-  query_samples_r <- reactive({ p <- potential_r(); if (is.null(p)) NULL else sort(unique(stats::na.omit(p$query_sample))) })
+  query_samples_r <- reactive({
+    p <- potential_r()
+    if (is.null(p)) return(NULL)
+    samples <- sort(unique(stats::na.omit(p$query_sample)))
+    if (length(samples) == 0) return(NULL)
+    # For segmented viruses (influenza), the transmission unit is the whole
+    # virus / isolate, not an individual segment. Group segment records under
+    # their isolate name and make the dropdown show isolates.
+    seg_pat <- "[_-](seg\\d+|ha|na|pb2|pb1|pa|np|mp|ns|m1|m2|ns1|nep)$"
+    has_seg <- any(grepl(seg_pat, samples, ignore.case = TRUE))
+    if (!has_seg) return(stats::setNames(samples, samples))
+    isolate_of <- function(x) sub(seg_pat, "", x, ignore.case = TRUE)
+    isolates <- sort(unique(isolate_of(samples)))
+    choices <- vapply(isolates, function(iso) {
+      cand <- samples[tolower(isolate_of(samples)) == tolower(iso)]
+      ha <- cand[grep("[_-]ha$", cand, ignore.case = TRUE)]
+      if (length(ha)) ha[1] else cand[1]
+    }, character(1))
+    stats::setNames(choices, isolates)
+  })
   output[[ns("ts_query_select_ui")]] <- renderUI({
     qs <- query_samples_r(); if (is.null(qs)) return(div(style = "color:#888;", "No query samples."))
-    selectInput(ns("ts_query"), "Query genome:", choices = qs, selected = qs[1], selectize = FALSE)
+    selectInput(ns("ts_query"), "Query isolate/genome:", choices = qs, selected = qs[1], selectize = FALSE)
   })
   selected_query <- reactive({ qs <- query_samples_r(); if (is.null(qs)) NULL else if (is.null(input[[ns("ts_query")]]) || !(input[[ns("ts_query")]] %in% qs)) qs[1] else input[[ns("ts_query")]] })
   links_r <- reactive({ p <- potential_r(); sq <- selected_query(); if (is.null(p) || is.null(sq)) NULL else dplyr::filter(p, query_sample == sq) })
@@ -357,6 +377,15 @@ transmission_register <- function(input, output, session, sp, outdir_r) {
     epi <- .ts_strain_epi(br, st)
     if (is.null(epi)) epi <- .ts_strain_epi(br, NULL)
     .ts_fit_logistic(epi)
+  })
+
+  output[[ns("ts_data_note")]] <- renderUI({
+    br <- burden_r()
+    if (!is.null(br) && nrow(br) > 0) return(NULL)
+    sp <- selected_species()
+    div(class = "alert alert-light", style = "border-left: 4px solid #6c757d; font-size: 0.9rem;",
+        icon("circle-info"), strong(" No epidemiological time series available for ", toupper(sp)),
+        ". Surveillance data did not cover the query's country/year, so R(t), burden and projection panels cannot be shown. Historical outbreak summaries and the phylogenetic tree may still be available.")
   })
 
   output[[ns("ts_header_facts")]] <- renderUI({

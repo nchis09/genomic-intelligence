@@ -29,6 +29,7 @@ process HMM_ANNOTATE {
     def prefix  = task.ext.prefix ?: "${meta.id}"
     def evalue  = task.ext.evalue ?: params.hmm_evalue ?: 1e-5
     """
+    export PATH="\${CONDA_PREFIX:+\$CONDA_PREFIX/bin:}\$PATH"
     # hmmscan rejects gap ('-') and stop ('*') characters in input sequences;
     # strip them from sequence lines (headers untouched) into a sanitized FASTA.
     awk '{if (/^>/) print; else {gsub(/[-*]/, ""); print}}' ${query_fasta} > ${prefix}_query_proteins.sanitized.fasta

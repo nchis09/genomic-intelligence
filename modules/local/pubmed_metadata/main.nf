@@ -27,6 +27,7 @@ process PUBMED_METADATA {
     def batch_size = params.pubmed_batch_size ?: 100
     def sleep = params.pubmed_sleep ?: 0.5
     """
+    export PATH="\${CONDA_PREFIX:+\$CONDA_PREFIX/bin:}\$PATH"
     python ${projectDir}/bin/fetch_pubmed_metadata.py \
         --results-json results.json \
         --results-tsv results.tsv \

@@ -1342,7 +1342,13 @@ def _node_heights(root: dict) -> None:
 
 
 def _best_tree(con: duckdb.DuckDBPyConnection, species: str):
-    """Return (tree_id, newick) for the species' most tip-complete tree."""
+    """Return (tree_id, newick) for the species' most tip-complete tree.
+
+    For segmented pathogens such as influenza, HA carries the main
+    epidemiological signal, so an HA tree is preferred over other segments
+    for transmission/spread analysis. NA is the second choice. Otherwise the
+    tree with the most tips wins.
+    """
     try:
         rows = con.execute(
             """
@@ -1351,7 +1357,12 @@ def _best_tree(con: duckdb.DuckDBPyConnection, species: str):
             JOIN (SELECT tree_id, COUNT(*) AS n FROM tree_tips GROUP BY tree_id) c
               ON t.tree_id = c.tree_id
             WHERE LOWER(t.species) = ?
-            ORDER BY c.n DESC
+            ORDER BY CASE LOWER(t.segment)
+                         WHEN 'ha'  THEN 1
+                         WHEN 'na'  THEN 2
+                         ELSE 3
+                       END,
+                     c.n DESC
             """,
             [species.lower()],
         ).fetchall()

@@ -683,12 +683,14 @@ def main():
     build_clades = load_build_clades(args.build_dir)
     ha_offsets = load_ha_offsets(args.build_dir)
 
-    catalog = []
-    if yaml is not None:
-        cat = yaml.safe_load(Path(args.markers).read_text())
-        catalog = (cat or {}).get("markers") or []
-    else:
-        log("WARNING: pyyaml not available — marker screening skipped")
+    if yaml is None:
+        sys.exit("ERROR: pyyaml is not installed in this environment — "
+                 "refusing to emit an empty markers.tsv")
+    cat = yaml.safe_load(Path(args.markers).read_text())
+    catalog = (cat or {}).get("markers") or []
+    if not catalog:
+        sys.exit(f"ERROR: no markers parsed from {args.markers} — "
+                 "refusing to emit an empty markers.tsv")
 
     log(f"{len(isolates)} isolates, {len(mutations)} segments, "
         f"{len(nc_tables)} nextclade tables, {len(catalog)} catalog markers")

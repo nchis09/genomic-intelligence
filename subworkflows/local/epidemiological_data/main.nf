@@ -32,11 +32,15 @@ workflow EPIDEMIOLOGICAL_DATA {
             .set { ch_branched }
 
         // Ebola/orthoebolavirus -> HDX
+        // For Ebola we pull every row from the HDX datasets mapped to the
+        // specific Ebola species. Within those datasets we do NOT filter out
+        // rows that lack an exact species subtype match, so a SUDV-mapped
+        // dataset (e.g. the pre-2014 outbreaks table) is kept in full.
         def disease_map = [ orthoebolavirus: 'ebola' ]
         ch_ebola_input = ch_branched.ebola
             .map { meta, fasta, metadata ->
                 def search_term = params.epi_search_term ?: disease_map.get(meta.pathogen, meta.pathogen)
-                [ meta, search_term, meta.species ]
+                [ meta, search_term, meta.species, true ]
             }
         FETCH_EPIDEMIOLOGICAL_DATA(ch_ebola_input)
 

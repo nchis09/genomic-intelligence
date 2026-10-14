@@ -13,7 +13,7 @@ process FETCH_EPIDEMIOLOGICAL_DATA {
     container null
 
     input:
-    tuple val(meta), val(search_term), val(species)
+    tuple val(meta), val(search_term), val(species), val(skip_species_filter)
 
     output:
     tuple val(meta), path("epi_data"),               emit: epi_raw
@@ -25,6 +25,7 @@ process FETCH_EPIDEMIOLOGICAL_DATA {
     script:
     def rows = params.epi_hdx_rows ?: 20
     def species_arg = species ? "--species \"${species}\"" : ""
+    def skip_row_species_filter_arg = skip_species_filter ? "--skip-row-species-filter" : ""
     def hdx_key_arg = params.hdx_key ? "--hdx-key \"${params.hdx_key}\"" : ""
     def user_agent_arg = params.hdx_user_agent ? "--user-agent \"${params.hdx_user_agent}\"" : ""
     def ignore_hdx_errors_arg = params.ignore_hdx_errors ? "--ignore-hdx-errors" : ""
@@ -44,6 +45,7 @@ process FETCH_EPIDEMIOLOGICAL_DATA {
         --rhdx_dir "${projectDir}/tools/rhdx" \
         --mapping "${projectDir}/database/hdx_ebola_datasets.yml" \
         ${species_arg} \
+        ${skip_row_species_filter_arg} \
         --outdir . \
         --rows ${rows} \
         ${hdx_key_arg} \

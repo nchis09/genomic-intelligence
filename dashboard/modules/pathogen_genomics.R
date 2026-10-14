@@ -330,11 +330,17 @@ pathogen_genomics_register <- function(input, output, session, species, outdir) 
   note_rv <- reactiveVal(NULL)
   note_busy <- reactiveVal(FALSE)
 
-  # Pre-generated note written by the pipeline's GENERATE_TREE_NOTES step
-  # (results/pathogen_genomics/<species>/tree_note.json). Read once — the
-  # dashboard prefers it so no live Ollama call is needed at view time.
+  # Pre-generated note written by the pipeline's GENERATE_TREE_NOTES step —
+  # tree_note_<seg>.json per segment for segmented pathogens, tree_note.json
+  # otherwise (also the fallback when a per-segment file is missing).
   pregen_note <- reactive({
-    f <- file.path(outdir(), "pathogen_genomics", sp, "tree_note.json")
+    seg <- selected_segment()
+    base <- file.path(outdir(), "pathogen_genomics", sp)
+    f <- file.path(base, "tree_note.json")
+    if (seg != "genome") {
+      seg_f <- file.path(base, paste0("tree_note_", seg, ".json"))
+      if (file.exists(seg_f)) f <- seg_f
+    }
     if (!file.exists(f) || !requireNamespace("jsonlite", quietly = TRUE))
       return(NULL)
     tryCatch({

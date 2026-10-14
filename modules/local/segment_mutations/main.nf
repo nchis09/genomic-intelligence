@@ -39,6 +39,7 @@ process SEGMENT_MUTATIONS {
         .collect { it.toString() }
         .join(' ')
     """
+    export PATH="\${CONDA_PREFIX:+\$CONDA_PREFIX/bin:}\$PATH"
     python3 ${projectDir}/bin/extract_segment_mutations.py \\
         --results_dir "${results_dir}" \\
         --pathogen "${meta.pathogen ?: ''}" \\

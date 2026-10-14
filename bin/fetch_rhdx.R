@@ -30,12 +30,13 @@ mapping_file <- parse_arg("--mapping", NULL)
 hdx_key      <- parse_arg("--hdx-key", Sys.getenv("HDX_API_KEY"))
 user_agent   <- parse_arg("--user-agent", "pgirl-genomic-intelligence/1.0")
 ignore_hdx_errors <- "--ignore-hdx-errors" %in% args
+skip_row_species_filter <- "--skip-row-species-filter" %in% args
 
 # Empty string from CLI/env should be treated as no key
 if (!is.null(hdx_key) && !nzchar(hdx_key)) hdx_key <- NULL
 
 if (is.null(disease) || is.null(rhdx_dir)) {
-  stop("Usage: Rscript fetch_rhdx.R --disease <term> --rhdx_dir <dir> [--species <virus>] [--mapping <yml>] [--outdir <dir>] [--rows <n>] [--hdx-key <key>] [--user-agent <agent>] [--ignore-hdx-errors]")
+  stop("Usage: Rscript fetch_rhdx.R --disease <term> --rhdx_dir <dir> [--species <virus>] [--mapping <yml>] [--outdir <dir>] [--rows <n>] [--hdx-key <key>] [--user-agent <agent>] [--ignore-hdx-errors] [--skip-row-species-filter]")
 }
 
 if (!dir.exists(rhdx_dir)) {
@@ -89,6 +90,9 @@ datasets <- tryCatch(
 )
 
 epi_dir <- file.path(outdir, "epi_data")
+# Output folder always keeps the requested species label so the downstream
+# loader finds it; when --skip-species-filter is used the folder still reflects
+# the species group the data is being fetched for.
 if (!is.null(species) && species != "all") {
   epi_dir <- file.path(epi_dir, species)
 }
@@ -274,7 +278,9 @@ for (ds_name in mapped_names) {
     next
   }
 
-  df <- filter_by_species(df, ds_name, species)
+  if (!skip_row_species_filter) {
+    df <- filter_by_species(df, ds_name, species)
+  }
 
   if (nrow(df) == 0) {
     message(paste("Skipping dataset with no rows for species", species, "after filtering:", ds_name))

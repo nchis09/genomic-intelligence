@@ -32,6 +32,8 @@ process SPECIES_ASSIGN {
     def prefix = task.ext.prefix ?: "${meta.id}"
     def nextclade_species_overrides_str = (params.nextclade_species_overrides ?: [:])
         .collect { ds, ov -> "${ds}|${ov[0]}|${ov[1]}" }.join(';')
+    def nextclade_max_score_overrides_str = (params.nextclade_max_score_overrides ?: [:])
+        .collect { ds, ms -> "${ds}|${ms}" }.join(';')
     """
     #!/usr/bin/env python3
     import json, csv, os, sys, re
@@ -192,6 +194,23 @@ process SPECIES_ASSIGN {
 
     MAX_SCORE = float("${params.nextclade_max_score}")
 
+    # Per-dataset score ceilings (e.g. whole-genome Ebola needs a much higher
+    # cap than a small influenza segment, but measles/SARS-CoV-2 etc. keep
+    # the default to avoid mis-routing influenza segments).
+    max_score_overrides_str = "${nextclade_max_score_overrides_str}".strip()
+    max_score_overrides = {}
+    if max_score_overrides_str:
+        for ent in max_score_overrides_str.split(";"):
+            if "|" in ent:
+                ds_p, ms = ent.split("|")
+                try:
+                    max_score_overrides[ds_p.strip()] = float(ms.strip())
+                except ValueError:
+                    pass
+
+    def max_score_for(ds):
+        return max_score_overrides.get(ds, MAX_SCORE)
+
     # Influenza record naming: <isolate>_seg<N> etc. — advisory only;
     # Nextclade decides what each record actually is.
     SEG_SUFFIX = re.compile(
@@ -223,7 +242,7 @@ process SPECIES_ASSIGN {
             "score": score, "tsv": best_tsv or "",
             "pathogen": pathogen, "species": species, "ds": ds,
             "segment": segment_of(ds),
-            "typed": best_tsv is not None and score <= MAX_SCORE,
+            "typed": best_tsv is not None and score <= max_score_for(ds),
         }
 
     isolates = defaultdict(list)  # isolate_key -> [samples]
@@ -387,12 +406,22 @@ process SPECIES_ASSIGN {
         # guarantee that column exists: copy the detected ID column into
         # `accession` when the source metadata used a different name
         # (e.g. sample_id, strain, seqName).
+        #
+        # Canonical schema contract for every downstream module regardless of
+        # the source format: `accession` (record id), `strain` (isolate id),
+        # `date` (ISO collection date). Legacy ebola metadata uses
+        # sample_id/collection_date — those are mapped onto the canonical
+        # columns here so both pathogen metadata formats converge.
         meta_out = f"{prefix}_species_{species}.metadata.tsv"
         with open(meta_out, "w") as f:
             if meta_header:
                 out_header = list(meta_header)
                 if "accession" not in out_header:
                     out_header = ["accession"] + out_header
+                if "strain" not in out_header:
+                    out_header.append("strain")
+                if "date" not in out_header:
+                    out_header.append("date")
                 # All user-supplied sequences are queries; the nextstrain
                 # subsample config filters on is_query=="true".
                 if "is_query" not in out_header:
@@ -418,6 +447,10 @@ process SPECIES_ASSIGN {
                             if orig and orig != sample:
                                 row["genbank_accession"] = orig
                             row["accession"] = sample
+                        if not row.get("strain"):
+                            row["strain"] = SEG_SUFFIX.sub("", sample)
+                        if not row.get("date"):
+                            row["date"] = row.get("collection_date", "")
                         row["is_query"] = "true"
                         writer.writerow(row)
             else:

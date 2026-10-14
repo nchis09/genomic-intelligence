@@ -538,6 +538,58 @@ brand_css <- "
   body.dark-mode .shiny-input-container .radio-inline label {
     color: #cdd9e5 !important;
   }
+  /* ---- Global pathogen switcher, pinned to the centre of the top navbar --
+     visible on every tab so the current pathogen is always known and
+     switchable. The app navbar is light, so the control uses dark text / a
+     solid light input rather than the dark-primary style used elsewhere. */
+  .nav-pathogen-wrap {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    height: 100%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 10;
+  }
+  .nav-pathogen-icon {
+    color: #4A6C8C;
+    font-size: 0.95rem;
+  }
+  .nav-pathogen-wrap .form-group { margin-bottom: 0 !important; }
+  .nav-pathogen-wrap select.form-control {
+    border-radius: 999px !important;
+    padding: 5px 30px 5px 14px !important;
+    min-height: 0 !important;
+    border: 1px solid #ced4da !important;
+    background: #ffffff !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+    color: #212529 !important;
+    font-weight: 600;
+    line-height: 1.4;
+    height: auto !important;
+  }
+  .nav-pathogen-wrap select.form-control:focus {
+    border-color: #4A6C8C !important;
+    box-shadow: 0 0 0 0.2rem rgba(74, 108, 140, 0.25) !important;
+  }
+  .nav-pathogen-badge {
+    background: #4A6C8C;
+    color: #ffffff;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 5px 10px;
+    border-radius: 12px;
+  }
+  @media (max-width: 991px) {
+    .nav-pathogen-wrap {
+      position: static;
+      transform: none;
+      height: auto;
+      margin: 6px auto;
+    }
+  }
 "
 
 # -----------------------------------------------------------------------------
@@ -551,7 +603,9 @@ ui <- bs4DashPage(
       title = "Genomic Intelligence Framework",
       image = file.path("gif_assets", "logo.png"),
       color = "primary"
-    )
+    ),
+    # Global pathogen switcher — centred via CSS, present on every tab.
+    leftUi = uiOutput("nav_pathogen_ui")
   ),
   sidebar = bs4DashSidebar(
     status = "primary",
@@ -644,6 +698,71 @@ server <- function(input, output, session) {
       }, ignoreInit = TRUE)
     })
   })
+
+  # The species the user is actively looking at — written by either the
+  # navbar switcher or the brief-header dropdown so both stay in lockstep.
+  species_pick <- reactiveVal(NULL)
+
+  # Ensure the app always lands on the pathogen-family cards, not inside a
+  # disease-specific brief, even if a previous session left an active tab.
+  observe({
+    selected_family(NULL)
+    updateTabItems(session, "sidebarmenu", selected = "home")
+  })
+
+  # Global pathogen switcher rendered into the navbar centre: species
+  # choices grouped by pathogen family, plus a badge naming the family of
+  # the current selection. Always visible regardless of the active tab.
+  output$nav_pathogen_ui <- renderUI({
+    fams <- families_rv()
+    if (is.null(fams) || nrow(fams) == 0) return(NULL)
+    choices <- lapply(split(fams$species, fams$family),
+                      function(sp) stats::setNames(sp, toupper(sp)))
+    names(choices) <- vapply(names(choices), family_display, character(1))
+    cur <- species_pick()
+    fam <- selected_family()
+    if (is.null(cur) || !(cur %in% fams$species) ||
+        (!is.null(fam) && fams$family[match(cur, fams$species)] != fam)) {
+      cur <- if (!is.null(fam)) fams$species[fams$family == fam][1] else NULL
+    }
+    cur_fam <- if (!is.null(cur)) fams$family[match(cur, fams$species)] else NULL
+    # Native selectInput with an explicit empty placeholder option. selectize
+    # kept auto-picking the first choice on load and triggering navigation to
+    # a disease-specific brief; the native control reliably stays empty until
+    # the user makes a choice.
+    selected_val <- if (!is.null(cur) && nzchar(cur)) cur else ""
+    choices <- c(list("Select or change pathogen\u2026" = ""), choices)
+    div(
+      class = "nav-pathogen-wrap",
+      icon("microscope", class = "nav-pathogen-icon"),
+      selectInput(
+        inputId = "nav_species", label = NULL,
+        choices = choices, selected = selected_val, selectize = FALSE, width = "230px"
+      ),
+      if (!is.null(cur_fam) && !is.na(cur_fam))
+        span(class = "badge nav-pathogen-badge", family_display(cur_fam))
+    )
+  })
+
+  # Navbar pick: switch family (re-gates the sidebar), remember the species
+  # and land on that family's Intelligence Overview.
+  observeEvent(input$nav_species, {
+    sp <- input$nav_species
+    if (is.null(sp) || !nzchar(sp)) return()
+    fams <- families_rv()
+    fam <- fams$family[match(sp, fams$species)]
+    if (!is.null(fam) && !is.na(fam)) selected_family(fam)
+    species_pick(sp)
+    updateTabItems(session, "sidebarmenu", selected = "home")
+  }, ignoreInit = TRUE)
+
+  # Brief-header dropdown pick: keep the navbar switcher in sync.
+  observeEvent(input$overview_species, {
+    sp <- input$overview_species
+    if (is.null(sp) || !nzchar(sp)) return()
+    species_pick(sp)
+    updateSelectInput(session, "nav_species", selected = sp)
+  }, ignoreInit = TRUE)
 
   species_rv <- reactive({
     fams <- families_rv()
@@ -903,7 +1022,8 @@ server <- function(input, output, session) {
   # in-progress selection -- every time the dropdown changes.
   output$overview_header <- renderUI({
     overview_header_ui(species_rv(), selected_family(),
-                       length(unique(families_rv()$family)))
+                       length(unique(families_rv()$family)),
+                       default = species_pick())
   })
 
   current_species <- reactive({
@@ -1153,6 +1273,10 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$brand_home_click, {
+    # Logo acts as a true home button: clear the family selection so the
+    # landing page shows the pathogen detection cards again, not the
+    # brief of whatever pathogen was open.
+    selected_family(NULL)
     updateTabItems(session, "sidebarmenu", selected = "home")
   })
 

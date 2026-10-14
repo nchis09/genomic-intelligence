@@ -105,6 +105,17 @@ workflow {
     // checks pg_ctl status first and exits quietly instead of logging a
     // false-failure warning.
     workflow.onComplete = {
+        // Stop the Ollama server we started at workflow launch, but only if we
+        // recorded a pid file. An externally-running Ollama is left untouched.
+        def ollama_pid_file = file("${workflow.launchDir}/.ollama.pid")
+        if (ollama_pid_file.exists()) {
+            def pid = ollama_pid_file.text.trim()
+            log.info "Stopping local Ollama server (pid ${pid})..."
+            def stop = ["/bin/bash", "-c", "kill ${pid} 2>/dev/null || true"].execute()
+            stop.waitFor()
+            ollama_pid_file.delete()
+        }
+
         if (params.skip_knowledge_warehouse) {
             return
         }

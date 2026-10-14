@@ -47,6 +47,7 @@ process EXTRACT_QUERY_PROTEINS {
         extra_args << "--assignments ${assignments}"
     }
     """
+    export PATH="\${CONDA_PREFIX:+\$CONDA_PREFIX/bin:}\$PATH"
     python3 ${projectDir}/bin/extract_query_proteins.py \\
         --auspice ${auspice_json} \\
         --results_dir ${results_dir} \\

@@ -225,8 +225,13 @@ workflow GENOMIC_INTELLIGENCE {
                 : COMPUTE_TRANSMISSION_CONTEXT.out.tsv
             ch_brief_mp = params.skip_mutation_profile ? ch_brief_empty
                 : MUTATION_PROFILE_WF.out.tsv
+            // The brief consumes the single species-level note — pick
+            // tree_note.json out of the per-segment emit.
             ch_brief_tn = params.skip_tree_notes ? ch_brief_empty
-                : GENERATE_TREE_NOTES.out.json
+                : GENERATE_TREE_NOTES.out.json.map { meta, notes ->
+                    def l = notes instanceof List ? notes : [ notes ]
+                    [ meta, l.find { it.name == 'tree_note.json' } ?: l[0] ]
+                }
             ch_brief_sa = (params.skip_transmission_context || params.skip_spread_assessment)
                 ? ch_brief_empty
                 : GENERATE_SPREAD_ASSESSMENT.out.json

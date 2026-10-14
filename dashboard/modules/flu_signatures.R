@@ -40,7 +40,7 @@ fs_segment_select <- function(species, key, segments) {
     selectizeInput(
       inputId = fs_id(species, paste0(key, "_segment")),
       label = NULL,
-      choices = c("All" = "", setNames(segments, toupper(segments))),
+      choices = c("All" = "", setNames(segments, ifelse(segments == "genome", "UNTYPED", toupper(segments)))),
       selected = "",
       multiple = FALSE,
       width = "100%"
@@ -109,6 +109,9 @@ flu_signatures_ui <- function(species) {
           "Consensus-level screen from each record's winning Nextclade QC row — true DI confirmation needs read-level coverage."),
         uiOutput(fs_id(species, "di_segment_ui"))
       ),
+      uiOutput(fs_id(species, "di_summary")),
+      plotOutput(fs_id(species, "di_plot"), height = "auto"),
+      hr(),
       DT::DTOutput(fs_id(species, "di_table"))
     ),
 
@@ -311,30 +314,131 @@ flu_signatures_register <- function(input, output, session, species, outdir) {
       )
   })
 
-  # -- Genome integrity table --
+  # -- Genome integrity summary strip --
+  di_flag <- function(df) df$di_candidate %in% c(TRUE, "true", "True")
+
+  output[[fs_id(sp, "di_summary")]] <- renderUI({
+    df <- di_data()
+    if (is.null(df) || nrow(df) == 0) return(NULL)
+    flag <- di_flag(df)
+    n_flag <- sum(flag)
+    n_untyped <- sum(flag & df$segment == "genome")
+    iso_flag <- length(unique(df$isolate[flag]))
+    interp <- if (n_flag == 0) {
+      "All records passed the consensus-level integrity screen."
+    } else if (n_untyped == n_flag) {
+      sprintf("%d flagged record%s could not be typed to any influenza segment (assigned the generic 'genome' dataset) and show heavy deletion/frameshift load — consistent with truncated or defective sequence.",
+              n_untyped, if (n_untyped != 1) "s" else "")
+    } else {
+      sprintf("%d record%s flagged for low coverage, high deletion load or failed CDS translation.",
+              n_flag, if (n_flag != 1) "s" else "")
+    }
+    tagList(
+      div(
+        style = "display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 4px;",
+        div(class = "pi-summary-card",
+          div(class = "pi-sc-label", "Records screened"),
+          div(class = "pi-sc-value", nrow(df))),
+        div(class = "pi-summary-card",
+          div(class = "pi-sc-label", "Flagged"),
+          div(class = "pi-sc-value", n_flag,
+              style = if (n_flag > 0) "color: #E74C3C;" else NULL)),
+        div(class = "pi-summary-card",
+          div(class = "pi-sc-label", "Isolates affected"),
+          div(class = "pi-sc-value", iso_flag,
+              style = if (iso_flag > 0) "color: #E74C3C;" else NULL))
+      ),
+      p(class = "subtle-text", style = "font-size: 0.82rem; margin: 0 0 10px;", interp)
+    )
+  })
+
+  # -- Coverage heatmap (flagged cells get a red border) --
+  output[[fs_id(sp, "di_plot")]] <- renderPlot({
+    df <- di_data()
+    if (is.null(df) || nrow(df) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No genome-integrity data.", cex = 1.1, col = "#6c757d")
+      return()
+    }
+    df$segment_disp <- ifelse(df$segment == "genome", "untyped", df$segment)
+    levs <- c(SEGMENT_ORDER, "untyped")
+    df$segment_disp <- factor(df$segment_disp, levels = levs[levs %in% df$segment_disp])
+    # collapse multiple records per isolate x segment to the worst cell
+    key <- paste(df$isolate, df$segment_disp)
+    flag_any <- ave(as.integer(di_flag(df)), key, FUN = max)
+    cov_min <- ave(as.numeric(df$coverage), key,
+                   FUN = function(x) min(x, na.rm = TRUE))
+    keep_i <- !duplicated(key)
+    dfp <- df[keep_i, ]
+    dfp$flag_cell <- flag_any[keep_i] == 1
+    dfp$cov <- cov_min[keep_i]
+
+    p <- ggplot2::ggplot(dfp, ggplot2::aes(x = segment_disp, y = isolate, fill = cov)) +
+      ggplot2::geom_tile(color = "white", linewidth = 0.4) +
+      ggplot2::geom_text(
+        ggplot2::aes(label = ifelse(is.na(cov), "–", sprintf("%.0f%%", 100 * cov))),
+        size = 3, color = "#333") +
+      ggplot2::scale_fill_gradient(low = "#E74C3C", high = "#2E86C1",
+                                   limits = c(0, 1), na.value = "#eeeeee",
+                                   name = "Coverage") +
+      ggplot2::labs(x = NULL, y = NULL,
+                    title = "Nextclade coverage per record — red border = DI/truncation flag") +
+      ggplot2::theme_minimal(base_size = 11) +
+      ggplot2::theme(
+        axis.text.x = ggplot2::element_text(angle = 0, face = "bold"),
+        panel.grid = ggplot2::element_blank()
+      )
+    if (any(dfp$flag_cell)) {
+      p <- p + ggplot2::geom_tile(
+        data = dfp[dfp$flag_cell, ],
+        ggplot2::aes(x = segment_disp, y = isolate),
+        fill = NA, color = "#C0392B", linewidth = 0.9)
+    }
+    print(p)
+  }, height = function() {
+    df <- di_data()
+    n <- if (is.null(df)) 2 else max(2, length(unique(df$isolate)))
+    max(140, n * 44 + 80)
+  })
+
+  # -- Genome integrity table (flagged first, readable labels) --
   output[[fs_id(sp, "di_table")]] <- DT::renderDT({
     df <- di_data()
     if (is.null(df) || nrow(df) == 0) {
       return(DT::datatable(data.frame(Message = "No genome-integrity data."),
                            rownames = FALSE, options = list(dom = "t")))
     }
+    df <- df[order(!di_flag(df), as.numeric(df$coverage)), ]
     seg <- fs_seg("di")
     if (!is.null(seg)) df <- df[df$segment == seg, ]
+    df$segment <- ifelse(df$segment == "genome", "untyped", df$segment)
+    df$coverage <- round(as.numeric(df$coverage), 3)
     keep <- intersect(c("isolate", "record", "segment", "coverage",
                         "total_deletions", "total_frameshifts",
-                        "total_stop_codons", "failed_cdses", "total_missing",
+                        "total_stop_codons", "failed_cdses",
                         "di_candidate", "reasons"),
                       names(df))
-    DT::datatable(
-      df[, keep, drop = FALSE], rownames = FALSE,
+    d <- df[, keep, drop = FALSE]
+    ren <- c(isolate = "Isolate", record = "Record", segment = "Segment",
+             coverage = "Coverage", total_deletions = "Deletions",
+             total_frameshifts = "Frameshifts", total_stop_codons = "Stops",
+             failed_cdses = "Failed CDS", di_candidate = "DI flag",
+             reasons = "Reasons")
+    names(d) <- unname(ren[names(d)])
+    tbl <- DT::datatable(
+      d, rownames = FALSE,
       options = list(pageLength = 15, scrollX = TRUE, dom = "frtip"),
       class = "compact stripe"
-    ) |>
-      DT::formatStyle(
-        "di_candidate",
-        target = "row",
-        backgroundColor = DT::styleEqual(c(TRUE, "true", "True"), "#FDEDEC")
-      )
+    )
+    if ("DI flag" %in% names(d)) {
+      tbl <- tbl |>
+        DT::formatStyle(
+          "DI flag",
+          target = "row",
+          backgroundColor = DT::styleEqual(c(TRUE, "true", "True"), "#FDEDEC")
+        )
+    }
+    tbl
   })
 
   # -- Group diversity table --

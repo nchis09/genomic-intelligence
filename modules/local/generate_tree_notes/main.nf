@@ -18,8 +18,10 @@ process GENERATE_TREE_NOTES {
     tuple val(meta), path(duckdb_file)
     path llm_note_r
 
+    // One tree_note.json (preferred/ha segment — the species-level note) plus
+    // tree_note_<seg>.json per additional segment for segmented pathogens.
     output:
-    tuple val(meta), path("tree_note.json"), emit: json
+    tuple val(meta), path("tree_note*.json"), emit: json
 
     script:
     def species = meta.species ?: meta.id
