@@ -105,7 +105,6 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
   cprof     <- .brief_tsv(tc_dir, "query_cluster_profile.tsv")
   clusters  <- .brief_tsv(tc_dir, "genetic_clusters.tsv")
   qctx      <- .brief_tsv(tc_dir, "query_epi_context.tsv")
-  proj      <- .brief_tsv(tc_dir, "query_projection.tsv")
   strain_p  <- .brief_tsv(tc_dir, "strain_transmission_profile.tsv")
   obsum     <- .brief_tsv(tc_dir, "transmission_outbreak_summary.tsv")
   spatial   <- .brief_tsv(tc_dir, "transmission_spatial.tsv")
@@ -132,7 +131,6 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
   transmission <- list(
     n_queries              = if (!is.null(potential)) length(.brief_uniq(potential$query_sample)) else NULL,
     risk_labels            = if (!is.null(score)) .brief_uniq(score$risk_label) else NULL,
-    predicted_behaviors    = if (!is.null(score)) .brief_uniq(score$predicted_behavior) else NULL,
     likely_origins         = unique(c(
       if (!is.null(src))   .brief_uniq(src$likely_origin_country) else character(),
       if (!is.null(score)) .brief_uniq(score$likely_source_countries) else character()
@@ -202,21 +200,7 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
     )))
   } else NULL
 
-  # ---- Outlook: final-horizon week per query, median across queries per scenario ----
-  outlook <- NULL
-  if (!is.null(proj) && all(c("scenario", "week_ahead", "proj_median") %in% names(proj))) {
-    by_scenario <- split(proj, proj$scenario)
-    outlook <- list(scenarios = lapply(by_scenario, function(d) {
-      d <- d[d$week_ahead == max(suppressWarnings(as.numeric(d$week_ahead)), na.rm = TRUE), , drop = FALSE]
-      .brief_drop_null(list(
-        week_ahead = .brief_gv(d, "week_ahead"),
-        median     = .brief_med(d$proj_median),
-        lower95    = .brief_med(d$proj_lower95),
-        upper95    = .brief_med(d$proj_upper95),
-        r_used     = .brief_med(d$r_used)
-      ))
-    }))
-  }
+
 
   # ---- Genomics / mutation profile ----
   burden_sum <- .brief_tsv(mp_dir, "01_mutation_burden_summary.tsv")
@@ -308,7 +292,7 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
     situation = situation, identification = identification,
     genomics = genomics, transmission = transmission,
     distribution = distribution, historical_outbreaks = historical_outbreaks,
-    outlook = outlook, evidence_base = evidence_base,
+    evidence_base = evidence_base,
     spread_assessments = spread_assessments,
     data_gaps = if (length(gaps)) unique(gaps) else NULL
   ))
@@ -329,14 +313,14 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
   if (!is.null(cov) && cov < 0.9)
     cv <- c(cv, sprintf("Median genome coverage is low (%.0f%%).", cov * 100))
   if (!is.null(tr$n_neighbors_with_epi_min) && tr$n_neighbors_with_epi_min == 0)
-    cv <- c(cv, "Some queries have no neighbours with linked epidemiological data — projections for them are unreliable.")
+    cv <- c(cv, "Some queries have no neighbours with linked epidemiological data — transmission interpretation is limited.")
   if (length(tr$growth_phases) && all(tr$growth_phases == "unknown"))
-    cv <- c(cv, "Growth phase at sampling is unknown for all queries — projections assume baseline behaviour.")
+    cv <- c(cv, "Growth phase at sampling is unknown for all queries — transmission interpretation is limited.")
   if (is.null(gn) || (is.null(gn$n_phenotype_mutations) || gn$n_phenotype_mutations == 0))
     cv <- c(cv, "No phenotype-linked mutation evidence found for query genomes.")
   gap_msgs <- c(
     pathogen_identification = "Pathogen identification outputs were not generated this run.",
-    transmission_context    = "Transmission-context tables were not generated this run — spread and outlook sections are empty.",
+    transmission_context    = "Transmission-context tables were not generated this run — spread sections are empty.",
     mutation_profile        = "Mutation-profile outputs were not generated this run.",
     spread_assessment       = "Per-query spread assessments were not generated this run.",
     literature_evidence     = "No literature-evidence counts are available for this species."
@@ -350,7 +334,7 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
 # Bottom-line narrative — Ollama first, deterministic template fallback
 # ---------------------------------------------------------------------------
 .pg_brief_template <- function(f) {
-  s <- f$situation; idn <- f$identification; tr <- f$transmission; out <- f$outlook
+  s <- f$situation; idn <- f$identification; tr <- f$transmission
   parts <- character()
   sp_name <- s$species_identified %||% "an uncharacterized pathogen"
 
@@ -398,14 +382,6 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
         sprintf(" (range %.2f–%.2f)", tr$r_at_sampling_range["min"], tr$r_at_sampling_range["max"])
       else ""
     ))
-  if (!is.null(out$scenarios$baseline$median))
-    parts <- c(parts, sprintf(
-      "Under the baseline scenario the model projects ~%s weekly cases by week %d (95%% PI %s–%s).",
-      format(round(as.numeric(out$scenarios$baseline$median)), big.mark = ","),
-      as.integer(out$scenarios$baseline$week_ahead %||% 8),
-      format(round(as.numeric(out$scenarios$baseline$lower95 %||% 0)), big.mark = ","),
-      format(round(as.numeric(out$scenarios$baseline$upper95 %||% 0)), big.mark = ",")
-    ))
   strain <- if (length(f$distribution$strain_profiles %||% list()))
     f$distribution$strain_profiles[[1]] else NULL
   if (!is.null(strain))
@@ -448,7 +424,7 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
     "(1) what was detected and where/when it was sampled; (2) how confident the ",
     "identification is — closest known reference, % identity, nearest historical ",
     "outbreak; (3) the spread evidence — genetic clustering, inferred origin and ",
-    "introductions, R at sampling; (4) the baseline projection; and (5) the single ",
+    "introductions, R at sampling; and (4) the single ",
     "most important caveat. Write for someone who will act on this — concrete, ",
     "no jargon, no markdown, no bullet points.\n",
     "Rules: use ONLY the numbers given — never invent figures. If a field is ",
@@ -487,7 +463,6 @@ pg_build_intelligence_brief <- function(species, pi_dir = NULL, tc_dir = NULL,
     genomics     = facts$genomics,
     transmission = facts$transmission,
     distribution = facts$distribution,
-    outlook      = facts$outlook,
     historical_outbreaks = facts$historical_outbreaks,
     evidence_base = facts$evidence_base,
     spread_assessments = facts$spread_assessments,
@@ -597,7 +572,7 @@ brief_overview_ui <- function(brief, species, outdir = NULL) {
     ))
   }
   s <- brief$situation; idn <- brief$identification
-  tr <- brief$transmission; out <- brief$outlook
+  tr <- brief$transmission
 
   # Verdict badges (dashboard-side heuristic over the identification table)
   verdict <- NULL
@@ -671,19 +646,7 @@ brief_overview_ui <- function(brief, species, outdir = NULL) {
                   .brief_rng_txt(tr$r_at_sampling_range, "%.2f"))
   )
 
-  baseline <- out$scenarios$baseline
-  strain1 <- if (length(brief$distribution$strain_profiles %||% list()))
-    brief$distribution$strain_profiles[[1]] else NULL
-  out_stats <- list(
-    .brief_stat("Baseline projection", 
-                if (!is.null(baseline$median)) paste0("~", .brief_fmt(baseline$median, 0, comma = TRUE), " wkly cases") else "—",
-                if (!is.null(baseline$week_ahead)) paste0("week ", baseline$week_ahead) else NULL),
-    .brief_stat("Closest strain history",
-                if (!is.null(strain1)) paste0(strain1$n_countries %||% "—", " countries") else "—",
-                if (!is.null(strain1)) paste0(.brief_fmt(strain1$linked_cases, 0, comma = TRUE), " cases, ",
-                                              .brief_fmt(strain1$linked_deaths, 0, comma = TRUE), " deaths") else NULL),
-    .brief_stat("Historical outbreaks", length(brief$historical_outbreaks %||% list()))
-  )
+
 
   caveats_block <- if (length(brief$caveats)) {
     div(
@@ -724,10 +687,6 @@ brief_overview_ui <- function(brief, species, outdir = NULL) {
                      )
                    ),
                    nav_tab = paste0("ts_", species)),
-    .brief_section("earth-africa", "Where it could go", "— distribution & outlook",
-                   out_stats,
-                   extra = plotOutput("projection_fan_plot", height = "150px"),
-                   nav_tab = paste0("gt_", species)),
     # Evidence & countermeasure highlights — LLM text + charts generated at
     # pipeline time by EVIDENCE_SUMMARY (evidence_highlights.json).
     local({
@@ -799,24 +758,6 @@ brief_full_ui <- function(brief, species, outdir = NULL) {
     )
   }
 
-  proj_rows <- brief$outlook$scenarios %||% list()
-  proj_tbl <- if (length(proj_rows)) {
-    tags$table(
-      class = "table table-sm", style = "font-size: 0.82rem; max-width: 620px;",
-      tags$thead(tags$tr(lapply(c("Scenario", "Week", "Median weekly cases", "95% PI", "R used"), tags$th))),
-      tags$tbody(lapply(names(proj_rows), function(sc) {
-        d <- proj_rows[[sc]]
-        tags$tr(
-          tags$td(tools::toTitleCase(sc)), tags$td(d$week_ahead %||% "—"),
-          tags$td(.brief_fmt(d$median, 0, comma = TRUE)),
-          tags$td(paste0(.brief_fmt(d$lower95, 0, comma = TRUE), " – ",
-                         .brief_fmt(d$upper95, 0, comma = TRUE))),
-          tags$td(.brief_fmt(d$r_used, 2))
-        )
-      }))
-    )
-  }
-
   sa <- brief$spread_assessments %||% list()
   per_query_block <- if (length(sa)) {
     tagList(
@@ -869,12 +810,8 @@ brief_full_ui <- function(brief, species, outdir = NULL) {
       if (!is.null(hist_tbl)) tagList(h6("Historical outbreak record"), hist_tbl)
     ),
     bs4Dash::bs4Card(
-      title = tagList(icon("chart-area"), " Scenario outlook"),
+      title = tagList(icon("viruses"), " Transmission assessments & evidence base"),
       width = 12, status = "secondary",
-      div(class = "alert alert-warning", style = "font-size:0.82rem; padding:8px 12px;",
-          icon("triangle-exclamation"), strong(" Model-derived. "),
-          "Branching-process projections — estimates, not validated forecasts."),
-      proj_tbl,
       per_query_block,
       evidence_line
     )
@@ -885,7 +822,6 @@ brief_full_ui <- function(brief, species, outdir = NULL) {
 brief_markdown <- function(brief, species) {
   if (is.null(brief)) return("No intelligence brief content available.")
   s <- brief$situation; idn <- brief$identification; tr <- brief$transmission
-  out <- brief$outlook
   lines <- c(
     sprintf("GENOMIC INTELLIGENCE BRIEF — %s", toupper(species)),
     sprintf("Generated: %s", brief$generated_at %||% "unknown"),
@@ -915,12 +851,6 @@ brief_markdown <- function(brief, species) {
     sprintf("  R at sampling (median): %s", .brief_fmt(tr$r_at_sampling_median, 2)),
     ""
   )
-  base <- out$scenarios$baseline
-  if (!is.null(base))
-    lines <- c(lines, "OUTLOOK (baseline)",
-               sprintf("  ~%s weekly cases by week %s (95%% PI %s–%s)",
-                       .brief_fmt(base$median, 0, comma = TRUE), base$week_ahead %||% "—",
-                       .brief_fmt(base$lower95, 0, comma = TRUE), .brief_fmt(base$upper95, 0, comma = TRUE)), "")
   if (length(brief$caveats))
     lines <- c(lines, "CAVEATS", paste0("  - ", brief$caveats), "")
   if (!is.null(brief$evidence_base$total_papers))

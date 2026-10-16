@@ -91,7 +91,6 @@ strain_p <- read_tc("strain_transmission_profile.tsv")
 burden   <- read_tc("transmission_burden.tsv")
 qctx     <- read_tc("query_epi_context.tsv")
 cprof    <- read_tc("query_cluster_profile.tsv")
-proj     <- read_tc("query_projection.tsv")
 src      <- read_tc("query_source_inference.tsv")
 
 if (!is.null(burden) && "week_start" %in% names(burden))
@@ -129,8 +128,6 @@ for (qs in queries) {
   sr  <- row1(src, "query_sample", qs)
   st  <- gv(q, "query_strain")
   sp  <- if (!is.null(st) && !is.null(strain_p)) row1(strain_p, "strain", st) else NULL
-  pj  <- if (!is.null(proj)) proj[proj$query_sample == qs & proj$scenario == "baseline", , drop = FALSE] else NULL
-  pj8 <- if (!is.null(pj) && nrow(pj)) pj[which.max(pj$week_ahead), , drop = FALSE] else NULL
   fit <- growth_fit(st)
 
   facts <- list(
@@ -167,15 +164,8 @@ for (qs in queries) {
     n_introductions        = gv(sr, "n_introductions_into_query_country"),
     # transmission-potential score
     risk_label             = gv(sc, "risk_label"),
-    predicted_behavior     = gv(sc, "predicted_behavior"),
     n_neighbors            = gv(sc, "n_neighbors"),
     n_neighbors_with_epi   = gv(sc, "n_neighbors_with_epi"),
-    # branching-process projection (baseline, final horizon week)
-    proj_country           = gv(pj8, "country"),
-    proj_r_used            = gv(pj8, "r_used"),
-    proj_week8_median      = gv(pj8, "proj_median"),
-    proj_week8_lower95     = gv(pj8, "proj_lower95"),
-    proj_week8_upper95     = gv(pj8, "proj_upper95"),
     # growth-model fit
     fit_r_week             = if (!is.null(fit)) fit$r_week else NULL,
     fit_doubling_days      = if (!is.null(fit)) fit$doubling_days else NULL,

@@ -1409,6 +1409,11 @@ def load_background_from_auspice(conn, run_id, results_dir, species=None, pathog
         if "tip-frequencies" not in p.name and _published(p)
     )
     auspice_files = sorted(set(auspice_files))
+    # Flu: HA segment trees first so an isolate's clade label comes from the
+    # antigenic segment when several segment builds carry the same tip.
+    auspice_files.sort(
+        key=lambda p: (0 if _detect_segment_from_path(p) == "ha" else 1, str(p))
+    )
     if species_filter:
         auspice_files = [p for p in auspice_files if species_filter in [x.lower() for x in p.parts]]
     if not auspice_files:
@@ -1435,11 +1440,28 @@ def load_background_from_auspice(conn, run_id, results_dir, species=None, pathog
                 label = normalize_text(tip.get("name"))
                 if not label or label in query_labels:
                     continue
+                # Clade naming differs per build: seasonal uses
+                # clade_membership, avian carries label_clade.
+                tip_clade = normalize_text(
+                    _get_node_value(tip_attrs, "clade_membership")
+                    or _get_node_value(tip_attrs, "label_clade")
+                    or _get_node_value(tip_attrs, "clade")
+                )
+                if tip_clade in ("?", ""):
+                    tip_clade = None
                 cur.execute(
-                    "SELECT sample_id FROM samples WHERE run_id = %s AND sample_name = %s",
+                    "SELECT sample_id, clade FROM samples WHERE run_id = %s AND sample_name = %s",
                     (run_id, label),
                 )
-                if cur.fetchone():
+                existing = cur.fetchone()
+                if existing:
+                    # Backfill clade for rows written before the
+                    # clade_membership/label_clade fallback existed.
+                    if tip_clade and not existing[1]:
+                        cur.execute(
+                            "UPDATE samples SET clade = %s WHERE sample_id = %s",
+                            (tip_clade, existing[0]),
+                        )
                     continue
 
                 country = normalize_country(_get_node_value(tip_attrs, "country"))
@@ -1468,7 +1490,7 @@ def load_background_from_auspice(conn, run_id, results_dir, species=None, pathog
                         country,
                         normalize_text(_get_node_value(tip_attrs, "host")),
                         normalize_text(_get_node_value(tip_attrs, "outbreak")),
-                        normalize_text(_get_node_value(tip_attrs, "clade")),
+                        tip_clade,
                         str(path),
                     ),
                 )

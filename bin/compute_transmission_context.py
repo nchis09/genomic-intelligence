@@ -1704,83 +1704,6 @@ def build_cluster_profile(clusters, weekly):
     return pd.DataFrame(rows, columns=cols)
 
 
-def build_query_projection(qctx, weekly, rt, si_mean, si_sd, origin_map=None,
-                           horizon=8, n_sims=1000):
-    """Branching-process weekly case projections per query location.
-
-    I[t+1] ~ Poisson(R * Lambda[t+1]); Lambda from the discretised serial
-    interval over recent incidence. Three scenarios scale R. When the query's
-    own location has no epidemiological time series, falls back to the inferred
-    origin country (then to the location with the most data) so the panel still
-    shows a query-relevant projection.
-    """
-    cols = ["query_sample", "country", "admin1", "scenario", "week_ahead",
-            "proj_median", "proj_lower95", "proj_upper95", "r_used"]
-    if qctx is None or qctx.empty or weekly is None or weekly.empty:
-        return pd.DataFrame(columns=cols)
-    origin_map = origin_map or {}
-    w = _si_weekly_weights(si_mean, si_sd)
-    wk = weekly.copy()
-    wk["week_start"] = pd.to_datetime(wk["week_start"], errors="coerce")
-    rng = np.random.default_rng(42)
-    scenarios = {"contained": 0.5, "baseline": 1.0, "expanded": 1.35}
-    rt = rt if rt is not None and not rt.empty else pd.DataFrame()
-    # location with the most R(t) data — last-resort fallback
-    top_ctry = (rt["country"].value_counts().idxmax()
-                if not rt.empty else None)
-    rows = []
-    for _, q in qctx.iterrows():
-        ctry, adm = q["query_country"], q["query_admin1"]
-        r_use = q["r_at_sampling"]
-        loc_ctry, loc_adm = ctry, adm
-        if np.isnan(r_use):
-            # fall back to the latest R in the query's country
-            sub = rt[rt["country"] == ctry] if not rt.empty else pd.DataFrame()
-            if not sub.empty:
-                r_use = sub.sort_values("week_start").iloc[-1]["r_mean"]
-            else:
-                # then the inferred origin country, then the top-data location
-                for cand in (origin_map.get(q["query_sample"]), top_ctry):
-                    if cand and cand in set(rt["country"]):
-                        sub = rt[rt["country"] == cand]
-                        r_use = sub.sort_values("week_start").iloc[-1]["r_mean"]
-                        loc_ctry, loc_adm = cand, "National"
-                        break
-                else:
-                    continue
-        inc_sub = wk[(wk["country"] == loc_ctry)]
-        if loc_adm != "National":
-            adm_sub = inc_sub[inc_sub["admin1"] == loc_adm]
-            if not adm_sub.empty:
-                inc_sub = adm_sub
-        inc = (inc_sub.sort_values("week_start")["new_cases"]
-               .fillna(0).astype(float).tail(len(w) + 4).values)
-        if len(inc) < 2 or inc.sum() == 0:
-            continue
-        for scen, mult in scenarios.items():
-            r = max(0.0, r_use * mult)
-            sims = np.zeros((n_sims, horizon))
-            for s_i in range(n_sims):
-                hist = list(inc)
-                for wk_ahead in range(horizon):
-                    lam = sum(w[s - 1] * hist[-s] for s in range(1, min(len(w), len(hist)) + 1))
-                    nxt = rng.poisson(max(0.0, r * lam))
-                    sims[s_i, wk_ahead] = nxt
-                    hist.append(nxt)
-            for wk_ahead in range(horizon):
-                col = sims[:, wk_ahead]
-                rows.append({
-                    "query_sample": q["query_sample"], "country": loc_ctry,
-                    "admin1": loc_adm,
-                    "scenario": scen, "week_ahead": wk_ahead + 1,
-                    "proj_median": float(np.median(col)),
-                    "proj_lower95": float(np.percentile(col, 2.5)),
-                    "proj_upper95": float(np.percentile(col, 97.5)),
-                    "r_used": r,
-                })
-    return pd.DataFrame(rows, columns=cols)
-
-
 def build_source_inference(con, species, tip_meta):
     """Fitch-parsimony country reconstruction -> per-query likely origin.
 
@@ -1977,18 +1900,11 @@ def main():
     )
     write_tsv(qctx, outdir / "query_epi_context.tsv")
 
-    # 10. Parsimony source inference per query (needed for projection fallback)
+    # 10. Parsimony source inference per query
     src = build_source_inference(con, args.species, tip_meta)
     write_tsv(src, outdir / "query_source_inference.tsv")
     origin_map = (dict(zip(src["query_sample"], src["likely_origin_country"]))
                   if not src.empty else {})
-
-    # 11. Branching-process projections per query location (origin fallback)
-    proj = build_query_projection(
-        qctx, weekly if not weekly.empty else pd.DataFrame(), rt,
-        args.si_mean, args.si_sd, origin_map=origin_map,
-    )
-    write_tsv(proj, outdir / "query_projection.tsv")
 
     # 6. Strain transmission profile (per-clade historical behaviour)
     strain = build_strain_profile(

@@ -430,9 +430,8 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
 # ---------------------------------------------------------------------------
 # `facts` is a flat named list assembled by the caller from the transmission
 # context tables: identity, historical strain profile, epi context (R(t),
-# growth phase, sampling fraction), genetic cluster, inferred origin,
-# branching-process projection and growth-model fit. NULL/NA entries are
-# dropped before serialization.
+# growth phase, sampling fraction), genetic cluster, inferred origin, and
+# growth-model fit. NULL/NA entries are dropped before serialization.
 
 # Deterministic fallback — mirrors the dashboard's observed/model-derived text.
 .pg_spread_facts_template <- function(facts) {
@@ -447,13 +446,10 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
             gsub("_", " ", f("strain_behavior_label") %||% "unknown"))
     else "No historical strain profile is available."
   mdl <- if (!is.null(f("fit_r_week")))
-    sprintf("Fitting a growth model to %s's observed epidemic curve gives a growth rate of %.2f cases/week (doubling every %.1f days) and an estimated outbreak size of ~%s cases; projected forward under the selected scenario.",
+    sprintf("Fitting a growth model to %s's observed epidemic curve gives a growth rate of %.2f cases/week (doubling every %.1f days) and an estimated outbreak size of ~%s cases.",
             strain, as.numeric(f("fit_r_week")), as.numeric(f("fit_doubling_days")),
             format(round(as.numeric(f("fit_K"))), big.mark = ","))
-    else if (!is.null(f("proj_r_used")))
-      sprintf("A branching-process projection for %s uses R = %.2f under the baseline scenario.",
-              f("proj_country") %||% "the query's inferred origin", as.numeric(f("proj_r_used")))
-    else "No model projection is available."
+    else "No model fit is available."
   # Labels let the dashboard render the same OBSERVED/MODEL-DERIVED badges as LLM output.
   paste0("OBSERVED — Query ", f("query_sample"), " is strain ", strain, ". ", obs,
          "\nMODEL-DERIVED — ", mdl)
@@ -476,12 +472,12 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
     "OBSERVED — what the historical/genomic evidence shows: the strain's past ",
     "burden (cases, deaths, countries, years active, behaviour class), the ",
     "query's genetic cluster membership, and its inferred geographic origin.\n",
-    "MODEL-DERIVED — what the models project: the estimated R at sampling, ",
-    "growth phase, projected weekly cases under the baseline scenario, and ",
-    "the growth-model fit, with one sentence on the uncertainty.\n\n",
+    "MODEL-DERIVED — what the models infer from observed data: the estimated R at ",
+    "sampling, growth phase, and the growth-model fit to the strain's historical ",
+    "epidemic curve, with one sentence on the uncertainty.\n\n",
     "Rules: use ONLY the numbers given — never invent figures. If a field is ",
     "absent, do not mention it. When the historical record is sparse (e.g. ",
-    "zero recorded cases), say the projection is unreliable rather than ",
+    "zero recorded cases), say the model fit is unreliable rather than ",
     "stating it confidently. Plain language, no jargon, no markdown, no ",
     "bullet points.\n\n",
     "FACTS:\n", facts_json

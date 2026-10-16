@@ -1108,35 +1108,6 @@ server <- function(input, output, session) {
                      plot.title = ggplot2::element_text(size = 10, face = "bold"))
   })
 
-  # -- Home-page projection fan chart (Where it could go card).
-  output$projection_fan_plot <- renderPlot({
-    sp <- current_species(); outdir <- outdir_r(); if (is.null(sp) || is.null(outdir)) return(NULL)
-    pj <- .brief_tsv(file.path(outdir, "transmission_context", sp), "query_projection.tsv")
-    if (is.null(pj) || !nrow(pj)) return(NULL)
-    pj <- pj |>
-      dplyr::mutate(
-        wk = as.numeric(.data$week_ahead),
-        med = as.numeric(.data$proj_median),
-        lo = as.numeric(.data$proj_lower95),
-        hi = as.numeric(.data$proj_upper95),
-        scenario = as.character(.data$scenario)
-      ) |>
-      dplyr::filter(!is.na(.data$wk), !is.na(.data$med)) |>
-      dplyr::group_by(.data$scenario, .data$wk) |>
-      dplyr::summarise(med = median(.data$med), lo = min(.data$lo), hi = max(.data$hi), .groups = "drop")
-    pal <- c(baseline = "#4A6C8C", contained = "#3A916E", expanded = "#C0392B")
-    ggplot2::ggplot(pj, aes(wk, med, color = scenario, fill = scenario)) +
-      ggplot2::geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.15, color = NA) +
-      ggplot2::geom_line(linewidth = 1) +
-      ggplot2::scale_color_manual(values = pal) +
-      ggplot2::scale_fill_manual(values = pal) +
-      ggplot2::labs(x = "Weeks ahead", y = "Weekly cases", color = "Scenario", title = "8-week projection") +
-      ggplot2::theme_minimal(base_size = 10) +
-      ggplot2::theme(legend.position = "top",
-                     legend.title = ggplot2::element_blank(),
-                     legend.text = ggplot2::element_text(size = 7))
-  })
-
   # -- Evidence highlights charts (What we know & can do card): claims per
   # domain + top countermeasure products from evidence_highlights.json.
   output$evidence_domains_plot <- plotly::renderPlotly({
