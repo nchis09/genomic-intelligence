@@ -1,0 +1,74 @@
+site_name: "PGIF — Genomic Intelligence Framework"
+site_description: "User guide and interpretation documentation for the PGIF genomic intelligence dashboard."
+repo_url: https://github.com/nchis09/genomic-intelligence
+repo_name: nchis09/genomic-intelligence
+edit_uri: edit/docs/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue grey
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.top
+    - navigation.sections
+    - toc.follow
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - glightbox
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.tabbed
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Running the pipeline: getting-started/running-the-pipeline.md
+      - Launching the dashboard: getting-started/launching-the-dashboard.md
+  - Dashboard guide:
+      - Navigation & species selection: dashboard/navigation.md
+      - Intelligence Overview (home): dashboard/intelligence-overview.md
+      - Biological Threat: dashboard/biological-threat.md
+      - Pathogen Genomics: dashboard/pathogen-genomics.md
+      - Transmission & Spread: dashboard/transmission-spread.md
+      - Geographic & Temporal Context: dashboard/geographic-temporal.md
+      - Countermeasure Readiness: dashboard/countermeasure-readiness.md
+      - Influenza Analysis: dashboard/influenza-analysis.md
+      - Evidence & Knowledge Gaps: dashboard/evidence-knowledge-gaps.md
+      - Intelligence Brief: dashboard/intelligence-brief.md
+  - Interpreting results:
+      - Genomic results: interpretation/genomic-results.md
+      - Epidemiological context: interpretation/epidemiological-context.md
+      - Public-health decisions: interpretation/public-health-decisions.md
+      - Limitations: interpretation/limitations.md
+  - Pipeline:
+      - Usage: usage.md
+      - Output: output.md
+      - Contributing: CONTRIBUTING.md
+  - Troubleshooting: troubleshooting.md

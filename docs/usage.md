@@ -30,7 +30,7 @@ ebola_sudv,input/sudv_sequences.fasta,input/sudv_metadata.tsv
 | `fasta`    | Full path to consensus FASTA file (`.fasta`, `.fa`, `.fna`, optionally gzipped).                     |
 | `metadata` | Full path to metadata TSV/CSV file (must contain at minimum: `strain`, `date`, `country` columns).   |
 
-An [example samplesheet](../assets/samplesheet.csv) has been provided with the pipeline.
+An example samplesheet (`assets/samplesheet.csv`) can be provided with the pipeline.
 
 ## Running the pipeline
 

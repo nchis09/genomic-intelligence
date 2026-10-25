@@ -16,3 +16,8 @@ database/hmmdb/
 *.Rhistory
 for_validation/
 for_check/
+
+# docs build venv
+.venv-docs/
+# mkdocs build output
+site/
