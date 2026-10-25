@@ -38,11 +38,23 @@ The only thing the app needs to know is where your `--outdir` is.
 ## Pick a pathogen
 
 When results are found, the landing page shows one card per detected
-**pathogen family** (e.g. *Ebola*, *Influenza*) — discovered from the run's
-own `classification/species_assignments.tsv`, so a run that only detected
-SUDV shows just one card.
+**pathogen family** — so you choose the group of viruses you want to look at
+before diving into species-level detail.
 
-Click a card to enter that family's **Intelligence Overview**. From then on:
+![Choose a pathogen family — here, Ebola or Influenza](../images/navigation/02-family-cards.png)
+
+In this example run you would pick between the two:
+
+- **Ebola** — opens views for its detected species (*BDBV, EBOV, SUDV*): the
+  biological-threat tables, the family tree, the mutation landscape, and
+  transmission context.
+- **Influenza** — opens views for its species (*H3N2, H5NX*): everything
+  Ebola gets, **plus** per-segment analyses because influenza carries eight
+  genome segments — genotype constellations, reassortment flags, segment
+  integrity and group diversity.
+
+Click **"Open … dashboard"** on a card to enter that family's Intelligence
+Overview. From then on:
 
 - The **navbar switcher** (top centre) shows the current species and lets
   you switch to any other detected one at any time.
