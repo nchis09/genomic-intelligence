@@ -1,0 +1,29 @@
+%%{init: {'flowchart': {'htmlLabels': true, 'curve': 'basis'}}}%%
+flowchart TD
+    A["Input / QC<br/><small>Nextclade species/dataset assignment</small>"]
+    B["Pathogen Identification<br/><small>Species ID, lineage/clade, sequence similarity,<br/>closest references, phylogenetic placement</small>"]
+    C["Pathogen-Specific Genomic Analysis<br/><small>e.g. Ebola Workflow -- Nextstrain build, tree, alignment</small>"]
+    D["Epidemiological Context<br/><small>HDX epidemiology download</small>"]
+    E["Literature &amp; Functional Evidence<br/><small>Literature retrieval, phenotype annotation</small>"]
+    F["Knowledge Warehouse<br/><small>PostgreSQL ingestion + DuckDB export</small>"]
+    G["Genomic Intelligence<br/><small>Cross-domain synthesis</small>"]
+    H["Dashboard"]
+    I["Intelligence Brief"]
+
+    A --> B
+    B --> C
+    C --> D
+    C --> E
+    C -. "genomic outputs" .-> F
+    D --> F
+    E --> F
+    F ==> G
+    G ==> H
+    G ==> I
+
+    classDef stage fill:#ffffff,stroke:#2c5aa0,stroke-width:2px,color:#1a1a2e;
+    classDef intelligence fill:#2c5aa0,stroke:#1a3d66,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef output fill:#2c5aa0,stroke:#1a3d66,stroke-width:2px,color:#ffffff;
+    class A,B,C,D,E,F stage;
+    class G intelligence;
+    class H,I output;
