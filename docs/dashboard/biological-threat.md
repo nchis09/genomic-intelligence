@@ -12,18 +12,20 @@ how far it sits from its assigned family group.
 The bar at the top lists every sample the pipeline confirmed for this
 pathogen.
 
-<!-- screenshot: images/biological-threat/01-sample-picker.png — selectize bar + badge "3 samples selected" -->
-
 - Type or click to add samples — **up to 5** keeps the charts readable.
 - The badge counts your selection; **Reset selection** clears it.
 - Nothing appears until you pick at least one sample — everything on this
   page is a comparison view.
 
+In the example below, six `Sample0003` segment records are selected (the
+badge reads **"6 samples selected"** — segmented genomes appear as one
+record per segment, so a single isolate can occupy several slots).
+
 ## Step 2 — Read the summary strip
 
-Once samples are selected, three cards summarize the group:
-
-<!-- screenshot: images/biological-threat/02-summary-strip.png — pathogen / samples compared / closest outbreak cards -->
+Once samples are selected, three cards summarize the group — in the example:
+pathogen **H3N2**, **6 of 9** samples compared, closest outbreak **N/A**
+(no confident outbreak match for these genomes):
 
 - **Pathogen** — the species all selected samples were identified as.
 - **Samples compared** — your selection out of the total confirmed.
@@ -39,9 +41,11 @@ Once samples are selected, three cards summarize the group:
 ## Step 3 — Compare the genomic metrics
 
 With **two or more** samples selected, a grouped bar chart compares six
-identification metrics — one coloured bar per sample, grouped by metric:
+identification metrics — one coloured bar per sample, grouped by metric.
+The example shows all of it together: the picker (top), the summary strip,
+and the chart:
 
-<!-- screenshot: images/biological-threat/03-metric-bars.png — grouped bars, six metric sections on x-axis -->
+![Comparison workspace: sample picker, summary strip, and grouped metric bars for six H3N2 segment records](../images/biological-threat/01-picker-strip-metrics.png)
 
 | Metric | What it means | Direction |
 |---|---|---|
@@ -83,9 +87,9 @@ closest matching outbreak.
 The next card has its own picker and draws a **radar chart** of how each
 selected genome differs from the reference: counts of substitutions,
 deletions, insertions, frameshifts, missing bases, ambiguous characters, and
-amino-acid changes.
+amino-acid changes — with the raw counts in the table below:
 
-<!-- screenshot: images/biological-threat/05-radar.png — radar chart, several axes -->
+![Genomic Variation Profile: radar chart over Nextclade variation metrics, with the data table beneath](../images/biological-threat/05-variation-radar.png)
 
 - Each arm is one kind of variation; each coloured shape is one sample.
 - Use it to compare *how* genomes differ, not just *how much*: two samples
