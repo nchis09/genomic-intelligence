@@ -6,13 +6,28 @@ chapter assumes you can do the three things on this page.
 ## The landing screen: pathogen cards
 
 When the app loads, the home page is a **pathogen-family selector** — one
-card per family detected in your run (the list comes from
-`classification/species_assignments.tsv`, with a directory fallback).
+card per family the run detected, so you only ever see dashboards for
+pathogens that were actually found in your genomes.
 
-<!-- screenshot: images/navigation/02-family-cards.png — landing page with Ebola / Influenza cards -->
+![Pathogen-family landing page: Ebola and Influenza cards](../images/navigation/02-family-cards.png)
 
-Click a card to enter that family. The button row also includes a reset —
-the **"change pathogen"** flow returns you to these cards at any time.
+Each card shows:
+
+- the **family name** and a one-line summary of its biology (for example,
+  a segmented genome means the dashboard will offer per-segment views);
+- the **species detected** in your run as badges — here *BDBV, EBOV, SUDV*
+  under Ebola and *H3N2, H5NX* under Influenza;
+- an **"Open … dashboard"** button that takes you into that family's
+  Intelligence Overview.
+
+!!! note "Why families, not just a species list"
+    Different pathogens need different views — a segmented influenza genome
+    gets per-segment analyses that a single-genome filovirus doesn't. You
+    pick the family first; the dashboard then shows only what applies to
+    that biology.
+
+The button row also includes a reset — the **"change pathogen"** flow
+returns you to these cards at any time.
 
 ## The global pathogen switcher
 
