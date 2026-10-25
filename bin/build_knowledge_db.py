@@ -19,6 +19,7 @@ All state is written under --outdir, so the whole directory can be deleted.
 
 import argparse
 import csv
+import datetime
 import glob
 import hashlib
 import json
@@ -319,6 +320,131 @@ def normalize_country(value):
     return value
 
 
+# ---------------------------------------------------------------------------
+# Country centroids (database/country_centroids.csv)
+# ---------------------------------------------------------------------------
+# Used to give geographic_locations real lat/lon at insert time and to fill
+# the country_coordinates lookup that compute_transmission_context merges on.
+
+_COUNTRY_CENTROIDS = None
+
+# Territories used as "country" in Nextstrain metadata but absent from
+# country_centroids.csv (approximate centroids).
+_COUNTRY_CENTROID_EXTRA = {
+    "hong kong": (22.3193, 114.1694),
+    "macao": (22.1987, 113.5439),
+    "macau": (22.1987, 113.5439),
+    "taiwan": (23.6978, 120.9605),
+    "kosovo": (42.6026, 20.9030),
+    "reunion": (-21.1151, 55.5364),
+    "réunion": (-21.1151, 55.5364),
+    "crimea": (45.3453, 34.4997),
+    "western sahara": (24.2155, -12.8858),
+}
+
+
+def _country_centroids():
+    """Lazy-load database/country_centroids.csv -> {lowercase name: (lat, lon)}."""
+    global _COUNTRY_CENTROIDS
+    if _COUNTRY_CENTROIDS is None:
+        _COUNTRY_CENTROIDS = dict(_COUNTRY_CENTROID_EXTRA)
+        path = Path(__file__).resolve().parent.parent / "database" / "country_centroids.csv"
+        if path.exists():
+            with open(path, newline="", encoding="utf-8", errors="replace") as fh:
+                for row in csv.DictReader(fh):
+                    name = normalize_text(row.get("COUNTRY"))
+                    lat, lon = parse_float(row.get("latitude")), parse_float(row.get("longitude"))
+                    if name and lat is not None and lon is not None:
+                        _COUNTRY_CENTROIDS.setdefault(name.strip().lower(), (lat, lon))
+    return _COUNTRY_CENTROIDS
+
+
+# Spelling variants seen in metadata/Auspice -> country_centroids.csv name.
+_COUNTRY_CENTROID_ALIASES = {
+    "drc": "congo drc", "cod": "congo drc", "zaire": "congo drc",
+    "congo kinshasa": "congo drc", "democratic republic of congo": "congo drc",
+    "democratic republic of the congo": "congo drc",
+    "democratic republic of the congo (formerly zaire)": "congo drc",
+    "zaire (democratic republic of the congo - drc)": "congo drc",
+    "congo democratic republic": "congo drc",
+    "republic of the congo": "congo", "republic of congo": "congo",
+    "congo brazzaville": "congo",
+    "usa": "united states", "us": "united states",
+    "united states of america": "united states",
+    "uk": "united kingdom", "great britain": "united kingdom",
+    "england": "united kingdom", "scotland": "united kingdom",
+    "wales": "united kingdom", "northern ireland": "united kingdom",
+    "russia": "russian federation",
+    "republic of korea": "south korea", "korea": "south korea",
+    "viet nam": "vietnam", "lao pdr": "laos",
+    "lao people's democratic republic": "laos",
+    "cote d'ivoire": "côte d'ivoire", "ivory coast": "côte d'ivoire",
+    "swaziland": "eswatini", "burma": "myanmar", "czechia": "czech republic",
+    "cape verde": "cabo verde", "east timor": "timor-leste",
+    "syrian arab republic": "syria", "iran (islamic republic of)": "iran",
+    "venezuela (bolivarian republic of)": "venezuela",
+    "bolivia (plurinational state of)": "bolivia",
+    "united republic of tanzania": "tanzania", "republic of tanzania": "tanzania",
+    "palestine": "palestinian territory", "the gambia": "gambia",
+    "guinea 2": "guinea", "guinée": "guinea", "liberia 2": "liberia",
+    "sudan (south sudan)": "south sudan", "brunei": "brunei darussalam",
+    "moldova, republic of": "moldova",
+}
+
+
+def _country_centroid(country):
+    """(lat, lon) for a country spelling, or (None, None) when unknown."""
+    if not country:
+        return (None, None)
+    key = str(country).strip().lower()
+    key = _COUNTRY_CENTROID_ALIASES.get(key, key)
+    return _country_centroids().get(key, (None, None))
+
+
+def _link_sample_location(cur, sample_id, location_id):
+    """Link a sample to a geographic_locations row (idempotent)."""
+    if not sample_id or not location_id:
+        return
+    cur.execute(
+        """
+        INSERT INTO sample_geo_location (sample_id, location_id)
+        VALUES (%s, %s) ON CONFLICT DO NOTHING
+        """,
+        (sample_id, location_id),
+    )
+
+
+def populate_country_coordinates(conn):
+    """Fill the country_coordinates lookup consumed by
+    compute_transmission_context._fill_country_coords. Keys are stored
+    lowercase (canonical + variant spellings); the consumer merges
+    case-insensitively."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS country_coordinates "
+            "(country TEXT, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION)"
+        )
+        cur.execute("DELETE FROM country_coordinates")
+        seen = set()
+        rows = []
+        for key, (lat, lon) in _country_centroids().items():
+            if key not in seen:
+                seen.add(key)
+                rows.append((key, lat, lon))
+        for alias, key in _COUNTRY_CENTROID_ALIASES.items():
+            c = _country_centroids().get(key)
+            if c and alias not in seen:
+                seen.add(alias)
+                rows.append((alias, c[0], c[1]))
+        for r in rows:
+            cur.execute(
+                "INSERT INTO country_coordinates (country, latitude, longitude) VALUES (%s, %s, %s)",
+                r,
+            )
+    conn.commit()
+    print(f"  Populated {len(rows)} country coordinates", file=sys.stderr)
+
+
 def detect_delimiter(first_line):
     if not first_line:
         return ","
@@ -404,13 +530,14 @@ def get_or_create_location(cur, country, admin1=None, admin2=None, locality=None
     row = cur.fetchone()
     if row:
         return row[0]
+    lat, lon = _country_centroid(country)
     cur.execute(
         """
-        INSERT INTO geographic_locations (country, admin1, admin2, locality, location_code, location_code_type)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO geographic_locations (country, admin1, admin2, locality, location_code, location_code_type, latitude, longitude)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING location_id
         """,
-        (country, admin1, admin2, locality, location_code, location_code_type),
+        (country, admin1, admin2, locality, location_code, location_code_type, lat, lon),
     )
     return cur.fetchone()[0]
 
@@ -686,6 +813,7 @@ def _update_samples_from_metadata(conn, run_id, metadata_path):
                 """,
                 (collection_date, country, admin1, admin2, locality, host, strain, run_id, sample),
             )
+            _link_sample_location(cur, _sample_id(cur, run_id, sample), location_id)
             # group_id: the metadata key is the isolate name (e.g. Sample0001)
             # — propagate to the isolate row AND its per-segment records
             # (Sample0001_Seg5) so group queries cover every sample row.
@@ -1044,7 +1172,7 @@ def _update_samples_from_nextclade(conn, run_id, results_dir, species=None):
 
                         tip_country = normalize_country(_get_node_value(node_attrs, "country"))
                         tip_admin1 = normalize_text(_get_node_value(node_attrs, "division"))
-                        tip_date = normalize_date(_get_node_value(node_attrs, "date"))
+                        tip_date = _tip_date(node_attrs)
                         tip_host = normalize_text(_get_node_value(node_attrs, "host"))
                         cur.execute(
                             """
@@ -1091,6 +1219,23 @@ def _get_node_value(node_attrs, key):
     if isinstance(val, dict):
         return val.get("value")
     return val
+
+
+def _tip_date(node_attrs):
+    """Tip collection date: node_attrs.date (ISO) first, then num_date
+    (decimal year — what augur export always emits) converted to ISO."""
+    d = normalize_date(_get_node_value(node_attrs, "date"))
+    if d:
+        return d
+    f = parse_float(
+        _get_node_value(node_attrs, "num_date")
+        or _get_node_value(node_attrs, "numdate")
+    )
+    if f is None or not (1800 <= f < 2200):
+        return None
+    year = int(f)
+    day = datetime.date(year, 1, 1) + datetime.timedelta(days=round((f - year) * 365))
+    return day.isoformat()
 
 
 def _clean_newick_name(name):
@@ -1352,7 +1497,7 @@ def load_trees_and_tips(conn, run_id, results_dir, auspice_json=None, iqtree=Non
                             locality,
                             normalize_text(_get_node_value(node_attrs, "host")),
                             normalize_text(_get_node_value(node_attrs, "outbreak")),
-                            normalize_date(_get_node_value(node_attrs, "date")),
+                            _tip_date(node_attrs),
                             parse_float(_get_node_value(node_attrs, "div")),
                             parse_float(_get_node_value(node_attrs, "genome_coverage")),
                             normalize_text(_get_node_value(node_attrs, "nextclade_qc")),
@@ -1449,6 +1594,10 @@ def load_background_from_auspice(conn, run_id, results_dir, species=None, pathog
                 )
                 if tip_clade in ("?", ""):
                     tip_clade = None
+                country = normalize_country(_get_node_value(tip_attrs, "country"))
+                admin1 = normalize_text(_get_node_value(tip_attrs, "division"))
+                locality = normalize_text(_get_node_value(tip_attrs, "location"))
+                location_id = get_or_create_location(cur, country, admin1, None, locality)
                 cur.execute(
                     "SELECT sample_id, clade FROM samples WHERE run_id = %s AND sample_name = %s",
                     (run_id, label),
@@ -1462,12 +1611,8 @@ def load_background_from_auspice(conn, run_id, results_dir, species=None, pathog
                             "UPDATE samples SET clade = %s WHERE sample_id = %s",
                             (tip_clade, existing[0]),
                         )
+                    _link_sample_location(cur, existing[0], location_id)
                     continue
-
-                country = normalize_country(_get_node_value(tip_attrs, "country"))
-                admin1 = normalize_text(_get_node_value(tip_attrs, "division"))
-                locality = normalize_text(_get_node_value(tip_attrs, "location"))
-                location_id = get_or_create_location(cur, country, admin1, None, locality)
 
                 cur.execute(
                     """
@@ -1486,7 +1631,7 @@ def load_background_from_auspice(conn, run_id, results_dir, species=None, pathog
                         pathogen,
                         species,
                         False,
-                        normalize_date(_get_node_value(tip_attrs, "date")),
+                        _tip_date(tip_attrs),
                         country,
                         normalize_text(_get_node_value(tip_attrs, "host")),
                         normalize_text(_get_node_value(tip_attrs, "outbreak")),
@@ -1495,6 +1640,7 @@ def load_background_from_auspice(conn, run_id, results_dir, species=None, pathog
                     ),
                 )
                 sample_id = cur.fetchone()[0]
+                _link_sample_location(cur, sample_id, location_id)
                 loaded_samples += 1
 
                 # Accumulate amino-acid mutations from every branch on the path
@@ -3890,6 +4036,8 @@ def main():
                     species=args.species,
                     pathogen=args.pathogen,
                 )
+
+                populate_country_coordinates(conn)
 
                 print("Loading literature evidence...", file=sys.stderr)
                 if args.results_dir and args.species:

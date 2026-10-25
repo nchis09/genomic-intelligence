@@ -229,19 +229,23 @@ COUNTRY_NAME_MAP = {
 
 
 def _fill_country_coords(samples: pd.DataFrame, con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    """Backfill missing sample lat/lon from the country_coordinates table."""
+    """Backfill missing sample lat/lon from the country_coordinates table.
+    Keys in country_coordinates are lowercase; merge case-insensitively."""
     try:
         cc = con.execute(
             "SELECT country, latitude, longitude FROM country_coordinates"
         ).df()
     except (duckdb.CatalogException, duckdb.InvalidInputException):
         return samples
-    if cc.empty:
+    if cc.empty or "country" not in samples.columns:
         return samples
-    samples = samples.merge(cc, on="country", how="left", suffixes=("", "_cc"))
+    cc = cc.rename(columns={"country": "_ck"})
+    cc["_ck"] = cc["_ck"].astype(str).str.strip().str.lower()
+    samples["_ck"] = samples["country"].astype(str).str.strip().str.lower()
+    samples = samples.merge(cc, on="_ck", how="left", suffixes=("", "_cc"))
     samples["latitude"] = samples["latitude"].astype(float).fillna(samples["latitude_cc"].astype(float))
     samples["longitude"] = samples["longitude"].astype(float).fillna(samples["longitude_cc"].astype(float))
-    samples = samples.drop(columns=["latitude_cc", "longitude_cc"], errors="ignore")
+    samples = samples.drop(columns=["_ck", "latitude_cc", "longitude_cc"], errors="ignore")
     return samples
 
 
