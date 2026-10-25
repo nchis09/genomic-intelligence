@@ -112,22 +112,33 @@ estimated **R at sampling** — the average number of people each case infected
 at the time the samples were taken — plus a mini-map of where the query's
 relatives were collected.
 
-<!-- screenshot: images/home/05-transmission-card.png — transmission stats + mini map -->
-
-Click → [Transmission & Spread](transmission-spread.md).
+In the example below: **1** genetic cluster, likely origin *USA, China;
+Kenya*, **R at sampling 3.48**, and the map's dashed line connecting a
+U.S.-sampled relative to the Ugandan query — a visual hint of possible
+importation that the narrative also flags as uncertain.
 
 **What we know & what we can do — evidence & countermeasures.**
 How much published research yielded usable findings, how many evidence areas
 are covered, and the leading countermeasure product — plus an AI/auto
 highlights summary and two small charts.
 
+Here the card is deliberately honest about having nothing: **0/11** domains
+with evidence, no papers with claims, and a note that the evidence-summary
+step didn't run. **Empty does not mean reassuring** — it means the
+literature-evidence layer hasn't been computed for this species yet.
+
+![Transmission evidence and evidence-and-countermeasures cards, plus the Caveats strip](../images/home/06-transmission-evidence-caveats.png)
+
 Click → [Evidence & Knowledge Gaps](evidence-knowledge-gaps.md).
 
 ## Step 5 — Check the caveats
 
-The amber **Caveats** strip (when present) lists the analysis' own warnings —
-e.g. thin epidemiological coverage or a small background set. Read it before
-quoting any number further.
+The amber **Caveats** strip (visible at the bottom of the screenshot) lists
+the analysis' own warnings — here three important ones: **1 of 9 genomes
+failed identification QC** (so the species call is provisional), **no
+phenotype-linked mutation evidence**, and **no literature-evidence counts**
+for this species. Read it before quoting any number further — it is the
+dashboard telling you exactly how far to trust what you just saw.
 
 ## Step 6 — The objectives strip
 
@@ -138,7 +149,7 @@ above.
 ## Public-health relevance
 
 This page is built for the 60-second read: a duty officer should be able to
-say *"the analysis found SUDV, confidence is high, transmission evidence is
+say *"the analysis found H3N2, confidence is high, transmission evidence is
 moderate, here is the summary"* — and know exactly which card to click for
 the supporting evidence. Everything shown is **observed or estimated from
 data**; the verdict is a transparent rule set, not a black box.
