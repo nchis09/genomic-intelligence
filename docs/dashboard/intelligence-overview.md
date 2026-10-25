@@ -4,14 +4,24 @@ The Intelligence Overview is the landing page for the selected pathogen — a
 one-screen summary designed for a quick read: *what did the analysis find,
 how much confidence does it deserve, and where do I look next?*
 
-This walkthrough uses an Ebola run (SUDV) as the example.
+This walkthrough uses an influenza run (H3N2) as the example:
+
+![Intelligence Overview for H3N2 — assessment badges, situation strip, narrative, and evidence cards](../images/home/00-overview-h3n2.png)
+
+Reading top to bottom, the page carries four things: the **assessment
+badges** (the verdict), the **situation strip** (what was submitted), the
+**narrative** (a written summary), and the **evidence cards** (one per
+analytical layer, each a doorway into a full page). The card header itself —
+`Intelligence Brief — h3n2` plus the family badge — is also the species
+dropdown, kept in sync with the navbar switcher described in
+[Navigation & species selection](navigation.md).
 
 ## Step 1 — Read the assessment badges
 
 At the top of the card, a row of badges compresses the whole analysis into a
-verdict:
-
-<!-- screenshot: images/home/01-assessment-badges.png — badge row: MONITOR / Confidence: High / Transmission risk / Narrative: ollama -->
+verdict. In the screenshot above they read `MONITOR` · `Confidence: High` ·
+`Transmission risk: low` · `Narrative: ollama`, followed by the generation
+timestamp:
 
 - **Assessment** — `MONITOR`, `INVESTIGATE`, or `ESCALATE`: how unusual the
   genome looks compared with everything we already know about. It is a
@@ -38,13 +48,14 @@ verdict:
 
 ## Step 2 — Scan the situation strip
 
-Four headline numbers summarize what was submitted:
-
-<!-- screenshot: images/home/02-situation-strip.png — Query genomes / Countries / Collection dates / Median coverage -->
+Four headline numbers summarize what was submitted — in the example above:
+**9** query genomes, **2** countries (Uganda + an unknown location),
+collection dates **Jan 30–31, 2026**, median coverage **98.9%**:
 
 - **Query genomes** — how many submitted samples were identified as this
   pathogen.
-- **Countries** — where those samples were collected.
+- **Countries** — where those samples were collected; *Unknown* appears
+  when a sample's metadata didn't carry a location.
 - **Collection dates** — earliest to latest sampling date.
 - **Median coverage** — how completely the genomes were sequenced, on
   average; the main input to the Confidence badge.
@@ -53,9 +64,12 @@ Four headline numbers summarize what was submitted:
 
 The blue-bordered paragraph is the generated situation summary: a
 plain-language synthesis of what the analysis found across identification,
-genomics, transmission, and the published evidence.
-
-<!-- screenshot: images/home/03-narrative.png — narrative block -->
+genomics, transmission, and the published evidence. In the example it ties
+the nine H3N2 genomes to their closest known reference
+(A/Washington/106/2016), reports the estimated R at sampling, and flags
+that the geographic link between the Ugandan samples and the matched U.S.
+transmission cluster is unclear — exactly the kind of caveat a reader
+should carry forward.
 
 !!! info "Where it comes from"
     Written during the analysis run and stored in
@@ -73,7 +87,10 @@ clicking one jumps straight to the full page for that question.
 
 **What is it — identification.**
 The closest known reference genome and how similar the query is to it, plus
-the closest matching past outbreak. Click → [Biological Threat](biological-threat.md).
+the closest matching past outbreak — in the example, `H3N2` identified with
+97.6% identity to `A/Washington/106/2016` and a small genetic distance,
+i.e. a close match to a known, previously circulating strain. Click →
+[Biological Threat](biological-threat.md).
 
 **What's different about it — genomics.**
 Whether the query carries more mutations than its background relatives (with
