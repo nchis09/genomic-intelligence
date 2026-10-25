@@ -168,17 +168,6 @@ resolve_outdir <- function(x) {
   x
 }
 
-# Per-logo pixel heights, tuned per source image (WHO_Hub.png and UVRI.jpg
-# have a lot of built-in whitespace/lettering next to the mark, so they need
-# a taller box than the others to read at the same visual size).
-INSTITUTION_LOGOS <- c(
-  "GOARN.png"   = 20,
-  "MRC.jpeg"    = 20,
-  "RKI.png"     = 20,
-  "UVRI.jpg"    = 28,
-  "WHO_Hub.png" = 40
-)
-
 gif_theme <- create_theme(
   bs4dash_status(primary = "#4A6C8C", info = "#3498DB", success = "#2ECC71",
                   warning = "#F39C12", danger = "#E74C3C"),
@@ -190,18 +179,6 @@ footer_ui <- function() {
     p(
       style = "font-size: 0.72rem; color: #888; text-align: center; margin: 0 0 4px 0; width: 100%;",
       read_gif_intro_text()
-    ),
-    div(
-      style = paste(
-        "display: flex; align-items: center; justify-content: center;",
-        "gap: 24px; flex-wrap: wrap; padding: 6px 0; width: 100%;"
-      ),
-      lapply(names(INSTITUTION_LOGOS), function(f) {
-        tags$img(
-          src = file.path("gif_assets", "institution_logo", f),
-          height = paste0(INSTITUTION_LOGOS[[f]], "px")
-        )
-      })
     )
   )
 }
